@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#4338ca">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>اسكانر الجوال الذكي | باركود • كيو ار • داتاماتريكس</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts Cairo -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+    <!-- Html5-QRCode مكتبة المسح -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: contain;
+        }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* ليزر المسح المتحرك */
+        @keyframes scanLaser {
+            0% { top: 6%; opacity: 0.8; }
+            50% { top: 90%; opacity: 1; }
+            100% { top: 6%; opacity: 0.8; }
+        }
+        .scanner-laser {
+            position: absolute;
+            left: 5%;
+            right: 5%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #22c55e, #10b981, transparent);
+            box-shadow: 0 0 12px #22c55e, 0 0 20px #10b981;
+            border-radius: 9999px;
+            animation: scanLaser 2s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 10;
+        }
+        /* وميض النجاح عند المسح */
+        @keyframes flashSuccess {
+            0% { opacity: 0.9; }
+            100% { opacity: 0; }
+        }
+        .scan-flash {
+            position: absolute;
+            inset: 0;
+            background-color: rgba(34, 197, 94, 0.45);
+            animation: flashSuccess 0.35s ease-out forwards;
+            pointer-events: none;
+            z-index: 20;
+        }
+        /* إخفاء شريط التمرير */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+
+    <!-- شريط الرأس العلوي -->
+    <header class="bg-slate-800/95 backdrop-blur border-b border-slate-700/80 px-3 py-2.5 sticky top-0 z-30 flex items-center justify-between shadow-lg">
+        <div class="flex items-center gap-2">
+            <span class="text-xl p-1.5 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/40">📱</span>
+            <div>
+                <h1 class="text-xs sm:text-sm font-black text-white flex items-center gap-1.5">
+                    <span>اسكانر الجوال الذكي</span>
+                    <span id="conn-pill" class="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span>متصل</span>
+                    </span>
+                </h1>
+                <p class="text-[10px] text-slate-400">باركود 1D • كود QR • انترناشونال داتاماتريكس</p>
+            </div>
+        </div>
+
+        <!-- أزرار سريعة في الرأس -->
+        <div class="flex items-center gap-1.5">
+            <button id="btn-toggle-torch" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs transition border border-slate-600 flex items-center gap-1 shadow-sm" title="كشاف الإضاءة">
+                <span>💡</span>
+                <span class="hidden sm:inline text-[11px]">كشاف</span>
+            </button>
+            <button id="btn-toggle-fullscreen" type="button" class="p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs transition border border-slate-600" title="ملء الشاشة">
+                ⛶
+            </button>
+        </div>
+    </header>
+
+    <!-- بطاقة التبديل بين وجهة المسح: الجرد أو الفاتورة -->
+    <div class="px-3 pt-2">
+        <div class="bg-slate-800/90 rounded-xl p-2 border border-slate-700/80 shadow flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 w-full">
+                <!-- تبديل الهدف -->
+                <div class="inline-flex rounded-lg bg-slate-900/90 p-0.5 border border-slate-700 text-xs font-bold w-1/2">
+                    <button type="button" id="tab-target-stocktake" class="flex-1 py-1 text-center rounded-md bg-indigo-600 text-white shadow transition">
+                        📦 الجرد
+                    </button>
+                    <button type="button" id="tab-target-invoice" class="flex-1 py-1 text-center rounded-md text-slate-400 hover:text-white transition">
+                        🧾 الفاتورة
+                    </button>
+                </div>
+
+                <!-- اختيار الاستور النشط للجرد -->
+                <div id="store-selector-box" class="w-1/2">
+                    <select id="mobile-sel-store" class="w-full py-1 px-2 rounded-lg bg-slate-900 border border-indigo-500/50 text-indigo-200 font-mono text-xs font-bold focus:outline-none focus:border-indigo-400">
+                        <option value="ST-001">ST-001 (الاستور الرئيسي)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- منطقة الكاميرا والماسح الضوئي -->
+    <main class="flex-1 px-3 py-2 flex flex-col justify-center">
+        <div class="relative w-full max-w-md mx-auto aspect-square max-h-[50vh] bg-black rounded-2xl overflow-hidden border-2 border-indigo-500/60 shadow-2xl flex items-center justify-center">
+            
+            <!-- حاوية عارض الفيديو المباشر -->
+            <div id="mobile-camera-viewport" class="w-full h-full object-cover"></div>
+
+            <!-- ليزر وميض المسح -->
+            <div id="scanner-laser-bar" class="scanner-laser"></div>
+
+            <!-- طبقة تأثير الفلاش عند نجاح المسح -->
+            <div id="scan-flash-overlay" class="hidden"></div>
+
+            <!-- إطار تحديد الهدف (Reticle) -->
+            <div class="absolute inset-8 sm:inset-10 border-2 border-dashed border-indigo-400/70 rounded-xl pointer-events-none flex flex-col justify-between p-2 shadow-inner">
+                <div class="flex justify-between">
+                    <div class="w-4 h-4 border-t-2 border-r-2 border-emerald-400"></div>
+                    <div class="w-4 h-4 border-t-2 border-l-2 border-emerald-400"></div>
+                </div>
+                <div class="flex justify-between">
+                    <div class="w-4 h-4 border-b-2 border-r-2 border-emerald-400"></div>
+                    <div class="w-4 h-4 border-b-2 border-l-2 border-emerald-400"></div>
+                </div>
+            </div>
+
+            <!-- بادج الصيغ المدعومة بالأسفل داخل الكاميرا -->
+            <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9.5px] font-bold text-slate-300 bg-slate-900/80 backdrop-blur py-1 px-2 rounded-lg border border-slate-700/60 pointer-events-none">
+                <span class="text-emerald-400">● 1D Barcode</span>
+                <span class="text-sky-400">● QR Code</span>
+                <span class="text-indigo-400">● GS1 DataMatrix (دولي)</span>
+            </div>
+
+            <!-- زر إعادة تشغيل الكاميرا في حال توقفها -->
+            <button id="btn-restart-camera" type="button" class="hidden absolute inset-0 bg-slate-900/90 flex-col items-center justify-center gap-2 p-4 text-center">
+                <span class="text-3xl">📷</span>
+                <span class="text-sm font-bold text-white">انقر هنا لتشغيل الكاميرا</span>
+                <span class="text-xs text-slate-400">يُرجى السماح بصلاحيات الكاميرا في المتصفح</span>
+            </button>
+        </div>
+
+        <!-- شريط التنبيه اللحظي لآخر صنف تم مسحه -->
+        <div id="mobile-feedback-card" class="mt-2 max-w-md mx-auto w-full bg-slate-800 rounded-xl p-2.5 border border-slate-700 text-xs shadow-md">
+            <div class="flex items-center justify-between gap-1 pb-1 border-b border-slate-700/60 font-mono text-[11px]">
+                <div class="flex items-center gap-1.5">
+                    <span id="scan-status-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <strong id="scan-status-label" class="text-emerald-400 font-sans">جاهز للمسح</strong>
+                </div>
+                <span id="scan-time-label" class="text-slate-400">--:--</span>
+            </div>
+            <div class="mt-1.5 flex items-start justify-between gap-2">
+                <div class="flex-1">
+                    <p id="scan-product-name" class="font-bold text-white text-xs leading-snug line-clamp-2">وجه الكاميرا نحو الباركود أو كود الدواء...</p>
+                    <p id="scan-product-code" class="text-[10px] text-slate-400 font-mono mt-0.5">-</p>
+                </div>
+                <div class="text-left font-mono">
+                    <span id="scan-badge-qty" class="px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-300 font-black text-xs border border-emerald-500/40">
+                        +1
+                    </span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- أزرار التحكم والإدخال السريع بالأسفل -->
+    <footer class="bg-slate-800/95 backdrop-blur border-t border-slate-700 px-3 py-2 space-y-2 sticky bottom-0 z-30">
+        <!-- أزرار وظائف الكاميرا -->
+        <div class="flex items-center justify-between gap-2 max-w-md mx-auto">
+            <!-- مسح مستمر سريع -->
+            <button id="btn-toggle-continuous" type="button" class="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95">
+                <span id="continuous-icon">⚡</span>
+                <span id="continuous-text">سحب مستمر: مفعّل</span>
+            </button>
+
+            <!-- تبديل الكاميرا -->
+            <button id="btn-flip-camera" type="button" class="py-1.5 px-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95" title="تبديل العدسة">
+                <span>🔄</span>
+                <span>العدسة</span>
+            </button>
+
+            <!-- زر التقاط صورة كبديل قياسي 100% -->
+            <label class="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1 transition cursor-pointer shadow active:scale-95">
+                <span>📸</span>
+                <span>صورة</span>
+                <input type="file" id="mobile-file-snap" accept="image/*" capture="environment" class="hidden">
+            </label>
+        </div>
+
+        <!-- خانة كتابة أو لصق الكود يدوياً -->
+        <div class="max-w-md mx-auto flex items-center gap-1.5">
+            <input type="text" id="mobile-manual-input" dir="ltr" placeholder="أو أدخل الكود يدوياً هنا..."
+                   class="flex-1 py-1.5 px-3 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none">
+            <button type="button" id="btn-manual-send" class="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition active:scale-95">
+                إرسال ↵
+            </button>
+        </div>
+    </footer>
+
+    <!-- سكريبت التشغيل الشامل للماسح -->
+    <script>
+        let currentTarget = 'stocktake'; // 'stocktake' | 'invoice'
+        let currentStoreNo = 'ST-001';
+        let isContinuous = true;
+        let isTorchOn = false;
+        let currentFacingMode = 'environment';
+        let html5QrCode = null;
+        let lastScannedCode = '';
+        let lastScanTimestamp = 0;
+        let audioCtx = null;
+
+        // تهيئة الصوت (صفارة النجاح / الخطأ)
+        function playBeep(isSuccess = true) {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                if (isSuccess) {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(1300, audioCtx.currentTime);
+                    gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.12);
+                } else {
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(350, audioCtx.currentTime);
+                    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.25);
+                }
+            } catch (e) {
+                // ignore audio error
+            }
+
+            // هزة بالجوال للمس الحسي
+            if (navigator.vibrate) {
+                navigator.vibrate(isSuccess ? [80] : [150, 80, 150]);
+            }
+        }
+
+        // تأثير وميض النجاح
+        function triggerSuccessFlash() {
+            const overlay = document.getElementById('scan-flash-overlay');
+            if (overlay) {
+                overlay.className = 'scan-flash';
+                setTimeout(() => { overlay.className = 'hidden'; }, 400);
+            }
+        }
+
+        // تحميل قائمة الاستورات المتاحة للجرد
+        async function loadMobileStores() {
+            try {
+                const res = await fetch('/api/stock/stores');
+                const data = await res.json();
+                const sel = document.getElementById('mobile-sel-store');
+                if (sel && data.created_stores && data.created_stores.length > 0) {
+                    sel.innerHTML = data.created_stores.map(st => `
+                        <option value="${st.store_no}">${st.store_no} (${st.store_name || ''})</option>
+                    `).join('');
+                    currentStoreNo = sel.value;
+                }
+            } catch (e) {
+                console.error('Error loading stores:', e);
+            }
+        }
+
+        // إرسال الكود للباك إند والكمبيوتر
+        async function submitScannedCode(rawCode) {
+            const code = String(rawCode || '').trim();
+            if (!code) return;
+
+            // حماية من التكرار اللحظي لنفس الباركود في جزء من الثانية
+            const now = Date.now();
+            if (code === lastScannedCode && (now - lastScanTimestamp) < 1200) {
+                return;
+            }
+            lastScannedCode = code;
+            lastScanTimestamp = now;
+
+            triggerSuccessFlash();
+
+            const lblStatus = document.getElementById('scan-status-label');
+            const dotStatus = document.getElementById('scan-status-dot');
+            const lblName = document.getElementById('scan-product-name');
+            const lblCode = document.getElementById('scan-product-code');
+            const lblTime = document.getElementById('scan-time-label');
+
+            if (lblStatus) lblStatus.textContent = 'جاري الإرسال للكمبيوتر...';
+            if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping';
+            if (lblTime) lblTime.textContent = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            try {
+                const payload = {
+                    code: code,
+                    target: currentTarget,
+                    store_no: currentStoreNo
+                };
+
+                const res = await fetch('/api/mobile/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    playBeep(true);
+                    if (lblStatus) lblStatus.textContent = '✅ تم السحب والإرسال بنجاح';
+                    if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-emerald-400';
+                    
+                    const prodName = data.product_name || (data.product && data.product.name) || code;
+                    const prodCode = data.product_code || (data.product && data.product.code) || code;
+                    const batch = data.batch || '';
+
+                    if (lblName) lblName.textContent = prodName;
+                    if (lblCode) lblCode.textContent = `الكود: ${prodCode} ${batch ? '| تشغيلة: ' + batch : ''}`;
+                } else {
+                    playBeep(false);
+                    if (lblStatus) lblStatus.textContent = '⚠️ ' + (data.message || 'تنبيه في الصنف');
+                    if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-rose-400';
+                    if (lblName) lblName.textContent = data.message || 'لم يتم احتساب الصنف';
+                    if (lblCode) lblCode.textContent = `الكود: ${code}`;
+                }
+            } catch (err) {
+                playBeep(false);
+                if (lblStatus) lblStatus.textContent = '❌ خطأ في الاتصال';
+                if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-rose-500';
+                if (lblName) lblName.textContent = err.message || 'تعذر الاتصال بالسيرفر';
+            }
+        }
+
+        // تشغيل كاميرا الجوال مع دعم كافة الصيغ: باركود، كيو ار، وداتاماتريكس دولي
+        function startMobileCamera() {
+            if (typeof Html5Qrcode === 'undefined') {
+                alert('مكتبة الكاميرا غير محملة. تأكد من اتصال الإنترنت أو تحديث الصفحة.');
+                return;
+            }
+
+            const btnRestart = document.getElementById('btn-restart-camera');
+            if (btnRestart) btnRestart.classList.add('hidden');
+
+            if (html5QrCode) {
+                try {
+                    html5QrCode.stop().catch(() => {}).finally(() => {
+                        html5QrCode.clear();
+                        html5QrCode = null;
+                        initHtml5QrCodeInstance();
+                    });
+                    return;
+                } catch(e) {}
+            }
+            initHtml5QrCodeInstance();
+        }
+
+        function initHtml5QrCodeInstance() {
+            // تفعيل الصيغ الثلاث المطلوبة: Barcode 1D + QR Code + International DataMatrix
+            const formatsToSupport = [
+                Html5QrcodeSupportedFormats.QR_CODE,
+                Html5QrcodeSupportedFormats.DATA_MATRIX,
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.UPC_A,
+                Html5QrcodeSupportedFormats.UPC_E,
+                Html5QrcodeSupportedFormats.CODABAR
+            ];
+
+            html5QrCode = new Html5Qrcode("mobile-camera-viewport", {
+                formatsToSupport: formatsToSupport,
+                verbose: false
+            });
+
+            const config = {
+                fps: 15,
+                qrbox: (w, h) => {
+                    const minEdge = Math.min(w, h);
+                    return { width: Math.floor(minEdge * 0.8), height: Math.floor(minEdge * 0.8) };
+                },
+                aspectRatio: 1.0,
+                videoConstraints: {
+                    facingMode: currentFacingMode,
+                    focusMode: "continuous"
+                }
+            };
+
+            html5QrCode.start(
+                { facingMode: currentFacingMode },
+                config,
+                (decodedText) => {
+                    submitScannedCode(decodedText);
+                    if (!isContinuous) {
+                        // إيقاف مؤقت إذا لم يكن الوضع المستمر مفعلاً
+                    }
+                },
+                (errorMessage) => {
+                    // ignore per-frame decode errors
+                }
+            ).catch(err => {
+                console.error("Camera start error:", err);
+                const btnRestart = document.getElementById('btn-restart-camera');
+                if (btnRestart) btnRestart.classList.remove('hidden');
+            });
+        }
+
+        // تشغيل كشاف الجوال Torch
+        async function toggleTorch() {
+            if (!html5QrCode) return;
+            try {
+                isTorchOn = !isTorchOn;
+                await html5QrCode.applyVideoConstraints({
+                    advanced: [{ torch: isTorchOn }]
+                });
+                const btn = document.getElementById('btn-toggle-torch');
+                if (btn) {
+                    btn.className = isTorchOn
+                        ? 'px-2.5 py-1.5 rounded-lg bg-amber-500 text-slate-900 font-bold text-xs transition border border-amber-400 shadow-md'
+                        : 'px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs transition border border-slate-600';
+                }
+            } catch (err) {
+                alert('الكشاف غير مدعوم في متصفحك أو كاميرا هذا الجوال.');
+            }
+        }
+
+        // تبديل العدسة (الأمامية / الخلفية)
+        function flipCamera() {
+            currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+            startMobileCamera();
+        }
+
+        // معالجة صورة ملتقطة بالكاميرا كبديل 100%
+        document.getElementById('mobile-file-snap')?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+
+            const lblStatus = document.getElementById('scan-status-label');
+            if (lblStatus) lblStatus.textContent = 'جاري تحليل الصورة...';
+
+            try {
+                if (!html5QrCode) {
+                    html5QrCode = new Html5Qrcode("mobile-camera-viewport");
+                }
+                const decodedText = await html5QrCode.scanFile(file, true);
+                if (decodedText) {
+                    submitScannedCode(decodedText);
+                }
+            } catch (err) {
+                alert('لم يتم العثور على باركود أو كود صالح في الصورة الملتقطة. يُرجى التقاط صورة واضحة ومقربة.');
+            } finally {
+                e.target.value = '';
+            }
+        });
+
+        // تبديل أزرار الوجهة (الجرد / الفاتورة)
+        document.getElementById('tab-target-stocktake')?.addEventListener('click', () => {
+            currentTarget = 'stocktake';
+            document.getElementById('tab-target-stocktake').className = 'flex-1 py-1 text-center rounded-md bg-indigo-600 text-white shadow transition';
+            document.getElementById('tab-target-invoice').className = 'flex-1 py-1 text-center rounded-md text-slate-400 hover:text-white transition';
+            document.getElementById('store-selector-box')?.classList.remove('hidden');
+        });
+
+        document.getElementById('tab-target-invoice')?.addEventListener('click', () => {
+            currentTarget = 'invoice';
+            document.getElementById('tab-target-invoice').className = 'flex-1 py-1 text-center rounded-md bg-indigo-600 text-white shadow transition';
+            document.getElementById('tab-target-stocktake').className = 'flex-1 py-1 text-center rounded-md text-slate-400 hover:text-white transition';
+            document.getElementById('store-selector-box')?.classList.add('hidden');
+        });
+
+        document.getElementById('mobile-sel-store')?.addEventListener('change', (e) => {
+            currentStoreNo = e.target.value;
+        });
+
+        // تبديل الوضع السريع المستمر
+        document.getElementById('btn-toggle-continuous')?.addEventListener('click', () => {
+            isContinuous = !isContinuous;
+            const btn = document.getElementById('btn-toggle-continuous');
+            const txt = document.getElementById('continuous-text');
+            if (isContinuous) {
+                btn.className = 'flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95';
+                if (txt) txt.textContent = 'سحب مستمر: مفعّل';
+            } else {
+                btn.className = 'flex-1 py-1.5 px-2 rounded-xl bg-slate-700 text-slate-400 border border-slate-600 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95';
+                if (txt) txt.textContent = 'سحب فردي';
+            }
+        });
+
+        document.getElementById('btn-toggle-torch')?.addEventListener('click', toggleTorch);
+        document.getElementById('btn-flip-camera')?.addEventListener('click', flipCamera);
+        document.getElementById('btn-restart-camera')?.addEventListener('click', startMobileCamera);
+
+        // إدخال يدوي
+        document.getElementById('btn-manual-send')?.addEventListener('click', () => {
+            const inp = document.getElementById('mobile-manual-input');
+            if (inp && inp.value.trim()) {
+                submitScannedCode(inp.value.trim());
+                inp.value = '';
+            }
+        });
+        document.getElementById('mobile-manual-input')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const inp = document.getElementById('mobile-manual-input');
+                if (inp && inp.value.trim()) {
+                    submitScannedCode(inp.value.trim());
+                    inp.value = '';
+                }
+            }
+        });
+
+        // ملء الشاشة
+        document.getElementById('btn-toggle-fullscreen')?.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen?.().catch(() => {});
+            } else {
+                document.exitFullscreen?.().catch(() => {});
+            }
+        });
+
+        // بدء التشغيل عند فتح الصفحة في الجوال
+        window.addEventListener('DOMContentLoaded', () => {
+            loadMobileStores();
+            setTimeout(startMobileCamera, 400);
+        });
+    </script>
+</body>
+</html>

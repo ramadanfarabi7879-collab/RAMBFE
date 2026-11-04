@@ -1,0 +1,46 @@
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+backend/__pycache__/
+
+# Database & Runtime Data
+database.db
+database.sqlite
+data/*.db
+data/*.sqlite
+temp/
+*.log
+
+# Debug and temporary dump files
+page_*.jpg
+page_*.png
+ocr_*.txt
+ocr_*.json
+debug_*.txt
+lines_out.txt
+table_lines_out.txt
+final_*.txt
+exact_quantities.txt
+extracted_items_preview.txt
+perfect_32.txt
+inv5_lines_out.txt
+multiline_engine_results.txt
+*.xlsx
+*.xls
+scratch/
+
+# Cloudflare temporary logs
+cf_*.log
+temp/cloudflare_url.txt
+
+# OS metadata
+.DS_Store
+Thumbs.db

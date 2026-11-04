@@ -1,0 +1,1411 @@
+import os
+import sys
+import re
+import json
+import uuid
+import logging
+import mimetypes
+import time
+import socket
+from urllib.parse import urlparse, parse_qs, quote
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
+
+logger = logging.getLogger("server")
+
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except:
+    pass
+
+try:
+    from .db import (
+        init_db, get_stats, get_next_product_code,
+        save_or_update_product, delete_product, search_products,
+        get_product_by_code, find_product_by_gtin_or_barcode,
+        get_or_create_draft_invoice, create_new_invoice, get_invoice_details,
+        scan_qr_to_invoice, delete_scanned_serial, delete_invoice_line,
+        clear_invoice_lines, update_invoice_line_quantity, add_manual_item_to_invoice,
+        confirm_invoice, process_serial_return, get_all_invoices,
+        get_all_products, get_aliases, save_alias, clear_catalog,
+        get_all_supplier_templates, save_supplier_template, delete_supplier_template,
+        get_audit_logs
+    )
+    from .qr_parser import parse_qr_code, extract_clean_gtin
+    from .catalog_importer import (
+        inspect_excel_catalog, preview_import_catalog, commit_import_catalog
+    )
+    from .invoice_file_importer import import_invoice_file_to_active_invoice
+    from .excel_exporter import export_invoice_to_excel, export_invoice_stock_count_to_excel, export_invoice_custom_columns_to_excel, export_catalog_to_excel
+    from .stock_manager import (
+        get_all_stores, create_new_store, update_store, delete_store,
+        get_store_stocktake_details, scan_item_to_store,
+        update_entry_quantity, delete_entry_item,
+        clear_store_stocktake, settle_store_stocktake, commit_stores_stocktake, populate_store_from_inventory, save_stock_batch_count,
+        upload_inventory_excel, export_store_stocktake_to_excel,
+        clear_inventory_records, bulk_delete_stock_entries, edit_stocktake_entry,
+        reset_all_stocktake_test_data, get_uncounted_store_items, export_uncounted_items_to_excel
+    )
+except (ImportError, ValueError):
+    from backend.db import (
+        init_db, get_stats, get_next_product_code,
+        save_or_update_product, delete_product, search_products,
+        get_product_by_code, find_product_by_gtin_or_barcode,
+        get_or_create_draft_invoice, create_new_invoice, get_invoice_details,
+        scan_qr_to_invoice, delete_scanned_serial, delete_invoice_line,
+        clear_invoice_lines, update_invoice_line_quantity, add_manual_item_to_invoice,
+        confirm_invoice, process_serial_return, get_all_invoices,
+        get_all_products, get_aliases, save_alias, clear_catalog,
+        get_all_supplier_templates, save_supplier_template, delete_supplier_template,
+        get_audit_logs
+    )
+    from backend.qr_parser import parse_qr_code, extract_clean_gtin
+    from backend.catalog_importer import (
+        inspect_excel_catalog, preview_import_catalog, commit_import_catalog
+    )
+    from backend.invoice_file_importer import import_invoice_file_to_active_invoice
+    from backend.excel_exporter import export_invoice_to_excel, export_invoice_stock_count_to_excel, export_invoice_custom_columns_to_excel, export_catalog_to_excel
+    from backend.stock_manager import (
+        get_all_stores, create_new_store, update_store, delete_store,
+        get_store_stocktake_details, scan_item_to_store,
+        update_entry_quantity, delete_entry_item,
+        clear_store_stocktake, settle_store_stocktake, commit_stores_stocktake, populate_store_from_inventory, save_stock_batch_count,
+        upload_inventory_excel, export_store_stocktake_to_excel,
+        clear_inventory_records, bulk_delete_stock_entries, edit_stocktake_entry,
+        reset_all_stocktake_test_data
+    )
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+TEMP_DIR = os.path.join(BASE_DIR, "temp")
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+def auto_open_file(file_path: str) -> bool:
+    """
+    1. ضمان حفظ ونسخ الملف مباشرة في مجلد التنزيلات C:\\Users\\PH\\Downloads ليكون في متناول يد المستخدم فوراً
+    2. تشغيل الملف أوتوماتيكياً في برنامج Microsoft Excel أو المشغل الافتراضي
+    """
+    if not file_path or not os.path.exists(file_path):
+        return False
+    abs_path = os.path.abspath(file_path)
+
+    # 1. نسخ أو حفظ الملف مباشرة في مجلد Downloads الخاص بالمستخدم
+    saved_target = abs_path
+    try:
+        downloads_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
+        if os.path.isdir(downloads_dir):
+            file_name = os.path.basename(abs_path)
+            target = os.path.join(downloads_dir, file_name)
+            try:
+                import shutil
+                shutil.copy2(abs_path, target)
+                saved_target = target
+                logger.info(f"File copied directly to Downloads: {target}")
+            except Exception:
+                # إذا كان الملف محجوزاً حالياً في برنامج Excel، نحفظه باسم مميز مع التوقيت
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base, ext = os.path.splitext(file_name)
+                target = os.path.join(downloads_dir, f"{base}_{ts}{ext}")
+                try:
+                    import shutil
+                    shutil.copy2(abs_path, target)
+                    saved_target = target
+                    logger.info(f"File copied to Downloads with timestamp: {target}")
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"Error copying to downloads: {e}")
+
+    # 2. تشغيل الملف في برنامج Microsoft Excel
+    opened = False
+    if sys.platform == 'win32':
+        # أ) البحث عن مسار تطبيق Microsoft Excel وتشغيله بالملف
+        excel_candidates = [
+            r"C:\Program Files (x86)\Microsoft Office\Root\Office16\EXCEL.EXE",
+            r"C:\Program Files\Microsoft Office\Root\Office16\EXCEL.EXE",
+            r"C:\Program Files (x86)\Microsoft Office\Office16\EXCEL.EXE",
+            r"C:\Program Files\Microsoft Office\Office16\EXCEL.EXE",
+            r"C:\Program Files (x86)\Microsoft Office\Office15\EXCEL.EXE",
+            r"C:\Program Files\Microsoft Office\Office15\EXCEL.EXE",
+        ]
+        excel_exe = next((p for p in excel_candidates if os.path.isfile(p)), None)
+        if excel_exe:
+            try:
+                import subprocess
+                flags = 0x00000008 | 0x00000200 # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+                subprocess.Popen([excel_exe, saved_target], creationflags=flags)
+                opened = True
+                logger.info(f"Launched Excel directly: {excel_exe} on {saved_target}")
+            except Exception as e:
+                logger.warning(f"Failed to launch Excel directly: {e}")
+
+        # ب) استخدام os.startfile كخيار مساند قياسي
+        if not opened and hasattr(os, 'startfile'):
+            try:
+                os.startfile(saved_target)
+                opened = True
+                logger.info(f"Opened via os.startfile: {saved_target}")
+            except Exception as e:
+                logger.warning(f"os.startfile failed: {e}")
+
+        # ج) فتح عبر أمر cmd start
+        if not opened:
+            try:
+                import subprocess
+                subprocess.Popen(f'cmd.exe /c start "" "{saved_target}"', shell=True)
+                opened = True
+                logger.info(f"Opened via cmd start: {saved_target}")
+            except Exception as e:
+                logger.warning(f"cmd start failed: {e}")
+
+    elif sys.platform == 'darwin':
+        import subprocess
+        subprocess.Popen(['open', saved_target])
+        opened = True
+    else:
+        import subprocess
+        subprocess.Popen(['xdg-open', saved_target])
+        opened = True
+
+    return opened
+
+# تهيئة قاعدة البيانات عند بدء السيرفر
+init_db()
+
+def make_content_disposition(file_name: str, disposition: str = "attachment") -> str:
+    """
+    تكوين ترويسة Content-Disposition متوافقة تماماً مع معيار RFC 5987 / RFC 6266
+    تمنع خطأ الترميز latin-1 في http.server عند وجود أسماء باللغة العربية
+    مع الحفاظ على الاسم العربي الأصلي للملف داخل المتصفحات ونظام التشغيل
+    """
+    clean_fn = os.path.basename(file_name or "export.xlsx")
+    ascii_name = re.sub(r'[^a-zA-Z0-9_\.-]', '_', clean_fn).strip('_')
+    ext = os.path.splitext(clean_fn)[1] or '.xlsx'
+    if not ascii_name or not ascii_name.lower().endswith(('.xlsx', '.xls', '.csv', '.pdf', '.txt')):
+        ascii_name = f"export{ext}"
+    encoded_fn = quote(clean_fn)
+    return f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded_fn}"
+
+MOBILE_SCANS_QUEUE = []
+
+def get_local_ip() -> str:
+    """استخراج عنوان IP المحلي للجهاز على الشبكة المحلية / الواي فاي بدقة"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
+
+def extract_boundary(content_type_header: str) -> bytes:
+    """استخراج قيمة الـ boundary بأمان من ترويسة الطلب"""
+    if not content_type_header:
+        return b""
+    m = re.search(r'boundary=(?:"([^"]+)"|([^;]+))', content_type_header, re.IGNORECASE)
+    if m:
+        val = m.group(1) or m.group(2)
+        return val.strip().encode('utf-8')
+    return b""
+
+def parse_multipart(body_bytes: bytes, boundary: bytes):
+    """محلل مدمج متين لملفات Multipart Form Data يدعم الملفات الكبيرة والأسماء العربية"""
+    if not boundary:
+        return {}, {}
+    parts = body_bytes.split(b"--" + boundary)
+    files = {}
+    fields = {}
+
+    for part in parts:
+        if not part or part in (b"--\r\n", b"--", b"\r\n"):
+            continue
+        if b"\r\n\r\n" in part:
+            header_data, content = part.split(b"\r\n\r\n", 1)
+            if content.endswith(b"\r\n"):
+                content = content[:-2]
+            elif content.endswith(b"\r\n--"):
+                content = content[:-4]
+                
+            header_str = header_data.decode("utf-8", errors="ignore")
+            name = None
+            filename = None
+            
+            m_name = re.search(r'name="([^"]+)"', header_str)
+            if m_name:
+                name = m_name.group(1)
+            else:
+                m_name2 = re.search(r'name=([^;\r\n]+)', header_str)
+                if m_name2:
+                    name = m_name2.group(1).strip('"\' ')
+            
+            m_file = re.search(r'filename="([^"]+)"', header_str)
+            if m_file:
+                filename = m_file.group(1)
+            else:
+                m_file2 = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^\r\n";]+)"?', header_str)
+                if m_file2:
+                    filename = m_file2.group(1).strip('"\' ')
+                            
+            if filename and name:
+                files[name] = {"filename": filename, "content": content}
+            elif name:
+                fields[name] = content.decode("utf-8", errors="ignore")
+                
+    return fields, files
+
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+class AppRequestHandler(BaseHTTPRequestHandler):
+
+    def log_message(self, format, *args):
+        """توجيه سجلات الوصول إلى stdout لتجنب إيقاف PowerShell للعملية"""
+        try:
+            sys.stdout.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
+            sys.stdout.flush()
+        except:
+            pass
+
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def send_json(self, data, status=200):
+        body = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def read_full_body(self) -> bytes:
+        """قراءة كامل جسم الطلب بدقة ومنع اقتطاع الملفات الكبيرة في مقبس ويندوز"""
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length <= 0:
+            return b""
+        remaining = content_length
+        chunks = []
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        params = parse_qs(parsed.query)
+
+        # 1. إحصائيات النظام
+        if path == '/api/stats':
+            self.send_json(get_stats())
+            return
+
+        # 1.ب بيانات شبكة الواي فاي للربط اللاسلكي مع الجوال
+        if path == '/api/network-info':
+            ip = get_local_ip()
+            port = self.server.server_address[1]
+            self.send_json({
+                "ip": ip,
+                "port": port,
+                "mobile_url": f"http://{ip}:{port}/mobile"
+            })
+            return
+
+        # 1.ج استطلاع مسحات الجوال اللحظية (Polling للكمبيوتر)
+        if path == '/api/mobile/poll':
+            try:
+                since = float(params.get('since', [0])[0] or 0)
+            except:
+                since = 0.0
+            scans = [s for s in MOBILE_SCANS_QUEUE if s.get('timestamp', 0) > since]
+            self.send_json({"scans": scans, "timestamp": time.time()})
+            return
+
+        # 2. توليد الكود الداخلي الرقمي التالي للصنف
+        if path == '/api/catalog/next-code':
+            self.send_json({"code": get_next_product_code()})
+            return
+
+        # 3. استعراض وبحث الأصناف
+        if path == '/api/catalog/products':
+            q = params.get('query', [''])[0].strip()
+            limit_str = params.get('limit', ['50'])[0]
+            offset_str = params.get('offset', ['0'])[0]
+            limit = int(limit_str) if limit_str.isdigit() else 50
+            offset = int(offset_str) if offset_str.isdigit() else 0
+            self.send_json(search_products(q, limit, offset))
+            return
+
+        # 4. جلب صنف واحد بالكود
+        if path == '/api/catalog/product':
+            code = params.get('code', [''])[0].strip()
+            prod = get_product_by_code(code)
+            if prod:
+                self.send_json({"success": True, "product": prod})
+            else:
+                self.send_json({"success": False, "message": "الصنف غير موجود"}, 404)
+            return
+
+        # 5. جلب مسودة الفاتورة الحالية أو إنشاء واحدة
+        if path == '/api/invoice/active':
+            inv = get_or_create_draft_invoice()
+            self.send_json({"success": True, "invoice": inv})
+            return
+
+        # 6. استعراض قائمة الفواتير
+        if path == '/api/invoices/list':
+            limit_str = params.get('limit', ['50'])[0]
+            offset_str = params.get('offset', ['0'])[0]
+            limit = int(limit_str) if limit_str.isdigit() else 50
+            offset = int(offset_str) if offset_str.isdigit() else 0
+            invoices = get_all_invoices(limit, offset)
+            self.send_json({"success": True, "invoices": invoices})
+            return
+
+        # 7. جلب تفاصيل فاتورة محددة
+        if path == '/api/invoices/get':
+            inv_id_str = params.get('id', ['0'])[0].strip()
+            inv_id = int(inv_id_str) if inv_id_str.isdigit() else 0
+            inv = get_invoice_details(inv_id)
+            if inv:
+                self.send_json({"success": True, "invoice": inv})
+            else:
+                self.send_json({"success": False, "message": "الفاتورة غير موجودة"}, 404)
+            return
+
+        # 8. تصدير وسحب أصناف الفاتورة إلى Excel (يدعم النموذج الأول للفاتورة والنموذج الثاني للجرد والكميات) وفتح الملف أوتوماتيكياً
+        if path in ('/api/invoice/export-excel', '/api/invoice/export', '/api/invoice/export-stock-excel', '/api/invoice/export-stock'):
+            inv_id_str = params.get('id', [''])[0].strip() or params.get('invoice_id', [''])[0].strip()
+            inv_id = int(inv_id_str) if inv_id_str.isdigit() else 0
+            if not inv_id:
+                draft = get_or_create_draft_invoice()
+                inv_id = draft['id']
+            inv = get_invoice_details(inv_id)
+            if not inv:
+                self.send_json({"detail": "الفاتورة غير موجودة"}, 404)
+                return
+
+            fmt = params.get('format', [''])[0].strip().lower() or params.get('type', [''])[0].strip().lower()
+            is_stock_format = (path in ('/api/invoice/export-stock-excel', '/api/invoice/export-stock')) or (fmt in ('stock', 'stock_count', 'counted', '2'))
+
+            custom_sheet_name = params.get('sheet_name', [''])[0].strip() or params.get('title', [''])[0].strip()
+            location_val = params.get('location_val', [''])[0].strip()
+            safe_custom_file = re.sub(r'[\\/*?:"<>|]', '_', custom_sheet_name).strip() if custom_sheet_name else ""
+
+            inv_number = inv.get("invoice_number", "INV")
+            inv_date = inv.get("invoice_date", "2026-10-29")
+            if is_stock_format:
+                file_name = f"{safe_custom_file}.xlsx" if safe_custom_file else f"StockCount_{inv_number}_{inv_date}.xlsx"
+                out_path = os.path.join(TEMP_DIR, file_name)
+                out_path = export_invoice_stock_count_to_excel(inv, out_path, sheet_title=custom_sheet_name or None, location_value=location_val or None)
+            else:
+                file_name = f"{safe_custom_file}.xlsx" if safe_custom_file else f"Invoice_{inv_number}_{inv_date}.xlsx"
+                out_path = os.path.join(TEMP_DIR, file_name)
+                out_path = export_invoice_to_excel(inv, out_path, sheet_title=custom_sheet_name or None)
+
+            file_name = os.path.basename(out_path)
+
+            if os.path.exists(out_path):
+                with open(out_path, 'rb') as f:
+                    file_data = f.read()
+
+                # فتح الملف أوتوماتيكياً في برنامج Excel فور سحبه
+                auto_open_file(out_path)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                self.send_header('Content-Disposition', make_content_disposition(file_name))
+                self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+                self.send_header('Content-Length', str(len(file_data)))
+                self.end_headers()
+                self.wfile.write(file_data)
+                return
+            else:
+                self.send_json({"detail": "فشل إنشاء ملف الإكسيل"}, 500)
+                return
+
+        # 8.أ-2 فتح ملف إكسيل الفاتورة مباشرة بدون انتظار التحميل (يدعم النموذج الأول والثاني)
+        if path in ('/api/invoice/open-excel', '/api/invoice/open', '/api/invoice/open-stock-excel'):
+            try:
+                inv_id_str = params.get('id', [''])[0].strip() or params.get('invoice_id', [''])[0].strip()
+                inv_id = int(inv_id_str) if inv_id_str.isdigit() else 0
+                if not inv_id:
+                    draft = get_or_create_draft_invoice()
+                    inv_id = draft['id']
+                inv = get_invoice_details(inv_id)
+                if not inv:
+                    self.send_json({"success": False, "message": "الفاتورة غير موجودة"}, 404)
+                    return
+
+                fmt = params.get('format', [''])[0].strip().lower() or params.get('type', [''])[0].strip().lower()
+                is_stock_format = (path == '/api/invoice/open-stock-excel') or (fmt in ('stock', 'stock_count', 'counted', '2'))
+
+                inv_number = inv.get("invoice_number", "INV")
+                inv_date = inv.get("invoice_date", "2026-10-29")
+                if is_stock_format:
+                    file_name = f"StockCount_{inv_number}_{inv_date}.xlsx"
+                    out_path = os.path.join(TEMP_DIR, file_name)
+                    out_path = export_invoice_stock_count_to_excel(inv, out_path)
+                else:
+                    file_name = f"Invoice_{inv_number}_{inv_date}.xlsx"
+                    out_path = os.path.join(TEMP_DIR, file_name)
+                    out_path = export_invoice_to_excel(inv, out_path)
+
+                file_name = os.path.basename(out_path)
+                opened = auto_open_file(out_path)
+                self.send_json({
+                    "success": True,
+                    "opened": opened,
+                    "file_name": file_name,
+                    "file_path": out_path,
+                    "message": "تم سحب أصناف الفاتورة وفتح ملف Excel بنجاح." if opened else "تم سحب أصناف الفاتورة بنجاح."
+                })
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 500)
+            return
+
+        # 8.ب تصدير كروت الأصناف إلى Excel (XLSX) مع فتح الملف أوتوماتيكياً ودعم النطاقات المحددة
+        if path in ('/api/catalog/export-excel', '/api/catalog/export'):
+            try:
+                scope = params.get('scope', ['all'])[0].strip().lower()
+                codes_param = params.get('codes', [''])[0].strip()
+                selected_codes = [c.strip() for c in codes_param.split(',') if c.strip()] if codes_param else None
+
+                inv_id_param = params.get('invoice_id', [''])[0].strip() or params.get('id', [''])[0].strip()
+                inv_id = int(inv_id_param) if inv_id_param.isdigit() else None
+
+                fields_param = params.get('fields', [''])[0].strip()
+                selected_fields = [f.strip() for f in fields_param.split(',') if f.strip()] if fields_param else None
+
+                if scope == 'invoice' and not inv_id:
+                    draft = get_or_create_draft_invoice()
+                    inv_id = draft['id'] if draft else None
+
+                today_str = datetime.now().strftime("%Y%m%d_%H%M")
+                if scope == 'selected' and selected_codes:
+                    file_name = f"Products_Selected_{len(selected_codes)}_{today_str}.xlsx"
+                elif scope == 'invoice' and inv_id:
+                    file_name = f"Products_Invoice_{inv_id}_{today_str}.xlsx"
+                else:
+                    file_name = f"Products_Catalog_{today_str}.xlsx"
+
+                out_path = os.path.join(TEMP_DIR, file_name)
+                out_path = export_catalog_to_excel(out_path, product_codes=selected_codes, invoice_id=inv_id if scope == 'invoice' else None, selected_fields=selected_fields)
+                file_name = os.path.basename(out_path)
+
+                if os.path.exists(out_path):
+                    with open(out_path, 'rb') as f:
+                        file_data = f.read()
+
+                    # فتح الملف أوتوماتيكياً في برنامج Excel فور سحبه
+                    auto_open_file(out_path)
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    self.send_header('Content-Disposition', make_content_disposition(file_name))
+                    self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+                    self.send_header('Content-Length', str(len(file_data)))
+                    self.end_headers()
+                    self.wfile.write(file_data)
+                    return
+                else:
+                    self.send_json({"detail": "فشل إنشاء ملف إكسيل دليل الأصناف"}, 500)
+                    return
+            except Exception as e:
+                self.send_json({"detail": f"خطأ أثناء تصدير دليل الأصناف: {str(e)}"}, 500)
+                return
+
+        # 8.ج استعراض سجل المراجعة والتعديلات (Audit Log)
+        if path == '/api/catalog/audit-logs':
+            try:
+                limit_str = params.get('limit', ['100'])[0]
+                limit = int(limit_str) if limit_str.isdigit() else 100
+                entity_type = params.get('type', [None])[0]
+                entity_id = params.get('code', [None])[0] or params.get('id', [None])[0]
+                logs = get_audit_logs(limit=limit, entity_type=entity_type, entity_id=entity_id)
+                self.send_json({"success": True, "logs": logs})
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 9. نظام الجرد الفعلي ومطابقة الأرصدة (GET)
+        if path == '/api/stock/stores':
+            try:
+                q = params.get('q', [''])[0].strip() or params.get('query', [''])[0].strip()
+                self.send_json(get_all_stores(q))
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/store/details':
+            try:
+                store_no = params.get('store_no', ['ST-001'])[0].strip() or 'ST-001'
+                q = params.get('query', [''])[0].strip() or params.get('q', [''])[0].strip()
+                res = get_store_stocktake_details(store_no, q)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path in ('/api/stock/export-excel', '/api/stock/export'):
+            try:
+                store_no = params.get('store_no', ['ST-001'])[0].strip() or 'ST-001'
+                sheet_title = params.get('sheet_name', [''])[0].strip() or params.get('title', [''])[0].strip()
+                location_val = params.get('location_val', [''])[0].strip()
+                safe_title = re.sub(r'[\\/*?:"<>|]', '_', sheet_title or store_no).strip()
+                today_str = datetime.now().strftime("%Y%m%d_%H%M")
+                file_name = f"Stocktake_{safe_title}_{today_str}.xlsx"
+                out_path = os.path.join(TEMP_DIR, file_name)
+                out_path = export_store_stocktake_to_excel(out_path, store_no, sheet_title=sheet_title or None, location_val=location_val or None)
+
+                if os.path.exists(out_path):
+                    with open(out_path, 'rb') as f:
+                        file_data = f.read()
+
+                    auto_open_file(out_path)
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    self.send_header('Content-Disposition', make_content_disposition(file_name))
+                    self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+                    self.send_header('Content-Length', str(len(file_data)))
+                    self.end_headers()
+                    self.wfile.write(file_data)
+                    return
+                else:
+                    self.send_json({"detail": "فشل إنشاء ملف إكسيل الجرد"}, 500)
+                    return
+            except Exception as e:
+                self.send_json({"detail": f"خطأ أثناء تصدير الجرد: {str(e)}"}, 500)
+                return
+
+        # تقرير الأصناف التي لم تُجرد (Estimated Not Found)
+        if path == '/api/stock/uncounted':
+            try:
+                store_no = params.get('store_no', ['ST-001'])[0].strip() or 'ST-001'
+                category = params.get('category', [''])[0].strip()
+                data = get_uncounted_store_items(store_no, category)
+                self.send_json(data)
+                return
+            except Exception as e:
+                self.send_json({"detail": f"خطأ في جلب الأصناف غير المجرودة: {str(e)}"}, 500)
+                return
+
+        # تصدير إكسيل الأصناف التي لم تُجرد
+        if path in ('/api/stock/uncounted/export-excel', '/api/stock/uncounted-export'):
+            try:
+                store_no = params.get('store_no', ['ST-001'])[0].strip() or 'ST-001'
+                sheet_title = params.get('sheet_name', [''])[0].strip() or params.get('title', [''])[0].strip()
+                safe_title = re.sub(r'[\\/*?:"<>|]', '_', sheet_title or f"NOT_FOUND_{store_no}").strip()
+                today_str = datetime.now().strftime("%Y%m%d_%H%M")
+                file_name = f"EstimatedNotFound_{safe_title}_{today_str}.xlsx"
+                out_path = os.path.join(TEMP_DIR, file_name)
+                out_path = export_uncounted_items_to_excel(out_path, store_no, sheet_title=sheet_title or None)
+
+                if os.path.exists(out_path):
+                    with open(out_path, 'rb') as f:
+                        file_data = f.read()
+
+                    auto_open_file(out_path)
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    self.send_header('Content-Disposition', make_content_disposition(file_name))
+                    self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+                    self.send_header('Content-Length', str(len(file_data)))
+                    self.end_headers()
+                    self.wfile.write(file_data)
+                    return
+                else:
+                    self.send_json({"detail": "فشل إنشاء ملف إكسيل الأصناف غير المجرودة"}, 500)
+                    return
+            except Exception as e:
+                self.send_json({"detail": f"خطأ أثناء تصدير إكسيل الأصناف غير المجرودة: {str(e)}"}, 500)
+                return
+
+        # خدمة ملفات الواجهة (Frontend Static Files)
+        file_path = FRONTEND_DIR
+        rel_path = path.lstrip('/')
+        if not rel_path or rel_path == '/':
+            file_path = os.path.join(FRONTEND_DIR, 'index.html')
+        elif rel_path in ('mobile', 'mobile-scanner', 'mobile.html'):
+            file_path = os.path.join(FRONTEND_DIR, 'mobile.html')
+        else:
+            file_path = os.path.join(FRONTEND_DIR, rel_path)
+
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                mime_type = 'application/octet-stream'
+            if mime_type.startswith('text/') or mime_type in ('application/javascript', 'application/json'):
+                mime_type += '; charset=utf-8'
+
+            with open(file_path, 'rb') as f:
+                content = f.read()
+
+            self.send_response(200)
+            self.send_header('Content-Type', mime_type)
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"404 Not Found")
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        body_bytes = self.read_full_body()
+        content_type = self.headers.get('Content-Type', '')
+
+        # 1. حفظ أو تعديل بطاقة صنف
+        if path == '/api/catalog/save':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                ok, code, msg = save_or_update_product(data)
+                self.send_json({"success": ok, "code": code, "message": msg})
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 2. حذف بطاقة صنف
+        if path == '/api/catalog/delete':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                code = data.get('code')
+                ok = delete_product(code)
+                self.send_json({"success": ok, "message": "تم حذف الصنف بنجاح" if ok else "فشل الحذف"})
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 2.ب استخراج رقم GTIN النظيف من أي مسح QR أو باركود لكرت الصنف
+        if path == '/api/catalog/parse-gtin':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                raw = str(data.get('raw', '')).strip()
+                clean = extract_clean_gtin(raw)
+                self.send_json({"success": True, "gtin": clean, "raw": raw})
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 2.ب-2 تحليل وقراءة كود GS1 QR بالكامل (GTIN, Serial, Batch, Expiry) للعرض قبل الفلترة
+        if path == '/api/catalog/parse-gs1':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                raw = str(data.get('raw', '')).strip()
+                parsed = parse_qr_code(raw)
+                gtin = ""
+                serial = ""
+                batch = ""
+                expiry = ""
+                prod_date = ""
+                if parsed and parsed.get("success"):
+                    pdata = parsed.get("data", {})
+                    gtin = pdata.get("gtin", "")
+                    serial = pdata.get("serial", "")
+                    batch = pdata.get("batch", "")
+                    expiry = pdata.get("expiry", "")
+                    prod_date = pdata.get("prod_date", "")
+
+                if not gtin:
+                    gtin = extract_clean_gtin(raw)
+
+                is_gs1 = bool(serial or batch or expiry or prod_date or (gtin and (raw.startswith("01") or "(01)" in raw or "/01/" in raw or len(raw) > 14)))
+
+                self.send_json({
+                    "success": True,
+                    "is_gs1": is_gs1,
+                    "gtin": gtin,
+                    "serial": serial,
+                    "batch": batch,
+                    "expiry": expiry,
+                    "prod_date": prod_date,
+                    "raw": raw
+                })
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 2.ج تصدير كروت أصناف محددة عبر POST (لتجنب قيود طول الرابط)
+        if path in ('/api/catalog/export-excel', '/api/catalog/export'):
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                scope = str(data.get('scope', 'all')).strip().lower()
+                selected_codes = data.get('codes')
+                selected_fields = data.get('fields')
+                inv_id = data.get('invoice_id')
+                if scope == 'invoice' and not inv_id:
+                    draft = get_or_create_draft_invoice()
+                    inv_id = draft['id'] if draft else None
+
+                today_str = datetime.now().strftime("%Y%m%d_%H%M")
+                if scope == 'selected' and selected_codes:
+                    file_name = f"Products_Selected_{len(selected_codes)}_{today_str}.xlsx"
+                elif scope == 'invoice' and inv_id:
+                    file_name = f"Products_Invoice_{inv_id}_{today_str}.xlsx"
+                else:
+                    file_name = f"Products_Catalog_{today_str}.xlsx"
+
+                out_path = os.path.join(TEMP_DIR, file_name)
+                out_path = export_catalog_to_excel(out_path, product_codes=selected_codes, invoice_id=inv_id if scope == 'invoice' else None, selected_fields=selected_fields)
+                file_name = os.path.basename(out_path)
+
+                if os.path.exists(out_path):
+                    with open(out_path, 'rb') as f:
+                        file_data = f.read()
+
+                    # فتح الملف أوتوماتيكياً في برنامج Excel فور سحبه
+                    auto_open_file(out_path)
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    self.send_header('Content-Disposition', make_content_disposition(file_name))
+                    self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+                    self.send_header('Content-Length', str(len(file_data)))
+                    self.end_headers()
+                    self.wfile.write(file_data)
+                    return
+                else:
+                    self.send_json({"detail": "فشل إنشاء ملف الإكسيل"}, 500)
+                    return
+            except Exception as e:
+                self.send_json({"detail": f"خطأ أثناء تصدير الأصناف: {str(e)}"}, 500)
+                return
+
+        # 2.ج-1 تصدير أصناف الفاتورة بمسميات أعمدة يحددها المستخدم يدوياً قبل التصدير
+        if path == '/api/invoice/export-custom-excel':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                inv_id = int(data.get('id') or data.get('invoice_id') or 0)
+                if not inv_id:
+                    draft = get_or_create_draft_invoice()
+                    inv_id = draft['id']
+                inv = get_invoice_details(inv_id)
+                if not inv:
+                    self.send_json({"detail": "الفاتورة غير موجودة"}, 404)
+                    return
+
+                column_specs = data.get('columns') or []
+                custom_sheet_name = str(data.get('sheet_name') or data.get('title') or '').strip()
+                location_val = str(data.get('location_val') or '').strip()
+                safe_custom_file = re.sub(r'[\\/*?:"<>|]', '_', custom_sheet_name).strip() if custom_sheet_name else ""
+
+                inv_number = inv.get("invoice_number", "INV")
+                inv_date = inv.get("invoice_date", "2026-10-29")
+                file_name = f"{safe_custom_file}.xlsx" if safe_custom_file else f"Invoice_Custom_{inv_number}_{inv_date}.xlsx"
+                out_path = os.path.join(TEMP_DIR, file_name)
+                out_path = export_invoice_custom_columns_to_excel(
+                    inv,
+                    out_path,
+                    column_specs,
+                    sheet_title=custom_sheet_name or None,
+                    location_value=location_val or None
+                )
+                file_name = os.path.basename(out_path)
+
+                if os.path.exists(out_path):
+                    with open(out_path, 'rb') as f:
+                        file_data = f.read()
+
+                    auto_open_file(out_path)
+
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    self.send_header('Content-Disposition', make_content_disposition(file_name))
+                    self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+                    self.send_header('Content-Length', str(len(file_data)))
+                    self.end_headers()
+                    self.wfile.write(file_data)
+                    return
+                else:
+                    self.send_json({"detail": "فشل إنشاء ملف الإكسيل المخصص"}, 500)
+                    return
+            except Exception as e:
+                self.send_json({"detail": f"خطأ أثناء تصدير الإكسيل المخصص: {str(e)}"}, 500)
+                return
+
+        # 2.ج-2 فتح أي ملف في التطبيق الافتراضي (Excel) عند الطلب
+        if path == '/api/system/open-file':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                target_path = data.get('file_path') or data.get('path')
+                file_name = data.get('file_name')
+                if not target_path and file_name:
+                    target_path = os.path.join(TEMP_DIR, file_name)
+                opened = auto_open_file(target_path) if target_path else False
+                self.send_json({"success": opened, "opened": opened, "path": target_path})
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 3. رفع ملف Excel الأصناف لفحص الأعمدة والقيم (يدعم كلاً من /upload و /upload-excel)
+        if path in ('/api/catalog/upload-excel', '/api/catalog/upload'):
+            try:
+                boundary = extract_boundary(content_type)
+                fields, files = parse_multipart(body_bytes, boundary)
+                file_obj = files.get('file') or files.get('excel') or (list(files.values())[0] if files else None)
+                if not file_obj:
+                    self.send_json({"success": False, "message": "لم يتم إرسال ملف Excel. يرجى اختيار ملف صالح."}, 400)
+                    return
+
+                raw_fn = file_obj.get('filename') or 'catalog.xlsx'
+                clean_fn = re.sub(r'[^\w\.-]', '_', os.path.basename(raw_fn))
+                if not clean_fn.lower().endswith(('.xlsx', '.xls', '.csv')):
+                    clean_fn += '.xlsx'
+
+                saved_name = f"catalog_{uuid.uuid4().hex[:8]}_{clean_fn}"
+                saved_path = os.path.join(TEMP_DIR, saved_name)
+                with open(saved_path, 'wb') as f:
+                    f.write(file_obj['content'])
+
+                info = inspect_excel_catalog(saved_path)
+                info["file_id"] = saved_name
+                self.send_json(info)
+            except Exception as e:
+                self.send_json({"success": False, "message": f"خطأ أثناء رفع ملف كروت الأصناف: {str(e)}"}, 500)
+            return
+
+        # 3.ب رفع ملف الفاتورة الموردة أو الإكسيل وتفريغها مباشرة داخل الفاتورة
+        if path in ('/api/invoice/upload', '/api/invoice/upload-excel', '/api/invoice/upload-file', '/api/invoice/import-file'):
+            try:
+                boundary = extract_boundary(content_type)
+                fields, files = parse_multipart(body_bytes, boundary)
+                file_obj = files.get('file') or files.get('invoice') or (list(files.values())[0] if files else None)
+                if not file_obj:
+                    self.send_json({"success": False, "message": "لم يتم إرسال ملف الفاتورة."}, 400)
+                    return
+
+                raw_fn = file_obj.get('filename') or 'invoice.xlsx'
+                clean_fn = re.sub(r'[^\w\.-]', '_', os.path.basename(raw_fn))
+                if not clean_fn.lower().endswith(('.xlsx', '.xls', '.csv')):
+                    clean_fn += '.xlsx'
+                saved_name = f"invoice_{uuid.uuid4().hex[:8]}_{clean_fn}"
+                saved_path = os.path.join(TEMP_DIR, saved_name)
+                with open(saved_path, 'wb') as f:
+                    f.write(file_obj['content'])
+
+                # استيراد وتفريغ الفاتورة مباشرة داخل المسودة النشطة
+                inv_id_val = int(fields.get('invoice_id', 0)) if str(fields.get('invoice_id', '')).isdigit() else None
+                user_name_val = fields.get('user_name', 'المسؤول')
+                res = import_invoice_file_to_active_invoice(saved_path, invoice_id=inv_id_val, user_name=user_name_val)
+                res["file_id"] = saved_name
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": f"خطأ أثناء استيراد وتفريغ الفاتورة: {str(e)}"}, 500)
+            return
+
+        # 4. معاينة استيراد الأصناف مع فحص التعارض والصفوف المتخطاة
+        if path == '/api/catalog/preview-import':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                file_id = data.get('file_id')
+                mapping = data.get('mapping') or {}
+                replace_barcodes = bool(data.get('replace_barcodes', False))
+                file_path = os.path.join(TEMP_DIR, file_id)
+                res = preview_import_catalog(file_path, mapping, replace_barcodes=replace_barcodes)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 5. تأكيد وحفظ استيراد بطاقات الأصناف
+        if path == '/api/catalog/commit-import':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                file_id = data.get('file_id')
+                mapping = data.get('mapping') or {}
+                replace_barcodes = bool(data.get('replace_barcodes', False))
+                file_path = os.path.join(TEMP_DIR, file_id)
+                res = commit_import_catalog(file_path, mapping, replace_barcodes=replace_barcodes)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 6. إنشاء فاتورة جديدة
+        if path == '/api/invoice/new':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                notes = data.get('notes', '')
+                user_name = data.get('user_name', 'المسؤول')
+                inv = create_new_invoice(notes=notes, user_name=user_name)
+                self.send_json({"success": True, "invoice": inv})
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 7. مسح كود QR وإضافته إلى الفاتورة وتفريغ بياناته بالكامل
+        if path == '/api/invoice/scan':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                inv_id = int(data.get('invoice_id', 0))
+                qr_text = str(data.get('qr_text', '')).strip()
+                user_name = str(data.get('user_name', 'المسؤول')).strip()
+                quantity = int(data.get('quantity', 1))
+
+                if not inv_id:
+                    active_inv = get_or_create_draft_invoice(user_name)
+                    inv_id = active_inv["id"]
+
+                # أولاً: تفريغ بيانات كود QR الممسوح دائماً
+                parsed_qr = parse_qr_code(qr_text)
+                
+                # مسح كود QR بالماسح يضيف عبوة واحدة (1 حبة) تلقائياً لكل مسحة
+                res = scan_qr_to_invoice(inv_id, qr_text, user_name, quantity=1)
+                inv_details = get_invoice_details(inv_id)
+                res["invoice"] = inv_details
+                
+                qr_data = parsed_qr.get("data", {}) if parsed_qr.get("success") else {}
+                res["parsed_qr"] = qr_data
+                if qr_data.get("gtin") and "gtin" not in res:
+                    res["gtin"] = qr_data.get("gtin")
+                if qr_data.get("batch") and "batch" not in res:
+                    res["batch"] = qr_data.get("batch")
+                if qr_data.get("serial") and "serial" not in res:
+                    res["serial"] = qr_data.get("serial")
+                if qr_data.get("expiry") and "expiry" not in res:
+                    res["expiry"] = qr_data.get("expiry")
+                
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 8. حذف عبوة (سيريال) من الفاتورة المسودة
+        if path == '/api/invoice/delete-serial':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                inv_id = int(data.get('invoice_id', 0))
+                serial_id = int(data.get('serial_id', 0))
+                res = delete_scanned_serial(inv_id, serial_id)
+                res["invoice"] = get_invoice_details(inv_id)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 9. حذف سطر بالكامل من الفاتورة المسودة
+        if path == '/api/invoice/delete-line':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                inv_id = int(data.get('invoice_id', 0))
+                line_id = int(data.get('line_id', 0))
+                res = delete_invoice_line(inv_id, line_id)
+                res["invoice"] = get_invoice_details(inv_id)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 9.ب مسح وتفريغ جميع أصناف الفاتورة بالكامل بعد العملية
+        if path in ('/api/invoice/clear-lines', '/api/invoice/clear'):
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                inv_id = int(data.get('invoice_id', 0))
+                if not inv_id:
+                    draft = get_or_create_draft_invoice()
+                    inv_id = draft['id']
+                res = clear_invoice_lines(inv_id)
+                res["invoice"] = get_invoice_details(inv_id)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 9.ج تعديل كمية سطر الفاتورة يدوياً
+        if path == '/api/invoice/update-line-qty':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                inv_id = int(data.get('invoice_id', 0))
+                if not inv_id:
+                    draft = get_or_create_draft_invoice()
+                    inv_id = draft['id']
+                line_id = int(data.get('line_id', 0))
+                new_qty = int(data.get('quantity', 1))
+                res = update_invoice_line_quantity(inv_id, line_id, new_qty)
+                res["invoice"] = get_invoice_details(inv_id)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 9.د إدخال صنف وكمية وباتش يدوياً
+        if path == '/api/invoice/manual-item':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                inv_id = int(data.get('invoice_id', 0))
+                if not inv_id:
+                    draft = get_or_create_draft_invoice()
+                    inv_id = draft['id']
+                gtin = str(data.get('gtin', '')).strip()
+                batch = str(data.get('batch', '')).strip()
+                expiry = str(data.get('expiry', '')).strip()
+                qty = int(data.get('quantity', 1))
+                user_name = str(data.get('user_name', 'المسؤول')).strip()
+                res = add_manual_item_to_invoice(inv_id, gtin, batch, expiry, quantity=qty, user_name=user_name)
+                res["invoice"] = get_invoice_details(inv_id)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 10. اعتماد الفاتورة
+        if path == '/api/invoice/confirm':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                inv_id = int(data.get('invoice_id', 0))
+                res = confirm_invoice(inv_id)
+                res["invoice"] = get_invoice_details(inv_id)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 11. إرجاع عبوة موثق
+        if path == '/api/returns/process':
+            try:
+                data = json.loads(body_bytes.decode('utf-8'))
+                serial_number = data.get('serial_number', '')
+                invoice_number = data.get('invoice_number', '')
+                reason = data.get('reason', 'إرجاع عبوة')
+                user_name = data.get('user_name', 'المسؤول')
+                res = process_serial_return(serial_number, invoice_number, reason, user_name)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # 12. نظام الجرد الفعلي ومطابقة الأرصدة (POST)
+        if path == '/api/stock/stores/create':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                name = str(data.get('store_name') or '').strip()
+                branch = str(data.get('branch_name') or 'الفرع الرئيسي').strip()
+                user = str(data.get('user_name') or 'المسؤول').strip()
+                res = create_new_store(name, branch_name=branch, user_name=user)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/stores/update':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                no = str(data.get('store_no') or '').strip()
+                name = str(data.get('store_name') or '').strip()
+                branch = str(data.get('branch_name') or '').strip()
+                res = update_store(no, name, branch)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/stores/delete':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                no = str(data.get('store_no') or '').strip()
+                res = delete_store(no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/reset-all':
+            try:
+                res = reset_all_stocktake_test_data()
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # مسح الأصناف عبر الجوال لاسلكياً (Mobile Wireless Scanner)
+        if path == '/api/mobile/scan':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                code = str(data.get('code') or data.get('raw_code') or '').strip()
+                target = str(data.get('target') or 'stocktake').strip()
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                inv_id = data.get('invoice_id')
+
+                if not code:
+                    self.send_json({"success": False, "message": "لم يتم إرسال أي كود"}, 400)
+                    return
+
+                res = {}
+                if target == 'stocktake':
+                    res = scan_item_to_store(code, store_no=store_no, force_direct=False)
+                else:
+                    if not inv_id:
+                        draft = get_or_create_draft_invoice()
+                        inv_id = draft['id']
+                    res = scan_qr_to_invoice(int(inv_id), code)
+
+                p_name = res.get("product_name") or (res.get("product", {}).get("name") if isinstance(res.get("product"), dict) else "") or ""
+                p_code = res.get("product_code") or (res.get("product", {}).get("code") if isinstance(res.get("product"), dict) else "") or ""
+
+                event = {
+                    "id": uuid.uuid4().hex[:8],
+                    "code": code,
+                    "target": target,
+                    "store_no": store_no,
+                    "invoice_id": inv_id,
+                    "success": bool(res.get("success", False)),
+                    "product_name": p_name,
+                    "product_code": p_code,
+                    "batch": res.get("batch") or "",
+                    "message": res.get("message") or "",
+                    "timestamp": time.time()
+                }
+                MOBILE_SCANS_QUEUE.append(event)
+                if len(MOBILE_SCANS_QUEUE) > 100:
+                    del MOBILE_SCANS_QUEUE[:50]
+
+                res["event"] = event
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/scan':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                code = str(data.get('code') or data.get('qr_text') or '').strip()
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                force_direct = bool(data.get('force_direct', False))
+                res = scan_item_to_store(code, store_no=store_no, force_direct=force_direct)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/save-batch-qty':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                prod_code = str(data.get('product_code') or '').strip()
+                batch_number = str(data.get('batch_number') or '').strip()
+                expiry_date = str(data.get('expiry_date') or '').strip()
+                counted_qty = float(data.get('counted_qty') or 0.0)
+                system_qty = float(data.get('system_qty') or 0.0)
+                cost_price = float(data.get('cost_price') or 0.0)
+                selling_price = float(data.get('selling_price') or 0.0)
+
+                res = save_stock_batch_count(
+                    store_no=store_no,
+                    product_code=prod_code,
+                    batch_number=batch_number,
+                    expiry_date=expiry_date,
+                    counted_qty=counted_qty,
+                    system_qty=system_qty,
+                    cost_price=cost_price,
+                    selling_price=selling_price
+                )
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/update-qty':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                entry_id = int(data.get('entry_id') or data.get('id') or 0)
+                new_qty = float(data.get('quantity') or data.get('qty') or 0)
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                res = update_entry_quantity(entry_id, new_qty, store_no=store_no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/delete-item':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                entry_id = int(data.get('entry_id') or data.get('id') or 0)
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                res = delete_entry_item(entry_id, store_no=store_no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/bulk-delete':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                entry_ids = [int(i) for i in data.get('entry_ids', []) if str(i).isdigit()]
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                res = bulk_delete_stock_entries(entry_ids, store_no=store_no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/edit-item':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                entry_id = int(data.get('entry_id') or data.get('id') or 0)
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                updates = data.get('updates', {})
+                res = edit_stocktake_entry(entry_id, updates, store_no=store_no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/clear-inventory':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                res = clear_inventory_records(store_no=store_no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/clear':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                res = clear_store_stocktake(store_no=store_no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path in ('/api/stock/settle', '/api/stock/commit-bulk', '/api/stock/stores/commit-all'):
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                commit_all = data.get('commit_all', False)
+                store_nos = data.get('store_nos', [])
+                if commit_all:
+                    res = commit_stores_stocktake(store_nos=['ALL'])
+                elif store_nos and isinstance(store_nos, list):
+                    res = commit_stores_stocktake(store_nos=store_nos)
+                else:
+                    store_no = str(data.get('store_no') or 'ST-001').strip()
+                    res = commit_stores_stocktake(store_nos=[store_no])
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path == '/api/stock/populate-all':
+            try:
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                store_no = str(data.get('store_no') or 'ST-001').strip()
+                res = populate_store_from_inventory(store_no=store_no)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        if path in ('/api/stock/upload-excel', '/api/stock/upload'):
+            try:
+                boundary = extract_boundary(content_type)
+                fields, files = parse_multipart(body_bytes, boundary)
+                file_obj = files.get('file') or files.get('excel') or (list(files.values())[0] if files else None)
+                if not file_obj:
+                    self.send_json({"success": False, "message": "لم يتم إرسال ملف الإكسيل."}, 400)
+                    return
+
+                raw_fn = file_obj.get('filename') or 'stock.xlsx'
+                clean_fn = re.sub(r'[^\w\.-]', '_', os.path.basename(raw_fn))
+                if not clean_fn.lower().endswith(('.xlsx', '.xls', '.csv')):
+                    clean_fn += '.xlsx'
+                saved_name = f"stock_{uuid.uuid4().hex[:8]}_{clean_fn}"
+                saved_path = os.path.join(TEMP_DIR, saved_name)
+                with open(saved_path, 'wb') as f:
+                    f.write(file_obj['content'])
+
+                store_no = fields.get('store_no', 'ST-001')
+                replace_existing = fields.get('replace_existing', 'true').lower() in ('true', '1')
+                res = upload_inventory_excel(saved_path, store_no=store_no, replace_existing=replace_existing)
+                self.send_json(res)
+            except Exception as e:
+                self.send_json({"success": False, "message": f"خطأ أثناء رفع المخزون: {str(e)}"}, 500)
+            return
+
+        self.send_json({"detail": "المسار غير معروف"}, 404)
+
+def run_server(port=8000, auto_open_browser=True):
+    import webbrowser
+    import threading
+    import time
+    import urllib.request
+
+    # فحص ما إذا كان الخادم يعمل بالفعل على هذا المنفذ
+    try:
+        req = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/stats", timeout=1)
+        if req.status == 200:
+            print(f"===========================================================")
+            print(f"  نظام إدارة بطاقات الأصناف والمسح بكود QR وتصدير الإكسيل")
+            print(f"  الخادم يعمل بالفعل بنجاح على الرابط: http://127.0.0.1:{port}")
+            print(f"===========================================================")
+            if auto_open_browser:
+                webbrowser.open(f"http://127.0.0.1:{port}")
+            print("البرنامج جاهز للاستخدام في المتصفح. اضغط Ctrl + C للخروج.")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                return
+    except:
+        pass
+
+    server_address = ('0.0.0.0', port)
+    try:
+        httpd = ReusableThreadingHTTPServer(server_address, AppRequestHandler)
+    except OSError as e:
+        if getattr(e, 'winerror', None) == 10048 or 'address already in use' in str(e).lower():
+            port = 8001
+            server_address = ('0.0.0.0', port)
+            httpd = ReusableThreadingHTTPServer(server_address, AppRequestHandler)
+        else:
+            raise e
+
+    print(f"===========================================================")
+    print(f"  نظام إدارة بطاقات الأصناف والمسح بكود QR وتصدير الإكسيل")
+    print(f"  يعمل الآن على الرابط: http://127.0.0.1:{port}")
+    print(f"===========================================================")
+
+    if auto_open_browser:
+        def open_browser_later():
+            time.sleep(0.6)
+            try:
+                webbrowser.open(f"http://127.0.0.1:{port}")
+            except:
+                pass
+        threading.Thread(target=open_browser_later, daemon=True).start()
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nتم إيقاف الخادم.")
+        httpd.server_close()
+
+if __name__ == '__main__':
+    port = 8000
+    if len(sys.argv) > 1 and sys.argv[1].isdigit():
+        port = int(sys.argv[1])
+    run_server(port)

@@ -1,0 +1,164 @@
+/* أنماط وتنسيقات النظام العربي الاحترافي */
+body {
+    font-family: 'Cairo', sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* إخفاء أسهم الأرقام */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+    -webkit-appearance: none; 
+    margin: 0; 
+}
+input[type=number] {
+    -moz-appearance: textfield;
+}
+
+/* تخصيص شريط التمرير Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #94A3B8;
+}
+
+/* تأثير الظهور التدريجي للأحداث المباشرة */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fadeIn {
+    animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* تنسيق خانات الإدخال المؤطرة مع العنوان العائم (مضغوطة جداً لتوفير مساحة قصوى لجدول الفاتورة مع وضوح كامل للقيم) */
+.custom-fieldset {
+    border: 1.5px solid #7dd3fc; /* sky-300 */
+    border-radius: 0.4rem;
+    padding: 0.05rem 0.45rem 0.1rem 0.45rem;
+    background: #ffffff;
+    transition: all 0.15s ease-in-out;
+}
+
+.custom-fieldset:focus-within {
+    border-color: #0284c7; /* sky-600 */
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.15);
+}
+
+.custom-fieldset legend {
+    color: #0284c7; /* sky-600 */
+    font-weight: 700;
+    font-size: 0.64rem;
+    padding: 0 0.2rem;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.custom-fieldset input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #0f172a;
+    font-family: Consolas, Monaco, 'Cairo', monospace;
+    height: 1.25rem;
+}
+
+.custom-clear-btn {
+    color: #94a3b8;
+    cursor: pointer;
+    border-radius: 9999px;
+    padding: 1px;
+    transition: color 0.15s;
+    background: transparent;
+    border: none;
+}
+
+.custom-clear-btn:hover {
+    color: #475569;
+}
+input:focus, select:focus {
+    transition: all 0.15s ease-in-out;
+}
+
+/* ==================== نظام خانات وجدول الفاتورة مثل الإكسيل (Excel Grid Table) ==================== */
+.excel-grid-table {
+    border-collapse: collapse;
+    width: 100%;
+    border: 1px solid #cbd5e1;
+    font-size: 11px;
+    background: #ffffff;
+}
+
+.excel-grid-table thead tr {
+    background: #f1f5f9;
+}
+
+.excel-grid-table th {
+    background-color: #f1f5f9;
+    color: #334155;
+    font-weight: 700;
+    border: 1px solid #cbd5e1;
+    padding: 3px 5px;
+    font-size: 10.5px;
+    line-height: 1.15;
+    text-align: center;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.excel-grid-table th.excel-highlight-amber {
+    background-color: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fcd34d;
+}
+
+.excel-grid-table th.excel-highlight-indigo {
+    background-color: #e0e7ff;
+    color: #3730a3;
+    border: 1px solid #c7d2fe;
+}
+
+.excel-cell {
+    border: 1px solid #e2e8f0;
+    padding: 2px 5px;
+    height: 26px;
+    max-height: 28px;
+    font-size: 11px;
+    line-height: 1.15;
+    vertical-align: middle;
+    color: #1e293b;
+    white-space: nowrap;
+}
+
+.excel-grid-table tbody tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+.excel-grid-table tbody tr:hover {
+    background-color: #f0f9ff !important;
+}
+
+/* بطاقة الكود الداخلي */
+.code-pill {
+    font-family: Consolas, 'Courier New', monospace;
+    font-weight: 800;
+    letter-spacing: -0.2px;
+}
