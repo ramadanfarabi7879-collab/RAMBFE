@@ -43,11 +43,11 @@ document.addEventListener('DOMContentLoaded', () => {
 // ==================== التبديل بين التبويبات ====================
 function initNavigation() {
     const tabs = [
-        { id: 'scanner', btn: 'nav-btn-scanner', section: 'tab-scanner' },
-        { id: 'catalog', btn: 'nav-btn-catalog', section: 'tab-catalog' },
-        { id: 'import', btn: 'nav-btn-import', section: 'tab-import' },
-        { id: 'invoices', btn: 'nav-btn-invoices', section: 'tab-invoices' },
-        { id: 'stocktake', btn: 'nav-btn-stocktake', section: 'tab-stocktake' }
+        { id: 'scanner', btn: 'nav-btn-scanner', mobBtn: 'mob-nav-scanner', section: 'tab-scanner' },
+        { id: 'catalog', btn: 'nav-btn-catalog', mobBtn: 'mob-nav-catalog', section: 'tab-catalog' },
+        { id: 'import', btn: 'nav-btn-import', mobBtn: 'mob-nav-import', section: 'tab-import' },
+        { id: 'invoices', btn: 'nav-btn-invoices', mobBtn: 'mob-nav-invoices', section: 'tab-invoices' },
+        { id: 'stocktake', btn: 'nav-btn-stocktake', mobBtn: 'mob-nav-stocktake', section: 'tab-stocktake' }
     ];
 
     tabs.forEach(t => {
@@ -55,34 +55,56 @@ function initNavigation() {
         if (btnEl) {
             btnEl.addEventListener('click', () => switchTab(t.id));
         }
+        const mobEl = document.getElementById(t.mobBtn);
+        if (mobEl) {
+            mobEl.addEventListener('click', () => {
+                switchTab(t.id);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        }
     });
 
     document.getElementById('btn-goto-import-tab')?.addEventListener('click', () => switchTab('import'));
     document.getElementById('btn-report-view-catalog')?.addEventListener('click', () => switchTab('catalog'));
+
+    // زر المسح السريع بكاميرا الهاتف
+    document.getElementById('btn-mobile-quick-scan')?.addEventListener('click', () => {
+        if (typeof openCameraModal === 'function') {
+            const mode = (currentTab === 'stocktake') ? 'stocktake' : 'invoice';
+            openCameraModal(mode);
+        }
+    });
 }
 
 function switchTab(tabId) {
     currentTab = tabId;
     const tabMap = {
-        'scanner': { btn: 'nav-btn-scanner', sec: 'tab-scanner' },
-        'catalog': { btn: 'nav-btn-catalog', sec: 'tab-catalog' },
-        'import': { btn: 'nav-btn-import', sec: 'tab-import' },
-        'invoices': { btn: 'nav-btn-invoices', sec: 'tab-invoices' },
-        'stocktake': { btn: 'nav-btn-stocktake', sec: 'tab-stocktake' }
+        'scanner': { btn: 'nav-btn-scanner', mobBtn: 'mob-nav-scanner', sec: 'tab-scanner' },
+        'catalog': { btn: 'nav-btn-catalog', mobBtn: 'mob-nav-catalog', sec: 'tab-catalog' },
+        'import': { btn: 'nav-btn-import', mobBtn: 'mob-nav-import', sec: 'tab-import' },
+        'invoices': { btn: 'nav-btn-invoices', mobBtn: 'mob-nav-invoices', sec: 'tab-invoices' },
+        'stocktake': { btn: 'nav-btn-stocktake', mobBtn: 'mob-nav-stocktake', sec: 'tab-stocktake' }
     };
 
     Object.keys(tabMap).forEach(k => {
         const item = tabMap[k];
         const btn = document.getElementById(item.btn);
+        const mobBtn = document.getElementById(item.mobBtn);
         const sec = document.getElementById(item.sec);
         if (k === tabId) {
             btn?.classList.add('bg-indigo-600', 'text-white', 'shadow');
             btn?.classList.remove('text-slate-300');
             sec?.classList.remove('hidden');
+
+            mobBtn?.classList.add('text-indigo-400', 'font-black');
+            mobBtn?.classList.remove('text-slate-400');
         } else {
             btn?.classList.remove('bg-indigo-600', 'text-white', 'shadow');
             btn?.classList.add('text-slate-300');
             sec?.classList.add('hidden');
+
+            mobBtn?.classList.remove('text-indigo-400', 'font-black');
+            mobBtn?.classList.add('text-slate-400');
         }
     });
 

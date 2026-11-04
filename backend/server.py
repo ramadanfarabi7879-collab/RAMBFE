@@ -687,9 +687,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         # خدمة ملفات الواجهة (Frontend Static Files)
         file_path = FRONTEND_DIR
         rel_path = path.lstrip('/')
-        if not rel_path or rel_path == '/':
+        if not rel_path or rel_path == '/' or rel_path in ('mobile', 'mobile.html', 'app'):
+            # شاشة التطبيق الكاملة المتجاوبة 100% مع الهواتف والحواسيب
             file_path = os.path.join(FRONTEND_DIR, 'index.html')
-        elif rel_path in ('mobile', 'mobile-scanner', 'mobile.html'):
+        elif rel_path in ('mobile-scanner', 'scanner', 'scanner-only'):
+            # شاشة المسح السريع الفردي
             file_path = os.path.join(FRONTEND_DIR, 'mobile.html')
         else:
             file_path = os.path.join(FRONTEND_DIR, rel_path)

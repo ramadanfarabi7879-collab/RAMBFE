@@ -2,11 +2,11 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>نظام إدارة بطاقات الأصناف والمسح بكود QR</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="style.css?v=20261103_v9">
+    <link rel="stylesheet" href="style.css?v=20261104_v10">
     <!-- Google Fonts: Cairo -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,16 +16,15 @@
     <!-- QRCode Generator لربط الجوال كاسكانر لاسلكي -->
     <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-['Cairo'] antialiased">
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-['Cairo'] antialiased selection:bg-indigo-500 selection:text-white">
 
-    <!-- شريط الرأس Navigation Bar (مضغوط مع لوجو R - A M B F - E المتناسق) -->
+    <!-- شريط الرأس Navigation Bar المتجاوب للشاشات الكبيرة والموبايل -->
     <header class="bg-slate-900 text-white shadow-md sticky top-0 z-40 border-b border-slate-800">
-        <div class="max-w-7xl mx-auto px-4 py-2 flex flex-wrap justify-between items-center gap-3">
-            <div class="flex items-center space-x-3 space-x-reverse">
+        <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex justify-between items-center gap-2">
+            <!-- الشعار والاسم -->
+            <div class="flex items-center space-x-2 sm:space-x-3 space-x-reverse">
                 <div class="px-2 py-1 rounded-xl bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 flex items-center gap-1.5 text-white font-black text-xs shadow-md border-2 border-amber-400/80" dir="ltr" title="R · A M B F · E">
-                    <!-- حرف R الأول (ثابت بنفس الشكل) -->
                     <span class="w-6 h-6 rounded-md bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 flex items-center justify-center font-mono text-sm font-black shadow-sm">R</span>
-                    <!-- الأربع حروف في الوسط (A M B F) بتنسيق متناسق -->
                     <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-800/90 border border-amber-400/30 font-mono text-[11px] font-black tracking-wider text-white">
                         <span>A</span>
                         <span class="text-amber-400 text-[8px]">•</span>
@@ -35,19 +34,19 @@
                         <span class="text-amber-400 text-[8px]">•</span>
                         <span>F</span>
                     </div>
-                    <!-- حرف E الأخير -->
                     <span class="w-6 h-6 rounded-md bg-slate-950 text-amber-400 border border-amber-400/80 flex items-center justify-center font-mono text-sm font-black shadow-sm">E</span>
                 </div>
                 <div>
-                    <h1 class="text-sm font-bold tracking-tight text-white flex items-center gap-2">
-                        <span>نظام إدارة الأصناف والمسح بكود QR</span>
-                        <span class="text-[10px] bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 px-1.5 py-0.2 rounded-full font-mono">v2.0</span>
+                    <h1 class="text-xs sm:text-sm font-bold tracking-tight text-white flex items-center gap-1.5">
+                        <span class="hidden sm:inline">نظام إدارة الأصناف والمسح بكود QR</span>
+                        <span class="sm:hidden font-black">RAMBFE Pro</span>
+                        <span class="text-[10px] bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 px-1.5 py-0.2 rounded-full font-mono">v2.5</span>
                     </h1>
                 </div>
             </div>
 
-            <!-- أزرار التبديل بين التبويبات -->
-            <nav class="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700 text-xs font-bold gap-1">
+            <!-- أزرار التبديل للشاشات الكبيرة (Desktop Navigation) -->
+            <nav class="hidden lg:flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700 text-xs font-bold gap-1">
                 <button id="nav-btn-scanner" class="nav-tab-btn active px-4 py-2 rounded-lg bg-indigo-600 text-white shadow transition flex items-center gap-2">
                     <span>📷</span>
                     <span>المسح والفاتورة</span>
@@ -71,8 +70,24 @@
                 </button>
             </nav>
 
-            <!-- إحصائيات سريعة في الشريط العلوي -->
-            <div class="hidden lg:flex items-center gap-3 text-xs">
+            <!-- أدوات الموبايل وشارة المزامنة السحابية اللحظية -->
+            <div class="flex items-center gap-2">
+                <!-- شارة المزامنة السحابية اللحظية -->
+                <div id="header-sync-pill" class="px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] sm:text-xs font-bold flex items-center gap-1.5 shadow-sm" title="متزامن عبر نفق Cloudflare">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span class="hidden sm:inline">مزامنة سحابية لحظية ⚡</span>
+                    <span class="sm:hidden font-mono">لحظي ⚡</span>
+                </div>
+
+                <!-- زر المسح السريع بكاميرا الهاتف لجميع الشاشات والموبايل -->
+                <button type="button" id="btn-mobile-quick-scan" class="lg:hidden px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition">
+                    <span>📷</span>
+                    <span>مسح</span>
+                </button>
+            </div>
+
+            <!-- إحصائيات سريعة في الشريط العلوي (شاشات كبيرة) -->
+            <div class="hidden xl:flex items-center gap-3 text-xs">
                 <div class="bg-slate-800/90 px-3 py-1.5 rounded-lg border border-slate-700/60 flex items-center gap-2">
                     <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     <span>الأصناف: <strong id="header-products-count" class="text-emerald-300 font-bold font-mono">0</strong></span>
@@ -84,8 +99,8 @@
         </div>
     </header>
 
-    <!-- المحتوى الرئيسي -->
-    <main class="w-full max-w-7xl mx-auto px-3 py-2 flex-1">
+    <!-- المحتوى الرئيسي للمشروع -->
+    <main class="w-full max-w-7xl mx-auto px-2 sm:px-4 py-2 flex-1 pb-24 lg:pb-6">
 
         <!-- =================== التبويب 1: المسح الضوئي والفاتورة الحالية =================== -->
         <section id="tab-scanner" class="tab-content space-y-1.5">
@@ -2321,6 +2336,32 @@
             </div>
         </div>
     </div>
+
+    <!-- شريط التنقل السفلي الثابت للهواتف الذكية (Phone Bottom Navigation Bar) -->
+    <nav class="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-1 py-1 shadow-2xl safe-area-pb">
+        <div class="grid grid-cols-5 gap-0.5 text-center font-bold">
+            <button type="button" id="mob-nav-scanner" class="mob-tab-btn active flex flex-col items-center justify-center py-1.5 text-indigo-400 transition active:scale-95">
+                <span class="text-lg">🧾</span>
+                <span class="text-[10px] mt-0.5 font-bold">الفاتورة</span>
+            </button>
+            <button type="button" id="mob-nav-stocktake" class="mob-tab-btn flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition active:scale-95">
+                <span class="text-lg">📋</span>
+                <span class="text-[10px] mt-0.5 font-bold">الجرد</span>
+            </button>
+            <button type="button" id="mob-nav-catalog" class="mob-tab-btn flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition active:scale-95">
+                <span class="text-lg">📦</span>
+                <span class="text-[10px] mt-0.5 font-bold">الأصناف</span>
+            </button>
+            <button type="button" id="mob-nav-invoices" class="mob-tab-btn flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition active:scale-95">
+                <span class="text-lg">📑</span>
+                <span class="text-[10px] mt-0.5 font-bold">السجل</span>
+            </button>
+            <button type="button" id="mob-nav-import" class="mob-tab-btn flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition active:scale-95">
+                <span class="text-lg">📥</span>
+                <span class="text-[10px] mt-0.5 font-bold">Excel</span>
+            </button>
+        </div>
+    </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
     <script src="app.js?v=20261104_v50"></script>

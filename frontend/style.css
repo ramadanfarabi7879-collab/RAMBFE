@@ -162,3 +162,25 @@ input:focus, select:focus {
     font-weight: 800;
     letter-spacing: -0.2px;
 }
+
+/* تحسينات الهواتف الذكية وتجربة الاستخدام المريحة (Phone Friendly UI/UX) */
+@media (max-width: 1024px) {
+    body {
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+    }
+    .custom-fieldset {
+        padding: 0.2rem 0.5rem;
+    }
+    .excel-grid-table {
+        min-width: 760px;
+    }
+    /* ضمان وضوح الأزرار ولمسها بسهولة باليد */
+    button, input, select {
+        touch-action: manipulation;
+    }
+}
+
+.safe-area-pb {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
