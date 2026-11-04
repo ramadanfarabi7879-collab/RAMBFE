@@ -53,14 +53,14 @@ def main():
     except Exception:
         pass
 
-    print("=" * 65)
-    print(" 🚀 جاري إطلاق نظام الجرد الذكي ونفق Cloudflare للمزامنة اللحظية")
-    print("=" * 65)
+    print("=" * 65, flush=True)
+    print(" 🚀 جاري إطلاق نظام الجرد الذكي ونفق Cloudflare للمزامنة اللحظية", flush=True)
+    print("=" * 65, flush=True)
 
     cf_exe = find_cloudflared()
     if not cf_exe:
-        print("❌ لم يتم العثور على أداة cloudflared.exe في مسار النظام!")
-        print("يرجى التأكد من تثبيت cloudflared.")
+        print("❌ لم يتم العثور على أداة cloudflared.exe في مسار النظام!", flush=True)
+        print("يرجى التأكد من تثبيت cloudflared.", flush=True)
         sys.exit(1)
 
     port = 8000
@@ -70,7 +70,7 @@ def main():
     # 1. التأكد من تشغيل السيرفر المحلي
     server_process = None
     if not is_port_open(port):
-        print(f"[*] جاري تشغيل سيرفر التطبيق على المنفذ {port}...")
+        print(f"[*] جاري تشغيل سيرفر التطبيق على المنفذ {port}...", flush=True)
         server_process = subprocess.Popen(
             [sys.executable, "run.py", str(port)],
             cwd=str(BASE_DIR)
@@ -78,7 +78,7 @@ def main():
         time.sleep(1.5)
 
     # 2. تشغيل نفق Cloudflare Tunnel
-    print(f"[*] جاري إنشاء نفق Cloudflare آمن ومشفر للمنفذ {port}...")
+    print(f"[*] جاري إنشاء نفق Cloudflare آمن ومشفر للمنفذ {port}...", flush=True)
     cf_cmd = [cf_exe, "tunnel", "--url", f"http://127.0.0.1:{port}"]
 
     cf_proc = subprocess.Popen(
