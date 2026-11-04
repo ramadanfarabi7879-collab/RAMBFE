@@ -190,6 +190,33 @@ def make_content_disposition(file_name: str, disposition: str = "attachment") ->
     return f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded_fn}"
 
 MOBILE_SCANS_QUEUE = []
+SYNC_EVENTS_QUEUE = []
+
+def get_cloudflare_url() -> str:
+    """قراءة رابط نفق Cloudflare النشط إن وجد"""
+    try:
+        cf_file = os.path.join(TEMP_DIR, "cloudflare_url.txt")
+        if os.path.exists(cf_file):
+            with open(cf_file, "r", encoding="utf-8") as f:
+                url = f.read().strip()
+                if url.startswith("http"):
+                    return url.rstrip('/')
+    except Exception:
+        pass
+    return ""
+
+def broadcast_sync(evt_type: str, payload: dict) -> dict:
+    """بث أحداث المزامنة اللحظية لجميع الأجهزة المتصلة (كمبيوتر وموبايل)"""
+    evt = {
+        "id": uuid.uuid4().hex[:8],
+        "type": evt_type,
+        "payload": payload or {},
+        "timestamp": time.time()
+    }
+    SYNC_EVENTS_QUEUE.append(evt)
+    if len(SYNC_EVENTS_QUEUE) > 300:
+        del SYNC_EVENTS_QUEUE[:150]
+    return evt
 
 def get_local_ip() -> str:
     """استخراج عنوان IP المحلي للجهاز على الشبكة المحلية / الواي فاي بدقة"""
@@ -318,14 +345,19 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self.send_json(get_stats())
             return
 
-        # 1.ب بيانات شبكة الواي فاي للربط اللاسلكي مع الجوال
+        # 1.ب بيانات شبكة الواي فاي ورابط Cloudflare للربط مع الجوال
         if path == '/api/network-info':
             ip = get_local_ip()
             port = self.server.server_address[1]
+            cf_url = get_cloudflare_url()
+            mobile_url = f"{cf_url}/mobile" if cf_url else f"http://{ip}:{port}/mobile"
             self.send_json({
                 "ip": ip,
                 "port": port,
-                "mobile_url": f"http://{ip}:{port}/mobile"
+                "mobile_url": mobile_url,
+                "local_mobile_url": f"http://{ip}:{port}/mobile",
+                "cloudflare_url": cf_url or None,
+                "is_cloudflare_active": bool(cf_url)
             })
             return
 
@@ -336,7 +368,18 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             except:
                 since = 0.0
             scans = [s for s in MOBILE_SCANS_QUEUE if s.get('timestamp', 0) > since]
-            self.send_json({"scans": scans, "timestamp": time.time()})
+            events = [e for e in SYNC_EVENTS_QUEUE if e.get('timestamp', 0) > since]
+            self.send_json({"scans": scans, "events": events, "timestamp": time.time()})
+            return
+
+        # 1.د مسار استعلام أحداث المزامنة اللحظية الشاملة لجميع الأجهزة
+        if path == '/api/sync/events':
+            try:
+                since = float(params.get('since', [0])[0] or 0)
+            except:
+                since = 0.0
+            events = [e for e in SYNC_EVENTS_QUEUE if e.get('timestamp', 0) > since]
+            self.send_json({"events": events, "timestamp": time.time()})
             return
 
         # 2. توليد الكود الداخلي الرقمي التالي للصنف
@@ -1105,6 +1148,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 branch = str(data.get('branch_name') or 'الفرع الرئيسي').strip()
                 user = str(data.get('user_name') or 'المسؤول').strip()
                 res = create_new_store(name, branch_name=branch, user_name=user)
+                if res.get("success"):
+                    broadcast_sync("store_created", {"store_no": res.get("store_no"), "store_name": name})
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1117,6 +1162,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 name = str(data.get('store_name') or '').strip()
                 branch = str(data.get('branch_name') or '').strip()
                 res = update_store(no, name, branch)
+                if res.get("success"):
+                    broadcast_sync("store_updated", {"store_no": no, "store_name": name})
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1127,6 +1174,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
                 no = str(data.get('store_no') or '').strip()
                 res = delete_store(no)
+                if res.get("success"):
+                    broadcast_sync("store_deleted", {"store_no": no})
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1181,6 +1230,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 MOBILE_SCANS_QUEUE.append(event)
                 if len(MOBILE_SCANS_QUEUE) > 100:
                     del MOBILE_SCANS_QUEUE[:50]
+                broadcast_sync("mobile_scan", event)
 
                 res["event"] = event
                 self.send_json(res)
@@ -1195,6 +1245,13 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 store_no = str(data.get('store_no') or 'ST-001').strip()
                 force_direct = bool(data.get('force_direct', False))
                 res = scan_item_to_store(code, store_no=store_no, force_direct=force_direct)
+                if res.get("success"):
+                    broadcast_sync("stock_scan", {
+                        "store_no": store_no,
+                        "code": code,
+                        "product_name": res.get("product_name") or "",
+                        "product_code": res.get("product_code") or ""
+                    })
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1222,6 +1279,12 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                     cost_price=cost_price,
                     selling_price=selling_price
                 )
+                if res.get("success"):
+                    broadcast_sync("stock_qty_updated", {
+                        "store_no": store_no,
+                        "product_code": prod_code,
+                        "counted_qty": counted_qty
+                    })
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1234,6 +1297,12 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 new_qty = float(data.get('quantity') or data.get('qty') or 0)
                 store_no = str(data.get('store_no') or 'ST-001').strip()
                 res = update_entry_quantity(entry_id, new_qty, store_no=store_no)
+                if res.get("success"):
+                    broadcast_sync("stock_qty_updated", {
+                        "store_no": store_no,
+                        "entry_id": entry_id,
+                        "quantity": new_qty
+                    })
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1245,6 +1314,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 entry_id = int(data.get('entry_id') or data.get('id') or 0)
                 store_no = str(data.get('store_no') or 'ST-001').strip()
                 res = delete_entry_item(entry_id, store_no=store_no)
+                if res.get("success"):
+                    broadcast_sync("stock_item_deleted", {
+                        "store_no": store_no,
+                        "entry_id": entry_id
+                    })
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1256,6 +1330,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 entry_ids = [int(i) for i in data.get('entry_ids', []) if str(i).isdigit()]
                 store_no = str(data.get('store_no') or 'ST-001').strip()
                 res = bulk_delete_stock_entries(entry_ids, store_no=store_no)
+                if res.get("success"):
+                    broadcast_sync("stock_item_deleted", {
+                        "store_no": store_no,
+                        "entry_ids": entry_ids
+                    })
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1288,6 +1367,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
                 store_no = str(data.get('store_no') or 'ST-001').strip()
                 res = clear_store_stocktake(store_no=store_no)
+                if res.get("success"):
+                    broadcast_sync("stock_cleared", {"store_no": store_no})
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1305,6 +1386,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 else:
                     store_no = str(data.get('store_no') or 'ST-001').strip()
                     res = commit_stores_stocktake(store_nos=[store_no])
+                if res.get("success"):
+                    broadcast_sync("stock_settled", {"store_nos": store_nos or ['ALL' if commit_all else store_no]})
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)

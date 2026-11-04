@@ -2964,18 +2964,19 @@ function initMobileCompanionScanner() {
             const res = await fetch('/api/network-info');
             const data = await res.json();
             const urlText = document.getElementById('mobile-companion-url-text');
-            if (urlText) urlText.textContent = data.mobile_url;
+            const targetUrl = data.mobile_url || (data.cloudflare_url ? `${data.cloudflare_url}/mobile` : `http://${data.ip}:${data.port}/mobile`);
+            if (urlText) urlText.textContent = targetUrl;
 
             // توليد كود QR
             const qrBox = document.getElementById('mobile-companion-qr-box');
             if (qrBox) {
                 if (typeof qrcode !== 'undefined') {
                     const qr = qrcode(0, 'M');
-                    qr.addData(data.mobile_url);
+                    qr.addData(targetUrl);
                     qr.make();
                     qrBox.innerHTML = qr.createSvgTag({ scalable: true, cellSize: 4 });
                 } else {
-                    qrBox.innerHTML = `<a href="${data.mobile_url}" target="_blank" class="text-indigo-600 font-bold text-xs underline">${data.mobile_url}</a>`;
+                    qrBox.innerHTML = `<a href="${targetUrl}" target="_blank" class="text-indigo-600 font-bold text-xs underline">${targetUrl}</a>`;
                 }
             }
         } catch (e) {
@@ -3015,7 +3016,37 @@ function startMobileCompanionPolling() {
             const data = await res.json();
             if (data.timestamp) lastMobilePollTimestamp = data.timestamp;
 
-            if (data.scans && data.scans.length > 0) {
+            if (data.events && data.events.length > 0) {
+                let shouldReloadStock = false;
+                let shouldReloadInvoice = false;
+                for (const ev of data.events) {
+                    const payload = ev.payload || {};
+                    if (ev.type.startsWith('stock_') || (ev.type === 'mobile_scan' && payload.target === 'stocktake')) {
+                        shouldReloadStock = true;
+                    }
+                    if (ev.type.startsWith('invoice_') || (ev.type === 'mobile_scan' && payload.target === 'invoice')) {
+                        shouldReloadInvoice = true;
+                    }
+                    if (ev.type === 'mobile_scan') {
+                        playAppScannerBeep(payload.success !== false);
+                        const prodName = payload.product_name || payload.code || '';
+                        showCatalogToast(`📱 جرد فوري من الموبايل: ${prodName}`);
+                    } else if (ev.type === 'stock_qty_updated') {
+                        showCatalogToast(`⚡ تحديث كمية فوري من الموبايل`);
+                    } else if (ev.type === 'stock_item_deleted') {
+                        showCatalogToast(`🗑 تم حذف صنف من الجرد`);
+                    } else if (ev.type === 'store_created') {
+                        showCatalogToast(`🏪 تم إنشاء مستودع جديد من الموبايل: ${payload.store_name || ''}`);
+                    }
+                }
+                if (shouldReloadStock) {
+                    loadStocktakeStores();
+                    loadCurrentStoreItems();
+                }
+                if (shouldReloadInvoice) {
+                    loadActiveDraftInvoice();
+                }
+            } else if (data.scans && data.scans.length > 0) {
                 for (const sc of data.scans) {
                     playAppScannerBeep(sc.success);
                     const prodName = sc.product_name || sc.code;
@@ -3032,7 +3063,7 @@ function startMobileCompanionPolling() {
         } catch (e) {
             // silent poll
         }
-    }, 1200);
+    }, 1000);
 }
 
 // ==================== تبويب 2: بطاقات ودليل الأصناف ====================

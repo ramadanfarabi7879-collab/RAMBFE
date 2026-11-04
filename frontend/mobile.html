@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#4338ca">
+    <meta name="theme-color" content="#312e81">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>اسكانر الجوال الذكي | باركود • كيو ار • داتاماتريكس</title>
+    <title>نظام الجرد الذكي السحابي | تحكم كامل ومزامنة لحظية</title>
 
-    <!-- Tailwind CSS CDN -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts Cairo -->
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
-    <!-- Html5-QRCode مكتبة المسح -->
+    <!-- Html5-QRCode -->
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
     <style>
@@ -24,7 +24,6 @@
         .font-mono {
             font-family: 'JetBrains Mono', monospace;
         }
-        /* ليزر المسح المتحرك */
         @keyframes scanLaser {
             0% { top: 6%; opacity: 0.8; }
             50% { top: 90%; opacity: 1; }
@@ -42,7 +41,6 @@
             pointer-events: none;
             z-index: 10;
         }
-        /* وميض النجاح عند المسح */
         @keyframes flashSuccess {
             0% { opacity: 0.9; }
             100% { opacity: 0; }
@@ -55,165 +53,331 @@
             pointer-events: none;
             z-index: 20;
         }
-        /* إخفاء شريط التمرير */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white pb-20">
 
     <!-- شريط الرأس العلوي -->
-    <header class="bg-slate-800/95 backdrop-blur border-b border-slate-700/80 px-3 py-2.5 sticky top-0 z-30 flex items-center justify-between shadow-lg">
-        <div class="flex items-center gap-2">
-            <span class="text-xl p-1.5 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/40">📱</span>
-            <div>
-                <h1 class="text-xs sm:text-sm font-black text-white flex items-center gap-1.5">
-                    <span>اسكانر الجوال الذكي</span>
-                    <span id="conn-pill" class="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                        <span>متصل</span>
-                    </span>
-                </h1>
-                <p class="text-[10px] text-slate-400">باركود 1D • كود QR • انترناشونال داتاماتريكس</p>
+    <header class="bg-slate-900/95 backdrop-blur border-b border-slate-800 px-3 py-2 sticky top-0 z-40 shadow-lg">
+        <div class="flex items-center justify-between gap-2">
+            <!-- الشعار والمزامنة -->
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-md text-base font-black">
+                    📦
+                </div>
+                <div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-xs sm:text-sm font-black text-white">الجرد الذكي اللحظي</span>
+                        <span id="sync-badge" class="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                            <span id="sync-status-text">متزامن لحظياً ⚡</span>
+                        </span>
+                    </div>
+                    <p class="text-[10px] text-slate-400" id="sync-subtext">ربط مباشر مع شاشة الكمبيوتر</p>
+                </div>
+            </div>
+
+            <!-- أزرار الإجراءات السريعة (الكشاف ومستودع جديد) -->
+            <div class="flex items-center gap-1.5">
+                <button id="btn-toggle-torch" type="button" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs transition border border-slate-700 shadow-sm" title="كشاف الكاميرا">
+                    🔦
+                </button>
+                <button id="btn-open-new-store" type="button" class="px-2 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition shadow-sm flex items-center gap-1" title="مستودع جديد">
+                    <span>+</span>
+                    <span class="text-[11px]">مستودع</span>
+                </button>
             </div>
         </div>
 
-        <!-- أزرار سريعة في الرأس -->
-        <div class="flex items-center gap-1.5">
-            <button id="btn-toggle-torch" type="button" class="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs transition border border-slate-600 flex items-center gap-1 shadow-sm" title="كشاف الإضاءة">
-                <span>💡</span>
-                <span class="hidden sm:inline text-[11px]">كشاف</span>
-            </button>
-            <button id="btn-toggle-fullscreen" type="button" class="p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs transition border border-slate-600" title="ملء الشاشة">
-                ⛶
+        <!-- شريط اختيار المستودع المستهدف للجرد -->
+        <div class="mt-2 flex items-center gap-2 bg-slate-800/80 p-1.5 rounded-xl border border-slate-700/70">
+            <span class="text-xs font-bold text-slate-300 flex-shrink-0">المستودع:</span>
+            <select id="mobile-sel-store" class="flex-1 py-1 px-2 rounded-lg bg-slate-900 border border-indigo-500/40 text-indigo-200 font-mono text-xs font-bold focus:outline-none focus:border-indigo-400">
+                <option value="ST-001">ST-001 (جاري التحميل...)</option>
+            </select>
+            <button id="btn-refresh-data" type="button" class="p-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs" title="تحديث يدوي">
+                🔄
             </button>
         </div>
     </header>
 
-    <!-- بطاقة التبديل بين وجهة المسح: الجرد أو الفاتورة -->
-    <div class="px-3 pt-2">
-        <div class="bg-slate-800/90 rounded-xl p-2 border border-slate-700/80 shadow flex items-center justify-between gap-2">
-            <div class="flex items-center gap-1.5 w-full">
-                <!-- تبديل الهدف -->
-                <div class="inline-flex rounded-lg bg-slate-900/90 p-0.5 border border-slate-700 text-xs font-bold w-1/2">
-                    <button type="button" id="tab-target-stocktake" class="flex-1 py-1 text-center rounded-md bg-indigo-600 text-white shadow transition">
-                        📦 الجرد
-                    </button>
-                    <button type="button" id="tab-target-invoice" class="flex-1 py-1 text-center rounded-md text-slate-400 hover:text-white transition">
-                        🧾 الفاتورة
-                    </button>
+    <!-- شريط ملخص إحصائيات الجرد للمستودع المختار -->
+    <section class="px-3 pt-2">
+        <div class="grid grid-cols-4 gap-1.5 text-center">
+            <div class="bg-slate-900/90 border border-slate-800 p-1.5 rounded-xl shadow">
+                <div class="text-[10px] text-slate-400 font-bold">الأصناف</div>
+                <div id="stat-total-items" class="text-xs sm:text-sm font-black text-sky-400 font-mono">0</div>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 p-1.5 rounded-xl shadow">
+                <div class="text-[10px] text-slate-400 font-bold">المجرود</div>
+                <div id="stat-counted-qty" class="text-xs sm:text-sm font-black text-emerald-400 font-mono">0</div>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 p-1.5 rounded-xl shadow">
+                <div class="text-[10px] text-slate-400 font-bold">السيستم</div>
+                <div id="stat-system-qty" class="text-xs sm:text-sm font-black text-amber-400 font-mono">0</div>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 p-1.5 rounded-xl shadow">
+                <div class="text-[10px] text-slate-400 font-bold">الفرق</div>
+                <div id="stat-diff-qty" class="text-xs sm:text-sm font-black text-white font-mono">0</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- تبويبات العرض الرئيسية -->
+    <main class="flex-1 px-3 py-2">
+        
+        <!-- =================== التبويب 1: كاميرا المسح الضوئي (Scanner) =================== -->
+        <div id="view-scanner" class="space-y-2">
+            <div class="relative w-full max-w-md mx-auto aspect-square max-h-[44vh] bg-black rounded-2xl overflow-hidden border-2 border-indigo-500/60 shadow-2xl flex items-center justify-center">
+                <!-- شاشة كاميرا المسح -->
+                <div id="mobile-camera-viewport" class="w-full h-full object-cover"></div>
+                <!-- ليزر وميض المسح -->
+                <div id="scanner-laser-bar" class="scanner-laser"></div>
+                <div id="scan-flash-overlay" class="hidden"></div>
+
+                <!-- إطار التوجيه -->
+                <div class="absolute inset-8 sm:inset-10 border-2 border-dashed border-indigo-400/70 rounded-xl pointer-events-none flex flex-col justify-between p-2 shadow-inner">
+                    <div class="flex justify-between">
+                        <div class="w-4 h-4 border-t-2 border-r-2 border-emerald-400"></div>
+                        <div class="w-4 h-4 border-t-2 border-l-2 border-emerald-400"></div>
+                    </div>
+                    <div class="flex justify-between">
+                        <div class="w-4 h-4 border-b-2 border-r-2 border-emerald-400"></div>
+                        <div class="w-4 h-4 border-b-2 border-l-2 border-emerald-400"></div>
+                    </div>
                 </div>
 
-                <!-- اختيار الاستور النشط للجرد -->
-                <div id="store-selector-box" class="w-1/2">
-                    <select id="mobile-sel-store" class="w-full py-1 px-2 rounded-lg bg-slate-900 border border-indigo-500/50 text-indigo-200 font-mono text-xs font-bold focus:outline-none focus:border-indigo-400">
-                        <option value="ST-001">ST-001 (الاستور الرئيسي)</option>
-                    </select>
+                <!-- شارات الصيغ المدعومة -->
+                <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9px] font-bold text-slate-300 bg-slate-950/80 backdrop-blur py-1 px-2 rounded-lg border border-slate-800 pointer-events-none">
+                    <span class="text-emerald-400">✓ 1D Barcode</span>
+                    <span class="text-sky-400">✓ QR Code</span>
+                    <span class="text-indigo-400">✓ GS1 DataMatrix</span>
                 </div>
+
+                <!-- زر إعادة تشغيل الكاميرا إن توقفت -->
+                <button id="btn-restart-camera" type="button" class="hidden absolute inset-0 bg-slate-900/90 flex-col items-center justify-center gap-2 p-4 text-center">
+                    <span class="text-3xl">📷</span>
+                    <span class="text-sm font-bold text-white">اضغط هنا لتشغيل الكاميرا</span>
+                    <span class="text-xs text-slate-400">يرجى السماح بالوصول للكاميرا في المتصفح</span>
+                </button>
+            </div>
+
+            <!-- بطاقة النتيجة الحية للمسحة الأخيرة -->
+            <div id="mobile-feedback-card" class="max-w-md mx-auto w-full bg-slate-900/90 rounded-xl p-2.5 border border-slate-800 text-xs shadow-md">
+                <div class="flex items-center justify-between gap-1 pb-1 border-b border-slate-800 font-mono text-[11px]">
+                    <div class="flex items-center gap-1.5">
+                        <span id="scan-status-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        <strong id="scan-status-label" class="text-emerald-400 font-sans">جاهز للمسح</strong>
+                    </div>
+                    <span id="scan-time-label" class="text-slate-400">--:--</span>
+                </div>
+                <div class="mt-1.5 flex items-start justify-between gap-2">
+                    <div class="flex-1">
+                        <p id="scan-product-name" class="font-bold text-white text-xs leading-snug line-clamp-2">وجه الكاميرا نحو باركود الصنف أو كود الدواء...</p>
+                        <p id="scan-product-code" class="text-[10px] text-slate-400 font-mono mt-0.5">-</p>
+                    </div>
+                    <div class="text-left font-mono">
+                        <span id="scan-badge-qty" class="px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-300 font-black text-xs border border-emerald-500/40">
+                            +1
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- أدوات إضافية للمسح السريع واليدوي -->
+            <div class="max-w-md mx-auto space-y-2">
+                <div class="flex items-center justify-between gap-1.5">
+                    <button id="btn-toggle-continuous" type="button" class="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95">
+                        <span id="continuous-text">⚡ مسح متتابع: مفعل</span>
+                    </button>
+                    <button id="btn-flip-camera" type="button" class="py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs flex items-center justify-center gap-1 transition" title="تبديل الكاميرا">
+                        🔄 <span>العدسة</span>
+                    </button>
+                    <label class="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1 transition cursor-pointer shadow active:scale-95">
+                        📷 <span>صورة</span>
+                        <input type="file" id="mobile-file-snap" accept="image/*" capture="environment" class="hidden">
+                    </label>
+                </div>
+
+                <div class="flex items-center gap-1.5">
+                    <input type="text" id="mobile-manual-input" dir="ltr" placeholder="أو أدخل الباركود / الكود يدوياً هنا..."
+                           class="flex-1 py-1.5 px-3 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none">
+                    <button type="button" id="btn-manual-send" class="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition active:scale-95">
+                        إرسال ↵
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- =================== التبويب 2: كشف الجرد والتحكم في الكميات (Stocktake List) =================== -->
+        <div id="view-items" class="hidden space-y-2 max-w-md mx-auto">
+            <!-- شريط البحث والتصفية -->
+            <div class="space-y-1.5">
+                <div class="relative">
+                    <input type="text" id="items-search-input" placeholder="🔍 ابحث بالاسم أو الباركود أو الكود..."
+                           class="w-full py-2 pr-9 pl-3 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                    <span class="absolute right-3 top-2.5 text-xs text-slate-400">🔍</span>
+                </div>
+                <!-- فلاتر التصفية -->
+                <div class="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 text-[11px] font-bold">
+                    <button type="button" data-filter="all" class="filter-pill active px-2.5 py-1 rounded-lg bg-indigo-600 text-white">الكل (<span id="count-all">0</span>)</button>
+                    <button type="button" data-filter="diff" class="filter-pill px-2.5 py-1 rounded-lg bg-slate-800 text-amber-300 border border-slate-700">به فرق (<span id="count-diff">0</span>)</button>
+                    <button type="button" data-filter="surplus" class="filter-pill px-2.5 py-1 rounded-lg bg-slate-800 text-emerald-300 border border-slate-700">زيادة (<span id="count-surplus">0</span>)</button>
+                    <button type="button" data-filter="deficit" class="filter-pill px-2.5 py-1 rounded-lg bg-slate-800 text-rose-300 border border-slate-700">عجز (<span id="count-deficit">0</span>)</button>
+                    <button type="button" data-filter="match" class="filter-pill px-2.5 py-1 rounded-lg bg-slate-800 text-sky-300 border border-slate-700">مطابق (<span id="count-match">0</span>)</button>
+                </div>
+            </div>
+
+            <!-- قائمة كروت الأصناف المجرودة -->
+            <div id="stocktake-items-container" class="space-y-2 pb-10">
+                <div class="text-center py-10 text-slate-500 text-xs">
+                    جاري تحميل أصناف الجرد...
+                </div>
+            </div>
+        </div>
+
+        <!-- =================== التبويب 3: كتالوج الأصناف للإضافة اليدوية (Catalog Search) =================== -->
+        <div id="view-catalog" class="hidden space-y-2 max-w-md mx-auto">
+            <div class="relative">
+                <input type="text" id="catalog-search-input" placeholder="🔍 ابحث في دليل أصناف المحل بالاسم أو الكود..."
+                       class="w-full py-2 pr-9 pl-3 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                <span class="absolute right-3 top-2.5 text-xs text-slate-400">🔍</span>
+            </div>
+            <p class="text-[11px] text-slate-400">اضغط "إضافة للجرد" على أي صنف لإضافته فوراً إلى المستودع المختار:</p>
+
+            <div id="catalog-results-container" class="space-y-2 pb-10">
+                <div class="text-center py-8 text-slate-500 text-xs">
+                    اكتب حرفين أو أكثر للبحث في الكتالوج
+                </div>
+            </div>
+        </div>
+
+        <!-- =================== التبويب 4: إدارة المستودع والترحيل (Actions & Settle) =================== -->
+        <div id="view-actions" class="hidden space-y-3 max-w-md mx-auto">
+            <div class="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 space-y-3 shadow-md">
+                <h3 class="text-xs font-black text-white flex items-center gap-1.5 border-b border-slate-800 pb-2">
+                    <span>⚡</span>
+                    <span>إجراءات المستودع النشط (<span id="action-store-display" class="font-mono text-indigo-400">ST-001</span>)</span>
+                </h3>
+
+                <!-- ترحيل الجرد -->
+                <button type="button" id="btn-action-settle" class="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-95">
+                    <span>✅</span>
+                    <span>ترحيل وإغلاق جرد المستودع</span>
+                </button>
+
+                <!-- تصدير إكسيل -->
+                <button type="button" id="btn-action-export-excel" class="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow transition active:scale-95">
+                    <span>📊</span>
+                    <span>تصدير كشف الجرد إلى Excel</span>
+                </button>
+
+                <!-- النواقص والأصناف غير المجرودة -->
+                <button type="button" id="btn-action-view-uncounted" class="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs flex items-center justify-center gap-2 border border-slate-700 transition active:scale-95">
+                    <span>⚠️</span>
+                    <span>عرض النواقص (الأصناف غير المجرودة)</span>
+                </button>
+
+                <!-- تصفير الجرد -->
+                <button type="button" id="btn-action-clear-store" class="w-full py-2.5 px-3 rounded-xl bg-rose-900/30 hover:bg-rose-900/50 text-rose-300 border border-rose-700/50 font-bold text-xs flex items-center justify-center gap-2 transition active:scale-95">
+                    <span>🗑</span>
+                    <span>تصفير كميات الجرد للمستودع</span>
+                </button>
+            </div>
+
+            <!-- معلومات الاتصال والرابط السحابي -->
+            <div class="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 space-y-2 text-xs">
+                <h4 class="font-bold text-slate-300 flex items-center gap-1">
+                    <span>🌐</span>
+                    <span>حالة المزامنة والربط السحابي:</span>
+                </h4>
+                <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1 font-mono">
+                    <div class="text-slate-400">السيرفر: <span id="info-server-addr" class="text-indigo-300 font-bold">نشط</span></div>
+                    <div class="text-slate-400">المزامنة: <span class="text-emerald-400 font-bold">لحظية في اتجاهين (PC ↔ Mobile)</span></div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- شريط التنقل السفلي الثابت (Bottom Navigation Bar) -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-2 py-1.5 z-40 shadow-2xl">
+        <div class="max-w-md mx-auto grid grid-cols-4 gap-1">
+            <button type="button" id="nav-btn-scanner" class="nav-tab active flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-indigo-400 font-bold transition">
+                <span class="text-lg">📷</span>
+                <span class="text-[10px] mt-0.5">الماسح</span>
+            </button>
+            <button type="button" id="nav-btn-items" class="nav-tab flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-slate-400 font-bold transition">
+                <span class="text-lg">📋</span>
+                <span class="text-[10px] mt-0.5">كشف الجرد</span>
+            </button>
+            <button type="button" id="nav-btn-catalog" class="nav-tab flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-slate-400 font-bold transition">
+                <span class="text-lg">🔍</span>
+                <span class="text-[10px] mt-0.5">دليل الأصناف</span>
+            </button>
+            <button type="button" id="nav-btn-actions" class="nav-tab flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-slate-400 font-bold transition">
+                <span class="text-lg">⚙️</span>
+                <span class="text-[10px] mt-0.5">تحكم وترحيل</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- نافذة منبثقة: إنشاء مستودع جديد -->
+    <div id="modal-create-store" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-4 space-y-3 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                <h3 class="text-sm font-bold text-white">إضافة مستودع جرد جديد</h3>
+                <button type="button" id="btn-close-store-modal" class="text-slate-400 hover:text-white text-lg">✕</button>
+            </div>
+            <div class="space-y-2 text-xs">
+                <div>
+                    <label class="block text-slate-300 font-bold mb-1">اسم المستودع / القسم:</label>
+                    <input type="text" id="modal-store-name" placeholder="مثال: المستودع الثاني، الصيدلية الداخلية..."
+                           class="w-full py-2 px-3 rounded-xl bg-slate-950 border border-slate-700 text-white focus:outline-none focus:border-indigo-500">
+                </div>
+            </div>
+            <div class="flex items-center gap-2 pt-2">
+                <button type="button" id="btn-save-new-store" class="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition">
+                    حفظ المستودع ✓
+                </button>
+                <button type="button" id="btn-cancel-store" class="py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+                    إلغاء
+                </button>
             </div>
         </div>
     </div>
 
-    <!-- منطقة الكاميرا والماسح الضوئي -->
-    <main class="flex-1 px-3 py-2 flex flex-col justify-center">
-        <div class="relative w-full max-w-md mx-auto aspect-square max-h-[50vh] bg-black rounded-2xl overflow-hidden border-2 border-indigo-500/60 shadow-2xl flex items-center justify-center">
-            
-            <!-- حاوية عارض الفيديو المباشر -->
-            <div id="mobile-camera-viewport" class="w-full h-full object-cover"></div>
-
-            <!-- ليزر وميض المسح -->
-            <div id="scanner-laser-bar" class="scanner-laser"></div>
-
-            <!-- طبقة تأثير الفلاش عند نجاح المسح -->
-            <div id="scan-flash-overlay" class="hidden"></div>
-
-            <!-- إطار تحديد الهدف (Reticle) -->
-            <div class="absolute inset-8 sm:inset-10 border-2 border-dashed border-indigo-400/70 rounded-xl pointer-events-none flex flex-col justify-between p-2 shadow-inner">
-                <div class="flex justify-between">
-                    <div class="w-4 h-4 border-t-2 border-r-2 border-emerald-400"></div>
-                    <div class="w-4 h-4 border-t-2 border-l-2 border-emerald-400"></div>
-                </div>
-                <div class="flex justify-between">
-                    <div class="w-4 h-4 border-b-2 border-r-2 border-emerald-400"></div>
-                    <div class="w-4 h-4 border-b-2 border-l-2 border-emerald-400"></div>
+    <!-- نافذة منبثقة: تعديل الكمية المجرودة بدقة -->
+    <div id="modal-edit-qty" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-4 space-y-3 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                <h3 class="text-sm font-bold text-white">تعديل كمية الجرد الفعلية</h3>
+                <button type="button" id="btn-close-qty-modal" class="text-slate-400 hover:text-white text-lg">✕</button>
+            </div>
+            <div class="space-y-2 text-xs">
+                <p id="modal-qty-product-name" class="font-bold text-indigo-300 text-xs"></p>
+                <div>
+                    <label class="block text-slate-300 font-bold mb-1">الكمية الفعلية المجرودة:</label>
+                    <input type="number" step="any" id="modal-qty-input"
+                           class="w-full py-2 px-3 rounded-xl bg-slate-950 border border-slate-700 text-white text-lg font-mono font-bold text-center focus:outline-none focus:border-indigo-500">
                 </div>
             </div>
-
-            <!-- بادج الصيغ المدعومة بالأسفل داخل الكاميرا -->
-            <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9.5px] font-bold text-slate-300 bg-slate-900/80 backdrop-blur py-1 px-2 rounded-lg border border-slate-700/60 pointer-events-none">
-                <span class="text-emerald-400">● 1D Barcode</span>
-                <span class="text-sky-400">● QR Code</span>
-                <span class="text-indigo-400">● GS1 DataMatrix (دولي)</span>
-            </div>
-
-            <!-- زر إعادة تشغيل الكاميرا في حال توقفها -->
-            <button id="btn-restart-camera" type="button" class="hidden absolute inset-0 bg-slate-900/90 flex-col items-center justify-center gap-2 p-4 text-center">
-                <span class="text-3xl">📷</span>
-                <span class="text-sm font-bold text-white">انقر هنا لتشغيل الكاميرا</span>
-                <span class="text-xs text-slate-400">يُرجى السماح بصلاحيات الكاميرا في المتصفح</span>
-            </button>
-        </div>
-
-        <!-- شريط التنبيه اللحظي لآخر صنف تم مسحه -->
-        <div id="mobile-feedback-card" class="mt-2 max-w-md mx-auto w-full bg-slate-800 rounded-xl p-2.5 border border-slate-700 text-xs shadow-md">
-            <div class="flex items-center justify-between gap-1 pb-1 border-b border-slate-700/60 font-mono text-[11px]">
-                <div class="flex items-center gap-1.5">
-                    <span id="scan-status-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    <strong id="scan-status-label" class="text-emerald-400 font-sans">جاهز للمسح</strong>
-                </div>
-                <span id="scan-time-label" class="text-slate-400">--:--</span>
-            </div>
-            <div class="mt-1.5 flex items-start justify-between gap-2">
-                <div class="flex-1">
-                    <p id="scan-product-name" class="font-bold text-white text-xs leading-snug line-clamp-2">وجه الكاميرا نحو الباركود أو كود الدواء...</p>
-                    <p id="scan-product-code" class="text-[10px] text-slate-400 font-mono mt-0.5">-</p>
-                </div>
-                <div class="text-left font-mono">
-                    <span id="scan-badge-qty" class="px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-300 font-black text-xs border border-emerald-500/40">
-                        +1
-                    </span>
-                </div>
+            <div class="flex items-center gap-2 pt-2">
+                <button type="button" id="btn-save-qty" class="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition">
+                    تحديث الكمية ✓
+                </button>
+                <button type="button" id="btn-cancel-qty" class="py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+                    إلغاء
+                </button>
             </div>
         </div>
-    </main>
+    </div>
 
-    <!-- أزرار التحكم والإدخال السريع بالأسفل -->
-    <footer class="bg-slate-800/95 backdrop-blur border-t border-slate-700 px-3 py-2 space-y-2 sticky bottom-0 z-30">
-        <!-- أزرار وظائف الكاميرا -->
-        <div class="flex items-center justify-between gap-2 max-w-md mx-auto">
-            <!-- مسح مستمر سريع -->
-            <button id="btn-toggle-continuous" type="button" class="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95">
-                <span id="continuous-icon">⚡</span>
-                <span id="continuous-text">سحب مستمر: مفعّل</span>
-            </button>
-
-            <!-- تبديل الكاميرا -->
-            <button id="btn-flip-camera" type="button" class="py-1.5 px-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95" title="تبديل العدسة">
-                <span>🔄</span>
-                <span>العدسة</span>
-            </button>
-
-            <!-- زر التقاط صورة كبديل قياسي 100% -->
-            <label class="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1 transition cursor-pointer shadow active:scale-95">
-                <span>📸</span>
-                <span>صورة</span>
-                <input type="file" id="mobile-file-snap" accept="image/*" capture="environment" class="hidden">
-            </label>
-        </div>
-
-        <!-- خانة كتابة أو لصق الكود يدوياً -->
-        <div class="max-w-md mx-auto flex items-center gap-1.5">
-            <input type="text" id="mobile-manual-input" dir="ltr" placeholder="أو أدخل الكود يدوياً هنا..."
-                   class="flex-1 py-1.5 px-3 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none">
-            <button type="button" id="btn-manual-send" class="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition active:scale-95">
-                إرسال ↵
-            </button>
-        </div>
-    </footer>
-
-    <!-- سكريبت التشغيل الشامل للماسح -->
+    <!-- كود JavaScript التفاعلي والمزامنة اللحظية الشاملة -->
     <script>
-        let currentTarget = 'stocktake'; // 'stocktake' | 'invoice'
+        let currentTarget = 'stocktake';
         let currentStoreNo = 'ST-001';
         let isContinuous = true;
         let isTorchOn = false;
@@ -222,82 +386,357 @@
         let lastScannedCode = '';
         let lastScanTimestamp = 0;
         let audioCtx = null;
+        let lastSyncTimestamp = 0;
+        let syncPollTimer = null;
+        let currentStoreItems = [];
+        let currentFilter = 'all';
+        let activeEditEntry = null;
 
-        // تهيئة الصوت (صفارة النجاح / الخطأ)
+        // مؤثرات الصوت والاهتزاز
         function playBeep(isSuccess = true) {
             try {
-                if (!audioCtx) {
-                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                }
-                if (audioCtx.state === 'suspended') {
-                    audioCtx.resume();
-                }
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
-
                 if (isSuccess) {
                     osc.type = 'sine';
-                    osc.frequency.setValueAtTime(1300, audioCtx.currentTime);
-                    gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+                    osc.frequency.setValueAtTime(1400, audioCtx.currentTime);
+                    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
                     gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
                     osc.start();
                     osc.stop(audioCtx.currentTime + 0.12);
                 } else {
                     osc.type = 'square';
                     osc.frequency.setValueAtTime(350, audioCtx.currentTime);
-                    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
                     gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
                     osc.start();
                     osc.stop(audioCtx.currentTime + 0.25);
                 }
-            } catch (e) {
-                // ignore audio error
-            }
-
-            // هزة بالجوال للمس الحسي
-            if (navigator.vibrate) {
-                navigator.vibrate(isSuccess ? [80] : [150, 80, 150]);
-            }
+            } catch (e) {}
+            if (navigator.vibrate) navigator.vibrate(isSuccess ? [70] : [120, 60, 120]);
         }
 
-        // تأثير وميض النجاح
         function triggerSuccessFlash() {
             const overlay = document.getElementById('scan-flash-overlay');
             if (overlay) {
                 overlay.className = 'scan-flash';
-                setTimeout(() => { overlay.className = 'hidden'; }, 400);
+                setTimeout(() => { overlay.className = 'hidden'; }, 350);
             }
         }
 
-        // تحميل قائمة الاستورات المتاحة للجرد
+        // ==================== محرك المزامنة اللحظية (Real-Time Sync Engine) ====================
+        function startRealtimeSync() {
+            if (syncPollTimer) clearInterval(syncPollTimer);
+            lastSyncTimestamp = Date.now() / 1000;
+
+            syncPollTimer = setInterval(async () => {
+                try {
+                    const res = await fetch(`/api/sync/events?since=${lastSyncTimestamp}`);
+                    const data = await res.json();
+                    if (data.timestamp) lastSyncTimestamp = data.timestamp;
+
+                    if (data.events && data.events.length > 0) {
+                        let shouldReloadItems = false;
+                        let shouldReloadStores = false;
+
+                        for (const ev of data.events) {
+                            if (ev.type.startsWith('stock_') || ev.type === 'mobile_scan') {
+                                shouldReloadItems = true;
+                            }
+                            if (ev.type.startsWith('store_')) {
+                                shouldReloadStores = true;
+                            }
+                        }
+
+                        if (shouldReloadStores) await loadMobileStores();
+                        if (shouldReloadItems) await loadStoreItems(false);
+                    }
+                } catch (e) {
+                    // silent sync fail
+                }
+            }, 1000);
+        }
+
+        // تحميل قائمة المستودعات
         async function loadMobileStores() {
             try {
                 const res = await fetch('/api/stock/stores');
                 const data = await res.json();
                 const sel = document.getElementById('mobile-sel-store');
                 if (sel && data.created_stores && data.created_stores.length > 0) {
+                    const prevVal = currentStoreNo;
                     sel.innerHTML = data.created_stores.map(st => `
                         <option value="${st.store_no}">${st.store_no} (${st.store_name || ''})</option>
                     `).join('');
-                    currentStoreNo = sel.value;
+                    if (data.created_stores.some(st => st.store_no === prevVal)) {
+                        sel.value = prevVal;
+                    } else {
+                        currentStoreNo = sel.value;
+                    }
                 }
+                const disp = document.getElementById('action-store-display');
+                if (disp) disp.textContent = currentStoreNo;
             } catch (e) {
                 console.error('Error loading stores:', e);
             }
         }
 
-        // إرسال الكود للباك إند والكمبيوتر
+        // تحميل أصناف المستودع الحالي
+        async function loadStoreItems(showLoading = true) {
+            const container = document.getElementById('stocktake-items-container');
+            if (showLoading && container) {
+                container.innerHTML = '<div class="text-center py-10 text-slate-500 text-xs">جاري تحميل أصناف الجرد...</div>';
+            }
+
+            try {
+                const res = await fetch(`/api/stock/store/details?store_no=${encodeURIComponent(currentStoreNo)}`);
+                const data = await res.json();
+
+                currentStoreItems = data.items || [];
+
+                // تحديث الإحصائيات العلوية
+                const tot = data.totals || {};
+                document.getElementById('stat-total-items').textContent = Number(tot.total_items || currentStoreItems.length).toLocaleString('ar-EG');
+                document.getElementById('stat-counted-qty').textContent = Number(tot.total_actual_qty || 0).toLocaleString('ar-EG');
+                document.getElementById('stat-system-qty').textContent = Number(tot.total_system_qty || 0).toLocaleString('ar-EG');
+                
+                const diff = (tot.total_diff_qty !== undefined) ? tot.total_diff_qty : ((tot.total_actual_qty || 0) - (tot.total_system_qty || 0));
+                const diffElem = document.getElementById('stat-diff-qty');
+                diffElem.textContent = (diff > 0 ? '+' : '') + Number(diff).toLocaleString('ar-EG');
+                if (diff > 0) diffElem.className = 'text-xs sm:text-sm font-black text-emerald-400 font-mono';
+                else if (diff < 0) diffElem.className = 'text-xs sm:text-sm font-black text-rose-400 font-mono';
+                else diffElem.className = 'text-xs sm:text-sm font-black text-sky-400 font-mono';
+
+                renderStoreItems();
+            } catch (e) {
+                console.error('Error loading store items:', e);
+                if (container) {
+                    container.innerHTML = `<div class="text-center py-8 text-rose-400 text-xs">تعذر تحميل بيانات الجرد: ${e.message}</div>`;
+                }
+            }
+        }
+
+        // رسم كروت الأصناف وتطبيق الفلاتر والبحث
+        function renderStoreItems() {
+            const container = document.getElementById('stocktake-items-container');
+            if (!container) return;
+
+            const q = (document.getElementById('items-search-input')?.value || '').trim().toLowerCase();
+
+            // حساب أعداد الفلاتر
+            let countDiff = 0, countSurplus = 0, countDeficit = 0, countMatch = 0;
+            currentStoreItems.forEach(it => {
+                const act = Number(it.actual_qty || 0);
+                const sys = Number(it.system_qty || 0);
+                const d = act - sys;
+                if (d !== 0) countDiff++;
+                if (d > 0) countSurplus++;
+                if (d < 0) countDeficit++;
+                if (d === 0) countMatch++;
+            });
+
+            document.getElementById('count-all').textContent = currentStoreItems.length;
+            document.getElementById('count-diff').textContent = countDiff;
+            document.getElementById('count-surplus').textContent = countSurplus;
+            document.getElementById('count-deficit').textContent = countDeficit;
+            document.getElementById('count-match').textContent = countMatch;
+
+            const filtered = currentStoreItems.filter(it => {
+                const name = (it.item_name || it.product_name || '').toLowerCase();
+                const code = (it.item_code || it.product_code || '').toLowerCase();
+                const bar = (it.barcode || '').toLowerCase();
+                const matchSearch = !q || name.includes(q) || code.includes(q) || bar.includes(q);
+                if (!matchSearch) return false;
+
+                const act = Number(it.actual_qty || 0);
+                const sys = Number(it.system_qty || 0);
+                const d = act - sys;
+
+                if (currentFilter === 'diff') return d !== 0;
+                if (currentFilter === 'surplus') return d > 0;
+                if (currentFilter === 'deficit') return d < 0;
+                if (currentFilter === 'match') return d === 0;
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="text-center py-10 text-slate-500 text-xs">لا توجد أصناف تطابق البحث الحالي</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(it => {
+                const entryId = it.entry_id || it.id;
+                const act = Number(it.actual_qty || 0);
+                const sys = Number(it.system_qty || 0);
+                const diff = act - sys;
+
+                let diffBadge = '';
+                if (diff > 0) {
+                    diffBadge = `<span class="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold font-mono text-[10px]">+${diff} زيادة</span>`;
+                } else if (diff < 0) {
+                    diffBadge = `<span class="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold font-mono text-[10px]">${diff} عجز</span>`;
+                } else {
+                    diffBadge = `<span class="px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-300 border border-sky-500/30 font-bold font-mono text-[10px]">مطابق ✓</span>`;
+                }
+
+                return `
+                    <div class="bg-slate-900/90 rounded-2xl p-3 border border-slate-800 shadow-sm space-y-2 hover:border-indigo-500/50 transition">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="flex-1">
+                                <h4 class="font-bold text-white text-xs leading-snug">${it.item_name || it.product_name || 'صنف بدون اسم'}</h4>
+                                <div class="flex items-center gap-2 mt-1 text-[10px] text-slate-400 font-mono">
+                                    <span>كود: <strong class="text-slate-300">${it.item_code || it.product_code || '-'}</strong></span>
+                                    ${it.barcode ? `<span>باركود: <strong class="text-slate-300">${it.barcode}</strong></span>` : ''}
+                                </div>
+                            </div>
+                            <div class="flex-shrink-0 text-left">
+                                ${diffBadge}
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-1 border-t border-slate-800/80 text-xs">
+                            <div class="flex items-center gap-3">
+                                <div>
+                                    <span class="text-[10px] text-slate-400 block">رصيد السيستم</span>
+                                    <span class="font-bold font-mono text-slate-300">${sys}</span>
+                                </div>
+                                <div class="cursor-pointer" onclick="openQtyEditModal(${entryId}, '${(it.item_name || '').replace(/'/g, "\\'")}', ${act})">
+                                    <span class="text-[10px] text-emerald-400 block font-bold">المجرود الفعلي ✎</span>
+                                    <span class="font-black font-mono text-sm text-emerald-400 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-600/40 inline-block">${act}</span>
+                                </div>
+                            </div>
+
+                            <!-- أزرار زيادة ونقصان وحذف الصنف -->
+                            <div class="flex items-center gap-1.5">
+                                <button type="button" onclick="stepItemQty(${entryId}, -1)" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-rose-300 font-black text-sm border border-slate-700 flex items-center justify-center transition">
+                                    -
+                                </button>
+                                <button type="button" onclick="stepItemQty(${entryId}, 1)" class="w-8 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-black text-sm shadow flex items-center justify-center transition">
+                                    +
+                                </button>
+                                <button type="button" onclick="deleteStockEntry(${entryId})" class="w-8 h-8 rounded-xl bg-rose-900/20 hover:bg-rose-900/40 active:scale-95 text-rose-400 text-xs border border-rose-700/30 flex items-center justify-center transition ml-1" title="حذف">
+                                    🗑
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // زيادة أو نقصان الكمية بزر واحد
+        async function stepItemQty(entryId, step) {
+            const item = currentStoreItems.find(it => (it.entry_id || it.id) === entryId);
+            if (!item) return;
+
+            const currentActual = Number(item.actual_qty || 0);
+            const newQty = Math.max(0, currentActual + step);
+
+            // تحديث تفاؤلي سريع
+            item.actual_qty = newQty;
+            renderStoreItems();
+            playBeep(true);
+
+            try {
+                const res = await fetch('/api/stock/update-qty', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        entry_id: entryId,
+                        quantity: newQty,
+                        store_no: currentStoreNo
+                    })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    playBeep(false);
+                    await loadStoreItems(false);
+                }
+            } catch (e) {
+                playBeep(false);
+                await loadStoreItems(false);
+            }
+        }
+
+        // فتح نافذة تعديل الكمية المباشرة
+        window.openQtyEditModal = function(entryId, name, currentQty) {
+            activeEditEntry = entryId;
+            document.getElementById('modal-qty-product-name').textContent = name;
+            const inp = document.getElementById('modal-qty-input');
+            inp.value = currentQty;
+            document.getElementById('modal-edit-qty').classList.remove('hidden');
+            setTimeout(() => inp.focus(), 150);
+        };
+
+        document.getElementById('btn-close-qty-modal')?.addEventListener('click', () => {
+            document.getElementById('modal-edit-qty').classList.add('hidden');
+        });
+        document.getElementById('btn-cancel-qty')?.addEventListener('click', () => {
+            document.getElementById('modal-edit-qty').classList.add('hidden');
+        });
+
+        document.getElementById('btn-save-qty')?.addEventListener('click', async () => {
+            if (!activeEditEntry) return;
+            const newQty = parseFloat(document.getElementById('modal-qty-input').value) || 0;
+            document.getElementById('modal-edit-qty').classList.add('hidden');
+
+            try {
+                const res = await fetch('/api/stock/update-qty', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        entry_id: activeEditEntry,
+                        quantity: newQty,
+                        store_no: currentStoreNo
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    playBeep(true);
+                    await loadStoreItems(false);
+                } else {
+                    alert(data.message || 'فشل تحديث الكمية');
+                }
+            } catch (e) {
+                alert('خطأ في الاتصال: ' + e.message);
+            }
+        });
+
+        // حذف سطر صنف من الجرد
+        window.deleteStockEntry = async function(entryId) {
+            if (!confirm('هل تريد بالتأكيد حذف هذا الصنف من كشف جرد المستودع؟')) return;
+            try {
+                const res = await fetch('/api/stock/delete-item', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        entry_id: entryId,
+                        store_no: currentStoreNo
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    playBeep(true);
+                    await loadStoreItems(false);
+                } else {
+                    alert(data.message || 'تعذر الحذف');
+                }
+            } catch (e) {
+                alert('خطأ: ' + e.message);
+            }
+        };
+
+        // إرسال كود ممسوح للسيرفر
         async function submitScannedCode(rawCode) {
             const code = String(rawCode || '').trim();
             if (!code) return;
 
-            // حماية من التكرار اللحظي لنفس الباركود في جزء من الثانية
             const now = Date.now();
-            if (code === lastScannedCode && (now - lastScanTimestamp) < 1200) {
-                return;
-            }
+            if (code === lastScannedCode && (now - lastScanTimestamp) < 1200) return;
             lastScannedCode = code;
             lastScanTimestamp = now;
 
@@ -309,7 +748,7 @@
             const lblCode = document.getElementById('scan-product-code');
             const lblTime = document.getElementById('scan-time-label');
 
-            if (lblStatus) lblStatus.textContent = 'جاري الإرسال للكمبيوتر...';
+            if (lblStatus) lblStatus.textContent = 'جاري الإرسال والمزامنة...';
             if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping';
             if (lblTime) lblTime.textContent = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -330,7 +769,7 @@
 
                 if (data.success) {
                     playBeep(true);
-                    if (lblStatus) lblStatus.textContent = '✅ تم السحب والإرسال بنجاح';
+                    if (lblStatus) lblStatus.textContent = '✓ تم الجرد والمزامنة بنجاح';
                     if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-emerald-400';
                     
                     const prodName = data.product_name || (data.product && data.product.name) || code;
@@ -339,6 +778,9 @@
 
                     if (lblName) lblName.textContent = prodName;
                     if (lblCode) lblCode.textContent = `الكود: ${prodCode} ${batch ? '| تشغيلة: ' + batch : ''}`;
+
+                    // تحديث قائمة الأصناف فوراً
+                    await loadStoreItems(false);
                 } else {
                     playBeep(false);
                     if (lblStatus) lblStatus.textContent = '⚠️ ' + (data.message || 'تنبيه في الصنف');
@@ -354,13 +796,9 @@
             }
         }
 
-        // تشغيل كاميرا الجوال مع دعم كافة الصيغ: باركود، كيو ار، وداتاماتريكس دولي
+        // تشغيل كاميرا الموبايل
         function startMobileCamera() {
-            if (typeof Html5Qrcode === 'undefined') {
-                alert('مكتبة الكاميرا غير محملة. تأكد من اتصال الإنترنت أو تحديث الصفحة.');
-                return;
-            }
-
+            if (typeof Html5Qrcode === 'undefined') return;
             const btnRestart = document.getElementById('btn-restart-camera');
             if (btnRestart) btnRestart.classList.add('hidden');
 
@@ -378,7 +816,6 @@
         }
 
         function initHtml5QrCodeInstance() {
-            // تفعيل الصيغ الثلاث المطلوبة: Barcode 1D + QR Code + International DataMatrix
             const formatsToSupport = [
                 Html5QrcodeSupportedFormats.QR_CODE,
                 Html5QrcodeSupportedFormats.DATA_MATRIX,
@@ -397,7 +834,7 @@
             });
 
             const config = {
-                fps: 15,
+                fps: 16,
                 qrbox: (w, h) => {
                     const minEdge = Math.min(w, h);
                     return { width: Math.floor(minEdge * 0.8), height: Math.floor(minEdge * 0.8) };
@@ -414,13 +851,8 @@
                 config,
                 (decodedText) => {
                     submitScannedCode(decodedText);
-                    if (!isContinuous) {
-                        // إيقاف مؤقت إذا لم يكن الوضع المستمر مفعلاً
-                    }
                 },
-                (errorMessage) => {
-                    // ignore per-frame decode errors
-                }
+                () => {}
             ).catch(err => {
                 console.error("Camera start error:", err);
                 const btnRestart = document.getElementById('btn-restart-camera');
@@ -428,7 +860,7 @@
             });
         }
 
-        // تشغيل كشاف الجوال Torch
+        // كشاف الكاميرا
         async function toggleTorch() {
             if (!html5QrCode) return;
             try {
@@ -439,81 +871,229 @@
                 const btn = document.getElementById('btn-toggle-torch');
                 if (btn) {
                     btn.className = isTorchOn
-                        ? 'px-2.5 py-1.5 rounded-lg bg-amber-500 text-slate-900 font-bold text-xs transition border border-amber-400 shadow-md'
-                        : 'px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs transition border border-slate-600';
+                        ? 'p-2 rounded-xl bg-amber-500 text-slate-900 font-bold text-xs transition border border-amber-400 shadow-md'
+                        : 'p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs transition border border-slate-700';
                 }
             } catch (err) {
-                alert('الكشاف غير مدعوم في متصفحك أو كاميرا هذا الجوال.');
+                alert('الكشاف غير مدعوم في متصفح أو كاميرا هذا الهاتف.');
             }
         }
 
-        // تبديل العدسة (الأمامية / الخلفية)
         function flipCamera() {
             currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
             startMobileCamera();
         }
 
-        // معالجة صورة ملتقطة بالكاميرا كبديل 100%
-        document.getElementById('mobile-file-snap')?.addEventListener('change', async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
+        // ==================== البحث في كتالوج الأصناف لإضافتها يدوياً ====================
+        let catalogSearchTimer = null;
+        document.getElementById('catalog-search-input')?.addEventListener('input', (e) => {
+            const query = e.target.value.trim();
+            if (catalogSearchTimer) clearTimeout(catalogSearchTimer);
+            if (query.length < 2) {
+                document.getElementById('catalog-results-container').innerHTML = '<div class="text-center py-8 text-slate-500 text-xs">اكتب حرفين أو أكثر للبحث في الكتالوج</div>';
+                return;
+            }
+            catalogSearchTimer = setTimeout(async () => {
+                const container = document.getElementById('catalog-results-container');
+                container.innerHTML = '<div class="text-center py-6 text-slate-400 text-xs">جاري البحث في الكتالوج...</div>';
+                try {
+                    const res = await fetch(`/api/catalog/products?q=${encodeURIComponent(query)}&limit=30`);
+                    const data = await res.json();
+                    const prods = data.products || [];
+                    if (prods.length === 0) {
+                        container.innerHTML = '<div class="text-center py-8 text-slate-500 text-xs">لا توجد نتائج مطابقة</div>';
+                        return;
+                    }
+                    container.innerHTML = prods.map(p => `
+                        <div class="bg-slate-900/90 rounded-2xl p-3 border border-slate-800 shadow-sm flex items-center justify-between gap-2">
+                            <div class="flex-1">
+                                <h4 class="font-bold text-white text-xs">${p.name || 'بدون اسم'}</h4>
+                                <div class="text-[10px] text-slate-400 font-mono mt-0.5">
+                                    <span>كود: <strong class="text-slate-300">${p.code || '-'}</strong></span>
+                                    ${p.barcode ? `<span class="mr-2">باركود: <strong class="text-slate-300">${p.barcode}</strong></span>` : ''}
+                                </div>
+                            </div>
+                            <button type="button" onclick="addCatalogItemToStore('${p.code || p.barcode}')" class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow transition active:scale-95 flex-shrink-0">
+                                إضافة للجرد +
+                            </button>
+                        </div>
+                    `).join('');
+                } catch (e) {
+                    container.innerHTML = `<div class="text-center py-6 text-rose-400 text-xs">خطأ: ${e.message}</div>`;
+                }
+            }, 300);
+        });
 
-            const lblStatus = document.getElementById('scan-status-label');
-            if (lblStatus) lblStatus.textContent = 'جاري تحليل الصورة...';
+        window.addCatalogItemToStore = async function(code) {
+            if (!code) return;
+            await submitScannedCode(code);
+            // تحويل للتبويب الثاني لمشاهدة الصنف
+            switchView('items');
+        };
 
+        // ==================== إجراءات المستودع (ترحيل، تصدير، تصفير) ====================
+        // ترحيل وإغلاق الجرد
+        document.getElementById('btn-action-settle')?.addEventListener('click', async () => {
+            if (!confirm(`هل أنت متأكد من ترحيل وإغلاق جرد المستودع ${currentStoreNo}؟ سيتم اعتماد الكميات المجرودة في الأرصدة.`)) return;
             try {
-                if (!html5QrCode) {
-                    html5QrCode = new Html5Qrcode("mobile-camera-viewport");
+                const res = await fetch('/api/stock/settle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ store_no: currentStoreNo })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    playBeep(true);
+                    alert('✓ تم ترحيل وإغلاق جرد المستودع بنجاح!');
+                    await loadStoreItems(false);
+                } else {
+                    alert(data.message || 'فشل الترحيل');
                 }
-                const decodedText = await html5QrCode.scanFile(file, true);
-                if (decodedText) {
-                    submitScannedCode(decodedText);
-                }
-            } catch (err) {
-                alert('لم يتم العثور على باركود أو كود صالح في الصورة الملتقطة. يُرجى التقاط صورة واضحة ومقربة.');
-            } finally {
-                e.target.value = '';
+            } catch (e) {
+                alert('خطأ: ' + e.message);
             }
         });
 
-        // تبديل أزرار الوجهة (الجرد / الفاتورة)
-        document.getElementById('tab-target-stocktake')?.addEventListener('click', () => {
-            currentTarget = 'stocktake';
-            document.getElementById('tab-target-stocktake').className = 'flex-1 py-1 text-center rounded-md bg-indigo-600 text-white shadow transition';
-            document.getElementById('tab-target-invoice').className = 'flex-1 py-1 text-center rounded-md text-slate-400 hover:text-white transition';
-            document.getElementById('store-selector-box')?.classList.remove('hidden');
+        // تصدير إكسيل
+        document.getElementById('btn-action-export-excel')?.addEventListener('click', () => {
+            window.open(`/api/stock/export-excel?store_no=${encodeURIComponent(currentStoreNo)}`, '_blank');
         });
 
-        document.getElementById('tab-target-invoice')?.addEventListener('click', () => {
-            currentTarget = 'invoice';
-            document.getElementById('tab-target-invoice').className = 'flex-1 py-1 text-center rounded-md bg-indigo-600 text-white shadow transition';
-            document.getElementById('tab-target-stocktake').className = 'flex-1 py-1 text-center rounded-md text-slate-400 hover:text-white transition';
-            document.getElementById('store-selector-box')?.classList.add('hidden');
+        // عرض النواقص
+        document.getElementById('btn-action-view-uncounted')?.addEventListener('click', () => {
+            window.open(`/api/stock/export-uncounted-excel?store_no=${encodeURIComponent(currentStoreNo)}`, '_blank');
         });
 
+        // تصفير الجرد
+        document.getElementById('btn-action-clear-store')?.addEventListener('click', async () => {
+            if (!confirm(`تحذير: هل أنت متأكد من تصفير كافة الكميات المجرودة في المستودع ${currentStoreNo}؟`)) return;
+            try {
+                const res = await fetch('/api/stock/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ store_no: currentStoreNo })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    playBeep(true);
+                    alert('تم تصفير كميات جرد المستودع بنجاح');
+                    await loadStoreItems(false);
+                } else {
+                    alert(data.message || 'فشل التصفير');
+                }
+            } catch (e) {
+                alert('خطأ: ' + e.message);
+            }
+        });
+
+        // إنشاء مستودع جديد
+        document.getElementById('btn-open-new-store')?.addEventListener('click', () => {
+            document.getElementById('modal-create-store').classList.remove('hidden');
+            setTimeout(() => document.getElementById('modal-store-name').focus(), 150);
+        });
+        document.getElementById('btn-close-store-modal')?.addEventListener('click', () => {
+            document.getElementById('modal-create-store').classList.add('hidden');
+        });
+        document.getElementById('btn-cancel-store')?.addEventListener('click', () => {
+            document.getElementById('modal-create-store').classList.add('hidden');
+        });
+        document.getElementById('btn-save-new-store')?.addEventListener('click', async () => {
+            const name = document.getElementById('modal-store-name').value.trim();
+            if (!name) {
+                alert('يرجى إدخال اسم المستودع');
+                return;
+            }
+            try {
+                const res = await fetch('/api/stock/stores/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ store_name: name })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('modal-create-store').classList.add('hidden');
+                    document.getElementById('modal-store-name').value = '';
+                    await loadMobileStores();
+                    currentStoreNo = data.store_no;
+                    document.getElementById('mobile-sel-store').value = data.store_no;
+                    await loadStoreItems(true);
+                    alert(`✓ تم إنشاء المستودع بنجاح (${data.store_no})`);
+                } else {
+                    alert(data.message || 'فشل إنشاء المستودع');
+                }
+            } catch (e) {
+                alert('خطأ: ' + e.message);
+            }
+        });
+
+        // ==================== إدارة التنقل بين التبويبات الأربعة ====================
+        function switchView(viewName) {
+            const views = {
+                'scanner': document.getElementById('view-scanner'),
+                'items': document.getElementById('view-items'),
+                'catalog': document.getElementById('view-catalog'),
+                'actions': document.getElementById('view-actions')
+            };
+            const navBtns = {
+                'scanner': document.getElementById('nav-btn-scanner'),
+                'items': document.getElementById('nav-btn-items'),
+                'catalog': document.getElementById('nav-btn-catalog'),
+                'actions': document.getElementById('nav-btn-actions')
+            };
+
+            Object.keys(views).forEach(k => {
+                if (k === viewName) {
+                    views[k]?.classList.remove('hidden');
+                    navBtns[k]?.classList.add('active', 'text-indigo-400');
+                    navBtns[k]?.classList.remove('text-slate-400');
+                } else {
+                    views[k]?.classList.add('hidden');
+                    navBtns[k]?.classList.remove('active', 'text-indigo-400');
+                    navBtns[k]?.classList.add('text-slate-400');
+                }
+            });
+
+            if (viewName === 'items') {
+                loadStoreItems(false);
+            }
+        }
+
+        document.getElementById('nav-btn-scanner')?.addEventListener('click', () => switchView('scanner'));
+        document.getElementById('nav-btn-items')?.addEventListener('click', () => switchView('items'));
+        document.getElementById('nav-btn-catalog')?.addEventListener('click', () => switchView('catalog'));
+        document.getElementById('nav-btn-actions')?.addEventListener('click', () => switchView('actions'));
+
+        // فلاتر كشف الجرد
+        document.querySelectorAll('.filter-pill').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-pill').forEach(b => {
+                    b.classList.remove('active', 'bg-indigo-600', 'text-white');
+                    b.classList.add('bg-slate-800');
+                });
+                btn.classList.add('active', 'bg-indigo-600', 'text-white');
+                btn.classList.remove('bg-slate-800');
+                currentFilter = btn.dataset.filter;
+                renderStoreItems();
+            });
+        });
+
+        document.getElementById('items-search-input')?.addEventListener('input', () => {
+            renderStoreItems();
+        });
+
+        // تغيير المستودع المختار
         document.getElementById('mobile-sel-store')?.addEventListener('change', (e) => {
             currentStoreNo = e.target.value;
+            const disp = document.getElementById('action-store-display');
+            if (disp) disp.textContent = currentStoreNo;
+            loadStoreItems(true);
         });
 
-        // تبديل الوضع السريع المستمر
-        document.getElementById('btn-toggle-continuous')?.addEventListener('click', () => {
-            isContinuous = !isContinuous;
-            const btn = document.getElementById('btn-toggle-continuous');
-            const txt = document.getElementById('continuous-text');
-            if (isContinuous) {
-                btn.className = 'flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95';
-                if (txt) txt.textContent = 'سحب مستمر: مفعّل';
-            } else {
-                btn.className = 'flex-1 py-1.5 px-2 rounded-xl bg-slate-700 text-slate-400 border border-slate-600 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95';
-                if (txt) txt.textContent = 'سحب فردي';
-            }
+        document.getElementById('btn-refresh-data')?.addEventListener('click', () => {
+            loadStoreItems(true);
         });
 
-        document.getElementById('btn-toggle-torch')?.addEventListener('click', toggleTorch);
-        document.getElementById('btn-flip-camera')?.addEventListener('click', flipCamera);
-        document.getElementById('btn-restart-camera')?.addEventListener('click', startMobileCamera);
-
-        // إدخال يدوي
+        // المسح اليدوي
         document.getElementById('btn-manual-send')?.addEventListener('click', () => {
             const inp = document.getElementById('mobile-manual-input');
             if (inp && inp.value.trim()) {
@@ -531,19 +1111,44 @@
             }
         });
 
-        // ملء الشاشة
-        document.getElementById('btn-toggle-fullscreen')?.addEventListener('click', () => {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen?.().catch(() => {});
-            } else {
-                document.exitFullscreen?.().catch(() => {});
+        // صورة من الكاميرا
+        document.getElementById('mobile-file-snap')?.addEventListener('change', async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+                if (!html5QrCode) html5QrCode = new Html5Qrcode("mobile-camera-viewport");
+                const decodedText = await html5QrCode.scanFile(file, true);
+                if (decodedText) submitScannedCode(decodedText);
+            } catch (err) {
+                alert('لم يتم العثور على باركود صالح في الصورة الملتقطة.');
+            } finally {
+                e.target.value = '';
             }
         });
 
-        // بدء التشغيل عند فتح الصفحة في الجوال
-        window.addEventListener('DOMContentLoaded', () => {
-            loadMobileStores();
+        document.getElementById('btn-toggle-torch')?.addEventListener('click', toggleTorch);
+        document.getElementById('btn-flip-camera')?.addEventListener('click', flipCamera);
+        document.getElementById('btn-restart-camera')?.addEventListener('click', startMobileCamera);
+
+        document.getElementById('btn-toggle-continuous')?.addEventListener('click', () => {
+            isContinuous = !isContinuous;
+            const btn = document.getElementById('btn-toggle-continuous');
+            const txt = document.getElementById('continuous-text');
+            if (isContinuous) {
+                btn.className = 'flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95';
+                if (txt) txt.textContent = '⚡ مسح متتابع: مفعل';
+            } else {
+                btn.className = 'flex-1 py-1.5 px-2 rounded-xl bg-slate-800 text-slate-400 border border-slate-700 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95';
+                if (txt) txt.textContent = 'مسح فردي';
+            }
+        });
+
+        // بدء التشغيل عند تحميل الصفحة
+        window.addEventListener('DOMContentLoaded', async () => {
+            await loadMobileStores();
+            await loadStoreItems(true);
             setTimeout(startMobileCamera, 400);
+            startRealtimeSync();
         });
     </script>
 </body>
