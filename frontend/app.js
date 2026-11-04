@@ -2413,6 +2413,7 @@ async function executeScan(qrText) {
             body: JSON.stringify({
                 invoice_id: invId,
                 qr_text: cleanQr,
+                code: cleanQr,
                 quantity: 1,
                 user_name: 'المسؤول'
             })
@@ -2754,6 +2755,21 @@ function initCameraScanner() {
         startCamera();
     });
 
+    // لمس شاشة الكاميرا لضبط الفوكس والتركيز التلقائي عند الاقتراب من علبة الدواء
+    document.getElementById('camera-viewport-touch-area')?.addEventListener('click', async (e) => {
+        try {
+            const video = document.querySelector('#camera-reader-viewport video');
+            if (video && video.srcObject) {
+                const [track] = video.srcObject.getVideoTracks();
+                if (track && track.applyConstraints) {
+                    await track.applyConstraints({
+                        advanced: [{ focusMode: 'continuous' }]
+                    });
+                }
+            }
+        } catch (err) {}
+    });
+
     // التقاط صورة بديلة بالكاميرا
     document.getElementById('modal-camera-file-input')?.addEventListener('change', async (e) => {
         const file = e.target.files?.[0];
@@ -2778,6 +2794,12 @@ function initCameraScanner() {
 }
 
 function openCameraModal(mode = 'invoice') {
+    // تفعيل ومزامنة صوت الاسكانر فوراً بلمسة المستخدم
+    try {
+        if (!appAudioCtx) appAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (appAudioCtx.state === 'suspended') appAudioCtx.resume();
+    } catch(e) {}
+
     cameraScanMode = mode;
     const modal = document.getElementById('modal-camera-scanner');
     const badge = document.getElementById('camera-target-badge');
@@ -2799,19 +2821,34 @@ function openCameraModal(mode = 'invoice') {
     startCamera();
 }
 
+let nativeDetectorAnimFrame = null;
+let isNativeScanning = false;
+
+function triggerCameraFlashFeedback() {
+    const flashEl = document.getElementById('camera-scan-flash-overlay');
+    if (flashEl) {
+        flashEl.classList.remove('hidden');
+        setTimeout(() => {
+            flashEl.classList.add('hidden');
+        }, 320);
+    }
+}
+
 async function handleCameraDecodedText(decodedText) {
     const raw = String(decodedText || '').trim();
     if (!raw) return;
 
-    // منع التكرار اللحظي بنفس الثانية
+    // منع التكرار اللحظي لنفس العبوة خلال 1.2 ثانية لتجنب مضاعفة العدد بالخطأ
     const now = Date.now();
-    if (raw === cameraLastScanCode && (now - cameraLastScanTime) < 1400) {
+    if (raw === cameraLastScanCode && (now - cameraLastScanTime) < 1200) {
         return;
     }
     cameraLastScanCode = raw;
     cameraLastScanTime = now;
 
+    // إصدار نغمة بيب والاهتزاز اللحظي وميض سحب العبوة
     playAppScannerBeep(true);
+    triggerCameraFlashFeedback();
 
     const isContinuous = document.getElementById('chk-camera-continuous')?.checked ?? true;
     const lastResBox = document.getElementById('camera-modal-last-result');
@@ -2855,6 +2892,7 @@ async function handleCameraDecodedText(decodedText) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     code: raw,
+                    qr_text: raw,
                     store_no: currentActiveStoreNo || 'ST-001'
                 })
             });
@@ -2867,7 +2905,7 @@ async function handleCameraDecodedText(decodedText) {
                 } else {
                     await loadStocktakeStores();
                     await loadCurrentStoreItems();
-                    showCatalogToast(`✅ تم سحب العبوة للجرد (+1): ${data.product_name || raw}`);
+                    showCatalogToast(`⚡ تم سحب العبوة للجرد (+1): ${data.product_name || raw}`);
                 }
             } else {
                 playAppScannerBeep(false);
@@ -2878,6 +2916,7 @@ async function handleCameraDecodedText(decodedText) {
             showCatalogToast('خطأ أثناء المسح: ' + e.message, true);
         }
     } else {
+        // وضع الفاتورة: سحب العبوة فورياً وتحديث الجدول والكمية كجهاز الكمبيوتر
         executeScan(raw);
     }
 
@@ -2895,22 +2934,64 @@ function startCamera() {
 
     if (html5QrScannerInstance) {
         try {
-            html5QrScannerInstance.stop().catch(() => {}).finally(() => {
-                html5QrScannerInstance.clear();
-                html5QrScannerInstance = null;
-                initHtml5ScannerInstance();
-            });
+            stopCamera();
+            setTimeout(initHtml5ScannerInstance, 200);
             return;
         } catch(e) {}
     }
     initHtml5ScannerInstance();
 }
 
+function applyContinuousFocusAndNativeLoop(videoElem) {
+    if (!videoElem) return;
+
+    // تفعيل الفوكس المستمر عبر كاميرا الموبايل
+    try {
+        if (videoElem.srcObject) {
+            const [track] = videoElem.srcObject.getVideoTracks();
+            if (track && track.getCapabilities) {
+                const caps = track.getCapabilities();
+                if (caps.focusMode && caps.focusMode.includes('continuous')) {
+                    track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+                }
+            }
+        }
+    } catch(e) {}
+
+    // محرك الفحص فائق السرعة عبر العتاد المباشر BarcodeDetector في متصفحات الجوال
+    if ('BarcodeDetector' in window) {
+        try {
+            const detector = new BarcodeDetector({
+                formats: ['data_matrix', 'qr_code', 'ean_13', 'code_128', 'ean_8', 'upc_a', 'upc_e', 'code_39']
+            });
+
+            isNativeScanning = true;
+            const scanFrame = async () => {
+                if (!isNativeScanning || !videoElem || videoElem.paused || videoElem.ended) return;
+                try {
+                    if (videoElem.readyState >= 2) {
+                        const barcodes = await detector.detect(videoElem);
+                        if (barcodes && barcodes.length > 0) {
+                            const match = barcodes[0];
+                            if (match && match.rawValue) {
+                                handleCameraDecodedText(match.rawValue);
+                            }
+                        }
+                    }
+                } catch(e) {}
+                if (isNativeScanning) {
+                    nativeDetectorAnimFrame = requestAnimationFrame(scanFrame);
+                }
+            };
+            nativeDetectorAnimFrame = requestAnimationFrame(scanFrame);
+        } catch(e) {}
+    }
+}
+
 function initHtml5ScannerInstance() {
-    // تفعيل كافة الصيغ: Barcode 1D + QR Code + International DataMatrix
     const formatsToSupport = [
-        Html5QrcodeSupportedFormats.QR_CODE,
         Html5QrcodeSupportedFormats.DATA_MATRIX,
+        Html5QrcodeSupportedFormats.QR_CODE,
         Html5QrcodeSupportedFormats.EAN_13,
         Html5QrcodeSupportedFormats.EAN_8,
         Html5QrcodeSupportedFormats.CODE_128,
@@ -2920,47 +3001,77 @@ function initHtml5ScannerInstance() {
         Html5QrcodeSupportedFormats.CODABAR
     ];
 
-    html5QrScannerInstance = new Html5Qrcode("camera-reader-viewport", {
-        formatsToSupport: formatsToSupport,
-        verbose: false
-    });
+    try {
+        html5QrScannerInstance = new Html5Qrcode("camera-reader-viewport", {
+            formatsToSupport: formatsToSupport,
+            verbose: false,
+            experimentalFeatures: {
+                useBarCodeDetectorIfSupported: true
+            }
+        });
+    } catch(e) {
+        html5QrScannerInstance = new Html5Qrcode("camera-reader-viewport", {
+            verbose: false
+        });
+    }
 
-    const config = {
-        fps: 15,
-        qrbox: (w, h) => {
-            const minEdge = Math.min(w, h);
-            return { width: Math.floor(minEdge * 0.8), height: Math.floor(minEdge * 0.8) };
-        },
-        aspectRatio: 1.0,
-        videoConstraints: {
-            facingMode: cameraFacingMode,
-            focusMode: "continuous"
-        }
+    const highResCameraConfig = {
+        facingMode: { ideal: cameraFacingMode },
+        width: { min: 1280, ideal: 1920, max: 3840 },
+        height: { min: 720, ideal: 1080, max: 2160 }
     };
 
-    html5QrScannerInstance.start(
-        { facingMode: cameraFacingMode },
-        config,
-        (decodedText) => {
-            handleCameraDecodedText(decodedText);
-        },
-        (errorMessage) => {
-            // ignore scan frame errors
-        }
-    ).catch(err => {
-        console.error('Camera start error', err);
-        alert('تعذر فتح الكاميرا: يُرجى منح صلاحيات الكاميرا في المتصفح، أو استخدم زر (📱 اسكان بالجوال) لمسح الباركود بهاتفك بكل سهولة.');
-        document.getElementById('modal-camera-scanner')?.classList.add('hidden');
-    });
+    const scanConfig = {
+        fps: 24,
+        qrbox: (w, h) => ({
+            width: Math.floor(w * 0.94),
+            height: Math.floor(h * 0.94)
+        }),
+        aspectRatio: undefined,
+        disableFlip: false
+    };
+
+    const onScanSuccess = (decodedText) => {
+        handleCameraDecodedText(decodedText);
+    };
+
+    const startWithFallback = (cfg) => {
+        return html5QrScannerInstance.start(
+            cfg,
+            scanConfig,
+            onScanSuccess,
+            () => {}
+        );
+    };
+
+    // البدء بدقة عالية Full HD لقراءة علب الأدوية، مع التراجع التلقائي إذا كانت الكاميرا قديمة
+    startWithFallback(highResCameraConfig)
+        .catch(() => {
+            return startWithFallback({ facingMode: cameraFacingMode });
+        })
+        .then(() => {
+            const video = document.querySelector('#camera-reader-viewport video');
+            applyContinuousFocusAndNativeLoop(video);
+        })
+        .catch(err => {
+            console.error('Camera start error', err);
+            alert('تعذر فتح الكاميرا: يُرجى التأكد من السماح بصلاحيات الكاميرا في المتصفح، أو يمكنك رفع صورة واضحة للعلبة عبر زر (صورة).');
+            document.getElementById('modal-camera-scanner')?.classList.add('hidden');
+        });
 }
 
 function stopCamera() {
+    isNativeScanning = false;
+    if (nativeDetectorAnimFrame) {
+        cancelAnimationFrame(nativeDetectorAnimFrame);
+        nativeDetectorAnimFrame = null;
+    }
     if (html5QrScannerInstance) {
         html5QrScannerInstance.stop().then(() => {
             html5QrScannerInstance.clear();
             html5QrScannerInstance = null;
         }).catch(err => {
-            console.error('Camera stop error', err);
+            try { html5QrScannerInstance.clear(); } catch(e) {}
             html5QrScannerInstance = null;
         });
     }
@@ -5161,8 +5272,8 @@ function initStocktakeTab() {
     const btnCancelEdit = document.getElementById('btn-cancel-edit-stock-item');
     const btnSaveEdit = document.getElementById('btn-save-edit-stock-item');
 
-    // 1. إنشاء استور جديد
-    btnNewStore?.addEventListener('click', async () => {
+    // 1. إنشاء استور جديد (بالزر أو بضغط Enter)
+    const handleCreateNewStore = async () => {
         const name = inputNewStore?.value?.trim();
         if (!name) {
             alert('يُرجى إدخال اسم الاستور أولاً.');
@@ -5178,13 +5289,24 @@ function initStocktakeTab() {
             const data = await res.json();
             if (data.success) {
                 inputNewStore.value = '';
+                showCatalogToast?.(`✅ تم إنشاء وحفظ الاستور: ${data.store_name} (${data.store_no})`);
                 await loadStocktakeStores();
                 selectActiveStockStore(data.store_no, data.store_name);
+                setTimeout(() => document.getElementById('stk-scan-input')?.focus(), 150);
             } else {
                 alert('فشل إنشاء الاستور: ' + (data.message || ''));
             }
         } catch (e) {
             alert('خطأ: ' + e.message);
+        }
+    };
+
+    btnNewStore?.addEventListener('click', handleCreateNewStore);
+
+    inputNewStore?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            handleCreateNewStore();
         }
     });
 
@@ -5400,6 +5522,33 @@ function initStocktakeTab() {
     document.getElementById('btn-stk-select-all-stores-direct')?.addEventListener('click', selectAllCountedStores);
     document.getElementById('btn-stk-clear-stores-selection')?.addEventListener('click', clearCountedStoresSelection);
     document.getElementById('stk-counted-stores-chk-all')?.addEventListener('change', (e) => toggleCountedStoresChkAll(e.target.checked));
+
+    // 8.ج التبديل بين تبويبات الاستورات المدمجة (استورات الجرد والترحيل vs دليل الاستورات المنشأة)
+    const btnTabCounted = document.getElementById('tab-btn-counted-stores');
+    const btnTabCreated = document.getElementById('tab-btn-created-stores');
+    const panelCounted = document.getElementById('stk-panel-counted-stores');
+    const panelCreated = document.getElementById('stk-panel-created-stores');
+
+    function switchStoreTab(activeTab) {
+        if (activeTab === 'counted') {
+            btnTabCounted?.classList.add('bg-indigo-600', 'text-white', 'shadow');
+            btnTabCounted?.classList.remove('bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+            btnTabCreated?.classList.remove('bg-indigo-600', 'text-white', 'shadow');
+            btnTabCreated?.classList.add('bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+            panelCounted?.classList.remove('hidden');
+            panelCreated?.classList.add('hidden');
+        } else {
+            btnTabCreated?.classList.add('bg-indigo-600', 'text-white', 'shadow');
+            btnTabCreated?.classList.remove('bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+            btnTabCounted?.classList.remove('bg-indigo-600', 'text-white', 'shadow');
+            btnTabCounted?.classList.add('bg-slate-100', 'text-slate-700', 'hover:bg-slate-200');
+            panelCreated?.classList.remove('hidden');
+            panelCounted?.classList.add('hidden');
+        }
+    }
+
+    btnTabCounted?.addEventListener('click', () => switchStoreTab('counted'));
+    btnTabCreated?.addEventListener('click', () => switchStoreTab('created'));
 
     // 9. تصفير جرد الاستور
     btnClear?.addEventListener('click', async () => {

@@ -1048,7 +1048,7 @@
                         </div>
                     </div>
 
-                    <!-- أزرار الإجراءات والطباعة المباشرة (مطابقة للأزرار في صورتك) -->
+                    <!-- أزرار الإجراءات والطباعة المباشرة -->
                     <div class="space-y-1.5 pt-2 border-t border-slate-100">
                         <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">عمليات الاستور المحدد:</div>
                         
@@ -1095,50 +1095,23 @@
                             <span class="text-[10px] text-amber-300">طباعة الاستور</span>
                         </button>
 
-                        <!-- أزرار تقارير الأصناف التي لم تُجرد (Estimated Not Found) -->
+                        <!-- زر كشف الأصناف غير المجرودة (Estimated Not Found) - النافذة الشاملة للفلترة بالأقسام والطباعة وسحب الإكسيل -->
                         <button type="button" id="btn-stk-print-uncounted"
-                                class="w-full px-3 py-1.5 bg-rose-800 hover:bg-rose-900 text-white border border-rose-600 rounded-lg text-xs font-bold transition flex items-center justify-between shadow">
+                                class="w-full px-3 py-2 bg-gradient-to-r from-rose-800 to-rose-700 hover:from-rose-900 hover:to-rose-800 text-white border border-rose-600 rounded-lg text-xs font-bold transition flex items-center justify-between shadow">
                             <span class="flex items-center gap-1.5">
                                 <span>📋</span>
-                                <span>PRINT ESTIMATED NOT FOUND</span>
+                                <span>تقرير غير المجرود (Estimated Not Found)</span>
                             </span>
-                            <span class="text-[10px] bg-rose-950 px-1.5 py-0.5 rounded text-rose-200">لم تُجرد</span>
-                        </button>
-
-                        <button type="button" id="btn-stk-print-uncounted-cat"
-                                class="w-full px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-300 rounded-lg text-xs font-bold transition flex items-center justify-between">
-                            <span class="flex items-center gap-1.5">
-                                <span>📂</span>
-                                <span class="text-[11px]">PRINT NOT FOUND BY CATEGORIES</span>
-                            </span>
-                            <span class="text-[10px] text-rose-600 font-bold">بالأقسام</span>
-                        </button>
-
-                        <button type="button" id="btn-stk-export-uncounted-excel"
-                                class="w-full px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold transition flex items-center justify-between">
-                            <span class="flex items-center gap-1.5">
-                                <span>📥</span>
-                                <span>سحب Excel للأصناف غير المجرودة</span>
-                            </span>
-                            <span class="text-[10px] text-slate-500 font-mono">XLSX</span>
+                            <span class="text-[10px] bg-rose-950 px-1.5 py-0.5 rounded text-rose-200">الأقسام + الطباعة + Excel</span>
                         </button>
 
                         <button type="button" id="btn-stk-settle"
                                 class="w-full px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg text-xs font-bold transition flex items-center justify-between">
                             <span class="flex items-center gap-1.5">
                                 <span>✅</span>
-                                <span>اعتماد وترحيل الاستور الحالي</span>
+                                <span>اعتماد وترحيل الاستور النشط</span>
                             </span>
                             <span class="text-[10px] text-indigo-500 font-bold">ترحيل فردي</span>
-                        </button>
-
-                        <button type="button" id="btn-stk-commit-all-stores-global"
-                                class="w-full px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white border border-emerald-500 rounded-lg text-xs font-bold transition flex items-center justify-between shadow">
-                            <span class="flex items-center gap-1.5">
-                                <span>🚀</span>
-                                <span>ترحيل واعتماد جميع الاستورات</span>
-                            </span>
-                            <span class="text-[10px] bg-emerald-950 px-1.5 py-0.5 rounded text-emerald-200">مسح القديم واعتماد الجديد</span>
                         </button>
 
                         <!-- تبويب خيارات التصفير والحذف والإدارة (Collapsible Accordion Tab) -->
@@ -1194,53 +1167,10 @@
                     </div>
                 </div>
 
-                <!-- 2. الجزء الرئيسي المقسم نصفين مع شريط التكلفة الأوسط (المطابق للصورة المرسلة) -->
+                <!-- 2. الجزء الرئيسي: شريط إجماليات التكلفة بالأعلى + تبويبات الاستورات المدمجة + شاشة الجرد المباشر -->
                 <div class="lg:col-span-9 space-y-2.5">
 
-                    <!-- =================== النصف العلوي: الاستورات المنشأة (Created Stores) =================== -->
-                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <!-- شريط البحث العلوي المتبع بنفس طرق البرنامج -->
-                        <div class="p-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-                            <div class="flex items-center gap-2">
-                                <span class="w-2.5 h-2.5 rounded-full bg-indigo-600"></span>
-                                <strong class="text-indigo-950 font-bold text-xs sm:text-sm">الاستورات المنشأة (Created Stores)</strong>
-                                <span id="stk-created-stores-count" class="px-2 py-0.2 rounded-full bg-indigo-100 text-indigo-800 font-bold text-[11px] font-mono">0 استور</span>
-                            </div>
-
-                            <!-- خانة البحث المتوافقة مع البرنامج (اسم الاستور، رقم الاستور، الصنف) -->
-                            <div class="flex items-center gap-2 flex-1 max-w-sm">
-                                <div class="relative w-full">
-                                    <input type="text" id="stk-stores-search" placeholder="STORE: Enter Product Name or Store Name..."
-                                           class="w-full pl-8 pr-3 py-1 bg-white border border-slate-300 rounded-lg text-xs focus:border-indigo-600 outline-none">
-                                    <span class="absolute left-2.5 top-1.5 text-slate-400 text-xs">🔍</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- جدول النصف العلوي: الاستورات المنشأة -->
-                        <div class="overflow-x-auto max-h-48 overflow-y-auto">
-                            <table class="w-full text-xs text-right border-collapse">
-                                <thead class="bg-slate-800 text-white font-bold sticky top-0 z-10 text-[11px]">
-                                    <tr>
-                                        <th class="p-2 text-center w-12">#</th>
-                                        <th class="p-2">Store No.</th>
-                                        <th class="p-2">Store Name</th>
-                                        <th class="p-2 text-center">Status</th>
-                                        <th class="p-2 text-center">Created By</th>
-                                        <th class="p-2 text-center">Created At</th>
-                                        <th class="p-2 text-center w-36">إجراءات الاستور</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="stk-created-stores-tbody" class="divide-y divide-slate-100">
-                                    <tr>
-                                        <td colspan="7" class="p-4 text-center text-slate-400">جاري تحميل الاستورات...</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <!-- =================== السطر الفاصل الأوسط: شريط الإجماليات وخانات تفاصيل التكلفة وسعر البيع =================== -->
+                    <!-- =================== 1. شريط الإجماليات وتفاصيل التكلفة وسعر البيع بالأعلى =================== -->
                     <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl p-2.5 shadow-md border-2 border-indigo-400/50">
                         <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-1.5 text-center text-xs">
                             <!-- TOTAL STORES -->
@@ -1293,69 +1223,122 @@
                         </div>
                     </div>
 
-                    <!-- =================== النصف السفلي: الاستورات الجاري جردها / المجرودة الجاهزة للترحيل النهائي =================== -->
+                    <!-- =================== 2. إدارة الاستورات المنظمة في تبويبات مدمجة موفرة للمساحة =================== -->
                     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div class="p-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-                            <div class="flex items-center gap-2">
-                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                <strong class="text-slate-900 font-bold text-xs sm:text-sm">الاستورات التي تمت أو جاري فيها عملية الجرد (جاهزة للترحيل النهائي)</strong>
-                                <span id="stk-counted-stores-count" class="px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] font-mono">0 استور</span>
+                        <!-- ترويسة التبويبات + شريط البحث والعمليات -->
+                        <div class="p-2 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <!-- أزرار التبويب -->
+                            <div class="flex items-center gap-1.5">
+                                <button type="button" id="tab-btn-counted-stores"
+                                        class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg font-bold text-xs transition shadow flex items-center gap-1.5 cursor-pointer">
+                                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    <span>استورات الجرد والترحيل (Counted)</span>
+                                    <span id="stk-counted-stores-count" class="px-1.5 py-0.2 rounded-full bg-indigo-800 text-white font-mono text-[10px]">0 استور</span>
+                                </button>
+                                <button type="button" id="tab-btn-created-stores"
+                                        class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold text-xs transition flex items-center gap-1.5 cursor-pointer">
+                                    <span class="w-2 h-2 rounded-full bg-indigo-600"></span>
+                                    <span>دليل الاستورات المنشأة (Created)</span>
+                                    <span id="stk-created-stores-count" class="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800 font-mono text-[10px]">0 استور</span>
+                                </button>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <button type="button" id="btn-stk-select-all-stores-direct" class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg font-bold text-xs transition">
-                                    ☑️ تحديد جميع الاستورات
-                                </button>
-                                <button type="button" id="btn-stk-commit-all-stores-top" class="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs transition flex items-center gap-1 shadow-sm">
-                                    <span>🚀</span>
-                                    <span>ترحيل واعتماد الجرد لجميع الاستورات</span>
-                                </button>
+
+                            <!-- خانة البحث الموحدة عن الاستورات والمنتجات -->
+                            <div class="flex items-center gap-2 flex-1 max-w-xs">
+                                <div class="relative w-full">
+                                    <input type="text" id="stk-stores-search" placeholder="STORE: Enter Product Name or Store Name..."
+                                           class="w-full pl-8 pr-3 py-1 bg-white border border-slate-300 rounded-lg text-xs focus:border-indigo-600 outline-none">
+                                    <span class="absolute left-2.5 top-1.5 text-slate-400 text-xs">🔍</span>
+                                </div>
                             </div>
                         </div>
 
-                        <!-- شريط العمليات المجمعة على الاستورات المحددة للترحيل -->
-                        <div id="stk-stores-bulk-bar" class="hidden bg-emerald-50 border-b border-emerald-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs transition">
-                            <div class="flex items-center gap-2">
-                                <span id="stk-stores-selected-badge" class="px-2 py-0.5 bg-emerald-700 text-white rounded font-mono font-bold text-[11px]">0</span>
-                                <strong class="text-emerald-950 font-bold">استورات محددة للترحيل النهائي</strong>
-                                <span class="text-[11px] text-emerald-800">(سيتم مسح الاستوك القديم واعتماد الفعلي الجديد)</span>
+                        <!-- التبويب الأول: الاستورات الجاري جردها والجاهزة للترحيل النهائي -->
+                        <div id="stk-panel-counted-stores" class="space-y-0">
+                            <!-- شريط عمليات الترحيل المجمعة في تبويب الجرد -->
+                            <div class="px-3 py-1.5 bg-slate-100/90 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <div class="text-slate-600 font-semibold text-[11px] flex items-center gap-1">
+                                    <span>💡</span>
+                                    <span>حدد استورات معينة للترحيل من المربعات، أو اضغط زر الاعتماد الشامل:</span>
+                                </div>
+                                <div>
+                                    <button type="button" id="btn-stk-commit-all-stores-top"
+                                            class="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs transition flex items-center gap-1.5 shadow-sm">
+                                        <span>🚀</span>
+                                        <span>ترحيل واعتماد الجرد لجميع الاستورات</span>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <button type="button" id="btn-stk-commit-selected-stores" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition flex items-center gap-1.5 shadow text-xs">
-                                    <span>🚀</span>
-                                    <span>ترحيل واعتماد الاستورات المحددة</span>
-                                </button>
-                                <button type="button" id="btn-stk-clear-stores-selection" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg font-semibold text-xs">
-                                    إلغاء التحديد ✕
-                                </button>
+
+                            <!-- شريط الاستورات المحددة للترحيل -->
+                            <div id="stk-stores-bulk-bar" class="hidden bg-emerald-50 border-b border-emerald-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs transition">
+                                <div class="flex items-center gap-2">
+                                    <span id="stk-stores-selected-badge" class="px-2 py-0.5 bg-emerald-700 text-white rounded font-mono font-bold text-[11px]">0</span>
+                                    <strong class="text-emerald-950 font-bold">استورات محددة للترحيل النهائي</strong>
+                                    <span class="text-[11px] text-emerald-800">(سيتم مسح الاستوك القديم واعتماد الفعلي الجديد)</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button type="button" id="btn-stk-commit-selected-stores" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold transition flex items-center gap-1.5 shadow text-xs">
+                                        <span>🚀</span>
+                                        <span>ترحيل واعتماد الاستورات المحددة</span>
+                                    </button>
+                                    <button type="button" id="btn-stk-clear-stores-selection" class="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg font-semibold text-xs">
+                                        إلغاء التحديد ✕
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- جدول الاستورات المجرودة -->
+                            <div class="overflow-x-auto max-h-48 overflow-y-auto">
+                                <table class="w-full text-xs text-right border-collapse">
+                                    <thead class="bg-slate-900 text-white font-bold sticky top-0 z-10 text-[11px]">
+                                        <tr>
+                                            <th class="p-2 text-center w-10">
+                                                <input type="checkbox" id="stk-counted-stores-chk-all" class="cursor-pointer rounded border-slate-400 w-3.5 h-3.5" title="تحديد / إلغاء تحديد الكل">
+                                            </th>
+                                            <th class="p-2 text-center w-10">#</th>
+                                            <th class="p-2">Store No.</th>
+                                            <th class="p-2">Store Name</th>
+                                            <th class="p-2 text-center">الأصناف</th>
+                                            <th class="p-2 text-center">الكمية</th>
+                                            <th class="p-2 text-center">تكلفة الاستور</th>
+                                            <th class="p-2 text-center">بيع الاستور</th>
+                                            <th class="p-2 text-center">فرق التكلفة</th>
+                                            <th class="p-2 text-center">Status</th>
+                                            <th class="p-2 text-center w-36">إجراءات</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="stk-counted-stores-tbody" class="divide-y divide-slate-100">
+                                        <tr>
+                                            <td colspan="11" class="p-4 text-center text-slate-400">لا توجد استورات مجرودة حتى الآن. اضغط "📥 بدء الجرد" على أي استور لبدء مسحه!</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
 
-                        <!-- جدول النصف السفلي: الاستورات الجاري جردها -->
-                        <div class="overflow-x-auto max-h-48 overflow-y-auto">
-                            <table class="w-full text-xs text-right border-collapse">
-                                <thead class="bg-slate-900 text-white font-bold sticky top-0 z-10 text-[11px]">
-                                    <tr>
-                                        <th class="p-2 text-center w-10">
-                                            <input type="checkbox" id="stk-counted-stores-chk-all" class="cursor-pointer rounded border-slate-400 w-3.5 h-3.5" title="تحديد / إلغاء تحديد الكل">
-                                        </th>
-                                        <th class="p-2 text-center w-10">#</th>
-                                        <th class="p-2">Store No.</th>
-                                        <th class="p-2">Store Name</th>
-                                        <th class="p-2 text-center">الأصناف</th>
-                                        <th class="p-2 text-center">الكمية</th>
-                                        <th class="p-2 text-center">تكلفة الاستور</th>
-                                        <th class="p-2 text-center">بيع الاستور</th>
-                                        <th class="p-2 text-center">فرق التكلفة</th>
-                                        <th class="p-2 text-center">Status</th>
-                                        <th class="p-2 text-center w-36">إجراءات</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="stk-counted-stores-tbody" class="divide-y divide-slate-100">
-                                    <tr>
-                                        <td colspan="9" class="p-4 text-center text-slate-400">لا توجد استورات مجرودة حتى الآن. اضغط "📥 بدء الجرد" على أي استور لبدء مسحه!</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                        <!-- التبويب الثاني: دليل الاستورات المنشأة (Created Stores) -->
+                        <div id="stk-panel-created-stores" class="hidden">
+                            <div class="overflow-x-auto max-h-48 overflow-y-auto">
+                                <table class="w-full text-xs text-right border-collapse">
+                                    <thead class="bg-slate-800 text-white font-bold sticky top-0 z-10 text-[11px]">
+                                        <tr>
+                                            <th class="p-2 text-center w-12">#</th>
+                                            <th class="p-2">Store No.</th>
+                                            <th class="p-2">Store Name</th>
+                                            <th class="p-2 text-center">Status</th>
+                                            <th class="p-2 text-center">Created By</th>
+                                            <th class="p-2 text-center">Created At</th>
+                                            <th class="p-2 text-center w-36">إجراءات الاستور</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="stk-created-stores-tbody" class="divide-y divide-slate-100">
+                                        <tr>
+                                            <td colspan="7" class="p-4 text-center text-slate-400">جاري تحميل الاستورات...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
@@ -1809,12 +1792,16 @@
             </div>
 
             <!-- حاوية الكاميرا مع مؤشر الليزر -->
-            <div class="relative w-full aspect-video sm:aspect-square max-h-[45vh] bg-black rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
+            <div class="relative w-full aspect-video sm:aspect-square max-h-[50vh] bg-black rounded-xl overflow-hidden shadow-inner flex items-center justify-center cursor-pointer" id="camera-viewport-touch-area" title="المس الشاشة لضبط التركيز التلقائي (Autofocus)">
                 <div id="camera-reader-viewport" class="w-full h-full object-cover"></div>
                 <!-- وميض الليزر التوجيهي -->
                 <div class="absolute left-4 right-4 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_8px_#22c55e] animate-pulse pointer-events-none z-10"></div>
+                <!-- وميض السحب الناجح الأخضر عند التقاط الداتاماتريكس/الباركود -->
+                <div id="camera-scan-flash-overlay" class="hidden absolute inset-0 bg-emerald-500/50 backdrop-blur-[1px] pointer-events-none z-30 transition-all duration-300 flex items-center justify-center">
+                    <span class="text-3xl sm:text-4xl filter drop-shadow-md animate-bounce">⚡</span>
+                </div>
                 <!-- وسوم الصيغ المدعومة -->
-                <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9px] font-bold text-white bg-slate-900/80 backdrop-blur py-1 px-2 rounded-lg pointer-events-none">
+                <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9px] font-bold text-white bg-slate-900/80 backdrop-blur py-1 px-2 rounded-lg pointer-events-none z-20">
                     <span class="text-emerald-400">● باركود محلي وعالمي</span>
                     <span class="text-sky-400">● كود QR</span>
                     <span class="text-amber-400">● GS1 DataMatrix دولي</span>
@@ -2364,6 +2351,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261104_v50"></script>
+    <script src="app.js?v=20261104_v52"></script>
 </body>
 </html>

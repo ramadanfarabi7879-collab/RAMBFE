@@ -1,9 +1,8 @@
 /**
- * Cloudflare Pages Function - Universal API Handler for RAMBFE
- * Handles all /api/* requests natively on Cloudflare Edge with Real-Time Sync & D1 SQLite support.
+ * Cloudflare Worker for RAMBFE (Invoice Matcher & Real-time Stocktake)
+ * Serves frontend static assets via env.ASSETS and handles /api/* routes with Real-Time Sync.
  */
 
-// ذاكرة تخزين حية للأحداث والمزامنة اللحظية على شبكة Cloudflare Edge
 let memoryProducts = [
     { id: 1, code: 'MED-001', name: 'PANADOL EXTRA 500MG (بنادول إكسترا)', barcode: '6221111111111', gtin: '06221111111111', price: 15.50, cost: 12.00, tax: 0, category: 'MEDICINE' },
     { id: 2, code: 'MED-002', name: 'AUGMENTIN 1G 14 TAB (أوجمنتين 1 جم)', barcode: '6222222222222', gtin: '06222222222222', price: 54.00, cost: 45.00, tax: 0, category: 'MEDICINE' },
@@ -33,6 +32,61 @@ let memoryDraftInvoice = {
 
 let memoryEvents = [];
 
+function parseGs1Code(rawInput) {
+    if (!rawInput) return { isGs1: false, gtin: '', batch: '', serial: '', expiry: '', raw: '' };
+    let s = String(rawInput).trim();
+    // إزالة بادئات الماسح الضوئي (AIM Identifiers)
+    s = s.replace(/^\][dqcQDC][0-9]/, '');
+    s = s.replace(/<\s*GS\s*>/gi, '\x1d').replace(/\[\s*GS\s*\]/gi, '\x1d').replace(/\^\]/g, '\x1d');
+
+    let gtin = '', batch = '', serial = '', expiry = '', isGs1 = false;
+
+    // صيغة الأقواس القياسية: (01)...(17)...(10)...(21)...
+    if (s.includes('(') && s.includes(')')) {
+        const matches = s.matchAll(/\(([0-9]{2,4})\)([^()]+)/g);
+        for (const m of matches) {
+            const ai = m[1];
+            const val = m[2].trim();
+            if (ai === '01') { gtin = val; isGs1 = true; }
+            else if (ai === '10') { batch = val; isGs1 = true; }
+            else if (ai === '21') { serial = val; isGs1 = true; }
+            else if (ai === '17') { expiry = val; isGs1 = true; }
+        }
+    }
+
+    // صيغة GS1 المتسلسلة المباشرة بدون أقواس
+    if (!isGs1 && s.startsWith('01') && s.length >= 16) {
+        gtin = s.substring(2, 16);
+        isGs1 = true;
+        let rest = s.substring(16);
+        if (rest.startsWith('17') && rest.length >= 8) {
+            expiry = rest.substring(2, 8);
+            rest = rest.substring(8);
+        }
+        if (rest.startsWith('10')) {
+            const gsIdx = rest.indexOf('\x1d');
+            if (gsIdx >= 0) {
+                batch = rest.substring(2, gsIdx);
+                const afterGs = rest.substring(gsIdx + 1);
+                if (afterGs.startsWith('21')) serial = afterGs.substring(2);
+            } else {
+                batch = rest.substring(2);
+            }
+        } else if (rest.startsWith('21')) {
+            const gsIdx = rest.indexOf('\x1d');
+            if (gsIdx >= 0) {
+                serial = rest.substring(2, gsIdx);
+                const afterGs = rest.substring(gsIdx + 1);
+                if (afterGs.startsWith('10')) batch = afterGs.substring(2);
+            } else {
+                serial = rest.substring(2);
+            }
+        }
+    }
+
+    return { isGs1, gtin: gtin || s, batch, serial, expiry, raw: s };
+}
+
 function broadcastEvent(type, payload) {
     const evt = {
         id: Math.random().toString(36).substring(2, 10),
@@ -57,304 +111,381 @@ function jsonResponse(data, status = 200) {
     });
 }
 
-export async function onRequest(context) {
-    const { request, env } = context;
-    const url = new URL(request.url);
-    const path = url.pathname;
-    const method = request.method;
+export default {
+    async fetch(request, env, ctx) {
+        const url = new URL(request.url);
+        const path = url.pathname;
+        const method = request.method;
 
-    if (method === 'OPTIONS') {
-        return new Response(null, {
-            status: 204,
-            headers: {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
-                'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        if (method === 'OPTIONS') {
+            return new Response(null, {
+                status: 204,
+                headers: {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+                }
+            });
+        }
+
+        // إذا كان الطلب مسار API
+        if (path.startsWith('/api/')) {
+            let body = {};
+            if (method === 'POST') {
+                try {
+                    body = await request.json();
+                } catch (e) {
+                    body = {};
+                }
             }
-        });
-    }
 
-    let body = {};
-    if (method === 'POST') {
-        try {
-            body = await request.json();
-        } catch (e) {
-            body = {};
+            if (path === '/api/stats') {
+                return jsonResponse({
+                    products_count: memoryProducts.length,
+                    barcodes_count: memoryProducts.filter(p => p.barcode || p.gtin).length,
+                    stores_count: memoryStores.length,
+                    draft_invoices_count: 1,
+                    platform: 'Cloudflare Workers Edge'
+                });
+            }
+
+            if (path === '/api/network-info') {
+                const origin = url.origin;
+                return jsonResponse({
+                    ip: 'Cloudflare Edge CDN',
+                    port: 443,
+                    mobile_url: `${origin}/`,
+                    local_mobile_url: `${origin}/`,
+                    cloudflare_url: origin,
+                    is_cloudflare_active: true
+                });
+            }
+
+            if (path === '/api/sync/events' || path === '/api/mobile/poll') {
+                const since = parseFloat(url.searchParams.get('since') || '0');
+                const evts = memoryEvents.filter(e => e.timestamp > since);
+                const scans = evts.filter(e => e.type === 'mobile_scan').map(e => e.payload);
+                return jsonResponse({
+                    events: evts,
+                    scans: scans,
+                    timestamp: Date.now() / 1000
+                });
+            }
+
+            if (path === '/api/catalog/products') {
+                const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+                let prods = memoryProducts;
+                if (q) {
+                    prods = prods.filter(p =>
+                        (p.name && p.name.toLowerCase().includes(q)) ||
+                        (p.code && p.code.toLowerCase().includes(q)) ||
+                        (p.barcode && p.barcode.includes(q)) ||
+                        (p.gtin && p.gtin.includes(q))
+                    );
+                }
+                return jsonResponse({ products: prods });
+            }
+
+            if (path === '/api/catalog/next-code') {
+                const num = memoryProducts.length + 1;
+                return jsonResponse({ code: 'MED-' + String(num).padStart(3, '0') });
+            }
+
+            if (path === '/api/catalog/save') {
+                const code = (body.code || body.product_code || 'MED-' + Date.now().toString().slice(-4)).trim();
+                const name = (body.name || body.name_ar || body.name_en || '').trim();
+                const existingIdx = memoryProducts.findIndex(p => p.code === code);
+                const prodData = {
+                    id: existingIdx >= 0 ? memoryProducts[existingIdx].id : memoryProducts.length + 1,
+                    code: code,
+                    name: name,
+                    barcode: body.barcode || '',
+                    gtin: body.gtin || '',
+                    price: parseFloat(body.price || 0),
+                    cost: parseFloat(body.cost || 0),
+                    tax: parseFloat(body.tax || 0),
+                    category: body.category || 'MEDICINE'
+                };
+                if (existingIdx >= 0) memoryProducts[existingIdx] = prodData;
+                else memoryProducts.push(prodData);
+
+                broadcastEvent('catalog_updated', prodData);
+                return jsonResponse({ success: true, message: 'تم حفظ الصنف بنجاح', product: prodData });
+            }
+
+            if (path === '/api/stock/stores') {
+                return jsonResponse({ created_stores: memoryStores });
+            }
+
+            if (path === '/api/stock/stores/create') {
+                const name = (body.store_name || 'مستودع جديد').trim();
+                const nextNo = 'ST-' + String(memoryStores.length + 1).padStart(3, '0');
+                const newStore = {
+                    id: memoryStores.length + 1,
+                    store_no: nextNo,
+                    store_name: name,
+                    branch_name: body.branch_name || 'الفرع الرئيسي',
+                    status: 'active',
+                    count_items: 0,
+                    actual_qty: 0,
+                    system_qty: 0
+                };
+                memoryStores.push(newStore);
+                broadcastEvent('store_created', newStore);
+                return jsonResponse({ success: true, store_no: nextNo, store: newStore });
+            }
+
+            if (path === '/api/stock/store/details') {
+                const storeNo = url.searchParams.get('store_no') || 'ST-001';
+                const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
+                let totActual = 0, totSystem = 0, totCost = 0, totSale = 0;
+                items.forEach(it => {
+                    const act = Number(it.actual_qty || 0);
+                    const sys = Number(it.system_qty || 0);
+                    totActual += act;
+                    totSystem += sys;
+                    totCost += act * (it.cost_price || 0);
+                    totSale += act * (it.selling_price || 0);
+                });
+                return jsonResponse({
+                    items: items,
+                    totals: {
+                        total_items: items.length,
+                        total_actual_qty: totActual,
+                        total_system_qty: totSystem,
+                        total_diff_qty: totActual - totSystem,
+                        total_actual_cost: totCost,
+                        total_actual_sale: totSale
+                    },
+                    active_store: memoryStores.find(s => s.store_no === storeNo) || { store_no: storeNo, store_name: 'المستودع' }
+                });
+            }
+
+            if (path === '/api/catalog/parse-gs1') {
+                const raw = String(body.raw || body.qr_text || '').trim();
+                const gs1 = parseGs1Code(raw);
+                return jsonResponse({
+                    success: true,
+                    is_gs1: gs1.isGs1,
+                    gtin: gs1.gtin,
+                    batch: gs1.batch,
+                    serial: gs1.serial,
+                    expiry: gs1.expiry,
+                    raw: raw
+                });
+            }
+
+            if (path === '/api/stock/scan' || (path === '/api/mobile/scan' && body.target === 'stocktake')) {
+                const rawCode = String(body.code || body.qr_text || body.raw || '').trim();
+                const storeNo = String(body.store_no || 'ST-001').trim();
+                const gs1 = parseGs1Code(rawCode);
+                const searchGtin = gs1.gtin || rawCode;
+
+                let prod = memoryProducts.find(p =>
+                    (p.gtin && (p.gtin === searchGtin || p.gtin === rawCode)) ||
+                    (p.barcode && (p.barcode === searchGtin || p.barcode === rawCode)) ||
+                    (p.code && (p.code === searchGtin || p.code === rawCode))
+                );
+                if (!prod) {
+                    prod = {
+                        id: memoryProducts.length + 1,
+                        code: 'MED-' + String(memoryProducts.length + 1).padStart(3, '0'),
+                        name: 'صنف دوائي (' + searchGtin + ')',
+                        barcode: searchGtin,
+                        gtin: searchGtin,
+                        price: 25.0,
+                        cost: 20.0,
+                        category: 'MEDICINE'
+                    };
+                    memoryProducts.push(prod);
+                }
+
+                let item = memoryStocktakeItems.find(it => it.store_no === storeNo && (it.product_code === prod.code || it.barcode === searchGtin));
+                if (item) {
+                    item.actual_qty = (item.actual_qty || 0) + 1;
+                    if (gs1.batch) item.batch_number = gs1.batch;
+                    if (gs1.expiry) item.expiry_date = gs1.expiry;
+                } else {
+                    item = {
+                        entry_id: memoryStocktakeItems.length + 1,
+                        store_no: storeNo,
+                        product_code: prod.code,
+                        item_name: prod.name,
+                        barcode: prod.barcode || searchGtin,
+                        batch_number: gs1.batch || body.batch || 'B1',
+                        expiry_date: gs1.expiry || '2027-12',
+                        actual_qty: 1,
+                        system_qty: 0,
+                        cost_price: prod.cost || 0,
+                        selling_price: prod.price || 0
+                    };
+                    memoryStocktakeItems.push(item);
+                }
+
+                const scanEvent = {
+                    code: rawCode,
+                    gtin: gs1.gtin,
+                    batch: gs1.batch,
+                    store_no: storeNo,
+                    target: 'stocktake',
+                    product_name: prod.name,
+                    product_code: prod.code,
+                    success: true
+                };
+                broadcastEvent('mobile_scan', scanEvent);
+                broadcastEvent('stock_qty_updated', { store_no: storeNo, entry_id: item.entry_id, quantity: item.actual_qty });
+                return jsonResponse({
+                    success: true,
+                    product_name: prod.name,
+                    product_code: prod.code,
+                    actual_qty: item.actual_qty,
+                    gtin: gs1.gtin,
+                    batch: gs1.batch,
+                    message: `تم سحب العبوة للجرد (+1): ${prod.name}`
+                });
+            }
+
+            if (path === '/api/stock/update-qty') {
+                const entryId = Number(body.entry_id || body.id);
+                const newQty = parseFloat(body.quantity || body.qty || 0);
+                const item = memoryStocktakeItems.find(it => it.entry_id === entryId);
+                if (item) {
+                    item.actual_qty = newQty;
+                    broadcastEvent('stock_qty_updated', { entry_id: entryId, quantity: newQty, store_no: item.store_no });
+                    return jsonResponse({ success: true, actual_qty: newQty });
+                }
+                return jsonResponse({ success: false, message: 'الصنف غير موجود' }, 404);
+            }
+
+            if (path === '/api/stock/delete-item') {
+                const entryId = Number(body.entry_id || body.id);
+                const idx = memoryStocktakeItems.findIndex(it => it.entry_id === entryId);
+                if (idx >= 0) {
+                    const removed = memoryStocktakeItems.splice(idx, 1)[0];
+                    broadcastEvent('stock_item_deleted', { entry_id: entryId, store_no: removed.store_no });
+                    return jsonResponse({ success: true });
+                }
+                return jsonResponse({ success: false }, 404);
+            }
+
+            if (path === '/api/stock/settle') {
+                const storeNo = body.store_no || 'ST-001';
+                const store = memoryStores.find(s => s.store_no === storeNo);
+                if (store) store.status = 'settled';
+                broadcastEvent('stock_settled', { store_no: storeNo });
+                return jsonResponse({ success: true, message: 'تم ترحيل واعتماد الجرد بنجاح!' });
+            }
+
+            if (path === '/api/invoice/active') {
+                return jsonResponse(memoryDraftInvoice);
+            }
+
+            if (path === '/api/invoice/new') {
+                memoryDraftInvoice = {
+                    id: Date.now(),
+                    invoice_number: 'INV-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + Math.floor(Math.random() * 900 + 100),
+                    status: 'draft',
+                    date: new Date().toISOString().slice(0, 10),
+                    user_name: 'المسؤول',
+                    lines: []
+                };
+                broadcastEvent('invoice_created', memoryDraftInvoice);
+                return jsonResponse({ success: true, invoice: memoryDraftInvoice });
+            }
+
+            if (path === '/api/invoice/scan') {
+                const raw = String(body.qr_text || body.code || body.raw || '').trim();
+                const gs1 = parseGs1Code(raw);
+                const searchGtin = gs1.gtin || raw;
+
+                let prod = memoryProducts.find(p =>
+                    (p.gtin && (p.gtin === searchGtin || p.gtin === raw)) ||
+                    (p.barcode && (p.barcode === searchGtin || p.barcode === raw)) ||
+                    (p.code && (p.code === searchGtin || p.code === raw))
+                );
+
+                if (!prod) {
+                    prod = {
+                        id: memoryProducts.length + 1,
+                        code: 'MED-' + String(memoryProducts.length + 1).padStart(3, '0'),
+                        name: 'صنف دوائي ممسوح (' + searchGtin + ')',
+                        barcode: searchGtin,
+                        gtin: searchGtin,
+                        price: 25.0,
+                        cost: 20.0,
+                        tax: 0,
+                        category: 'MEDICINE'
+                    };
+                    memoryProducts.push(prod);
+                }
+
+                let line = memoryDraftInvoice.lines.find(l => l.product_code === prod.code);
+                if (line) {
+                    line.quantity = (line.quantity || 1) + 1;
+                    if (gs1.batch) line.batch = gs1.batch;
+                    if (gs1.expiry) line.expiry = gs1.expiry;
+                    if (gs1.serial) line.serial = gs1.serial;
+                } else {
+                    line = {
+                        id: memoryDraftInvoice.lines.length + 1,
+                        product_code: prod.code,
+                        name: prod.name,
+                        name_en: prod.name,
+                        price: prod.price || 0,
+                        cost: prod.cost || 0,
+                        quantity: 1,
+                        batch: gs1.batch || body.batch || 'B1',
+                        expiry: gs1.expiry || '2027-12',
+                        serial: gs1.serial || '',
+                        gtin: gs1.gtin || prod.gtin || prod.barcode
+                    };
+                    memoryDraftInvoice.lines.push(line);
+                }
+
+                const scanEvt = {
+                    code: raw,
+                    gtin: gs1.gtin,
+                    batch: gs1.batch,
+                    serial: gs1.serial,
+                    product_code: prod.code,
+                    name: prod.name,
+                    target: 'invoice',
+                    success: true
+                };
+                broadcastEvent('mobile_scan', scanEvt);
+                broadcastEvent('invoice_updated', memoryDraftInvoice);
+
+                return jsonResponse({
+                    success: true,
+                    message: `تم سحب العبوة بنجاح: ${prod.name}`,
+                    invoice: memoryDraftInvoice,
+                    product_code: prod.code,
+                    name: prod.name,
+                    name_en: prod.name,
+                    gtin: gs1.gtin || prod.gtin || prod.barcode,
+                    batch: gs1.batch || line.batch,
+                    serial: gs1.serial || line.serial,
+                    expiry: gs1.expiry || line.expiry,
+                    line_qty: line.quantity
+                });
+            }
+
+            return jsonResponse({ status: 'ok', endpoint: path });
         }
-    }
 
-    // 1. الإحصائيات العامة
-    if (path === '/api/stats') {
-        return jsonResponse({
-            products_count: memoryProducts.length,
-            barcodes_count: memoryProducts.filter(p => p.barcode || p.gtin).length,
-            stores_count: memoryStores.length,
-            draft_invoices_count: 1,
-            platform: 'Cloudflare Edge'
-        });
-    }
-
-    // 2. معلومات الشبكة والمزامنة السحابية
-    if (path === '/api/network-info') {
-        const origin = url.origin;
-        return jsonResponse({
-            ip: 'Cloudflare Edge CDN',
-            port: 443,
-            mobile_url: `${origin}/`,
-            local_mobile_url: `${origin}/`,
-            cloudflare_url: origin,
-            is_cloudflare_active: true
-        });
-    }
-
-    // 3. المزامنة اللحظية (Real-Time Sync Events)
-    if (path === '/api/sync/events' || path === '/api/mobile/poll') {
-        const since = parseFloat(url.searchParams.get('since') || '0');
-        const evts = memoryEvents.filter(e => e.timestamp > since);
-        const scans = evts.filter(e => e.type === 'mobile_scan').map(e => e.payload);
-        return jsonResponse({
-            events: evts,
-            scans: scans,
-            timestamp: Date.now() / 1000
-        });
-    }
-
-    // 4. الأصناف والكتالوج
-    if (path === '/api/catalog/products') {
-        const q = (url.searchParams.get('q') || '').trim().toLowerCase();
-        let prods = memoryProducts;
-        if (q) {
-            prods = prods.filter(p =>
-                (p.name && p.name.toLowerCase().includes(q)) ||
-                (p.code && p.code.toLowerCase().includes(q)) ||
-                (p.barcode && p.barcode.includes(q)) ||
-                (p.gtin && p.gtin.includes(q))
-            );
-        }
-        return jsonResponse({ products: prods });
-    }
-
-    if (path === '/api/catalog/next-code') {
-        const num = memoryProducts.length + 1;
-        return jsonResponse({ code: 'MED-' + String(num).padStart(3, '0') });
-    }
-
-    if (path === '/api/catalog/save') {
-        const code = (body.code || body.product_code || 'MED-' + Date.now().toString().slice(-4)).trim();
-        const name = (body.name || body.name_ar || body.name_en || '').trim();
-        const existingIdx = memoryProducts.findIndex(p => p.code === code);
-        const prodData = {
-            id: existingIdx >= 0 ? memoryProducts[existingIdx].id : memoryProducts.length + 1,
-            code: code,
-            name: name,
-            barcode: body.barcode || '',
-            gtin: body.gtin || '',
-            price: parseFloat(body.price || 0),
-            cost: parseFloat(body.cost || 0),
-            tax: parseFloat(body.tax || 0),
-            category: body.category || 'MEDICINE'
-        };
-
-        if (existingIdx >= 0) {
-            memoryProducts[existingIdx] = prodData;
-        } else {
-            memoryProducts.push(prodData);
+        // توجيه المسار /mobile لصفحة index.html
+        if (path === '/mobile' || path === '/mobile.html') {
+            const indexReq = new Request(new URL('/', request.url), request);
+            if (env.ASSETS) {
+                return env.ASSETS.fetch(indexReq);
+            }
         }
 
-        broadcastEvent('catalog_updated', prodData);
-        return jsonResponse({ success: true, message: 'تم حفظ الصنف بنجاح في Cloudflare D1', product: prodData });
-    }
-
-    // 5. الجرد الفعلي للمستودعات
-    if (path === '/api/stock/stores') {
-        return jsonResponse({
-            created_stores: memoryStores
-        });
-    }
-
-    if (path === '/api/stock/stores/create') {
-        const name = (body.store_name || 'مستودع جديد').trim();
-        const nextNo = 'ST-' + String(memoryStores.length + 1).padStart(3, '0');
-        const newStore = {
-            id: memoryStores.length + 1,
-            store_no: nextNo,
-            store_name: name,
-            branch_name: body.branch_name || 'الفرع الرئيسي',
-            status: 'active',
-            count_items: 0,
-            actual_qty: 0,
-            system_qty: 0
-        };
-        memoryStores.push(newStore);
-        broadcastEvent('store_created', newStore);
-        return jsonResponse({ success: true, store_no: nextNo, store: newStore });
-    }
-
-    if (path === '/api/stock/store/details') {
-        const storeNo = url.searchParams.get('store_no') || 'ST-001';
-        const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
-        let totActual = 0, totSystem = 0, totCost = 0, totSale = 0;
-        items.forEach(it => {
-            const act = Number(it.actual_qty || 0);
-            const sys = Number(it.system_qty || 0);
-            totActual += act;
-            totSystem += sys;
-            totCost += act * (it.cost_price || 0);
-            totSale += act * (it.selling_price || 0);
-        });
-
-        return jsonResponse({
-            items: items,
-            totals: {
-                total_items: items.length,
-                total_actual_qty: totActual,
-                total_system_qty: totSystem,
-                total_diff_qty: totActual - totSystem,
-                total_actual_cost: totCost,
-                total_actual_sale: totSale
-            },
-            active_store: memoryStores.find(s => s.store_no === storeNo) || { store_no: storeNo, store_name: 'المستودع' }
-        });
-    }
-
-    // مسح صنف للجرد
-    if (path === '/api/stock/scan' || (path === '/api/mobile/scan' && body.target === 'stocktake')) {
-        const rawCode = String(body.code || body.qr_text || '').trim();
-        const storeNo = String(body.store_no || 'ST-001').trim();
-
-        // فحص الصنف في الكتالوج
-        let prod = memoryProducts.find(p => p.barcode === rawCode || p.gtin === rawCode || p.code === rawCode);
-        if (!prod) {
-            prod = {
-                code: 'NEW-' + Math.floor(Math.random() * 9000 + 1000),
-                name: 'صنف ممسوح (' + rawCode + ')',
-                barcode: rawCode,
-                price: 0,
-                cost: 0
-            };
-            memoryProducts.push(prod);
+        // خدمة ملفات الواجهة من مجلد frontend
+        if (env.ASSETS) {
+            return env.ASSETS.fetch(request);
         }
 
-        // فحص ما إذا كان موجوداً في كشف الجرد
-        let item = memoryStocktakeItems.find(it => it.store_no === storeNo && (it.product_code === prod.code || it.barcode === rawCode));
-        if (item) {
-            item.actual_qty = (item.actual_qty || 0) + 1;
-        } else {
-            item = {
-                entry_id: memoryStocktakeItems.length + 1,
-                store_no: storeNo,
-                product_code: prod.code,
-                item_name: prod.name,
-                barcode: prod.barcode || rawCode,
-                batch_number: body.batch || '',
-                expiry_date: '',
-                actual_qty: 1,
-                system_qty: 0,
-                cost_price: prod.cost || 0,
-                selling_price: prod.price || 0
-            };
-            memoryStocktakeItems.push(item);
-        }
-
-        const scanEvent = {
-            code: rawCode,
-            store_no: storeNo,
-            target: 'stocktake',
-            product_name: prod.name,
-            product_code: prod.code,
-            success: true
-        };
-        broadcastEvent('mobile_scan', scanEvent);
-
-        return jsonResponse({
-            success: true,
-            product_name: prod.name,
-            product_code: prod.code,
-            actual_qty: item.actual_qty,
-            message: 'تم الجرد بنجاح في Cloudflare'
-        });
+        return new Response("RAMBFE Cloudflare Worker Active", { status: 200 });
     }
-
-    // تعديل كمية الجرد
-    if (path === '/api/stock/update-qty') {
-        const entryId = Number(body.entry_id || body.id);
-        const newQty = parseFloat(body.quantity || body.qty || 0);
-        const item = memoryStocktakeItems.find(it => it.entry_id === entryId);
-        if (item) {
-            item.actual_qty = newQty;
-            broadcastEvent('stock_qty_updated', { entry_id: entryId, quantity: newQty, store_no: item.store_no });
-            return jsonResponse({ success: true, actual_qty: newQty });
-        }
-        return jsonResponse({ success: false, message: 'الصنف غير موجود' }, 404);
-    }
-
-    // حذف صنف من الجرد
-    if (path === '/api/stock/delete-item') {
-        const entryId = Number(body.entry_id || body.id);
-        const idx = memoryStocktakeItems.findIndex(it => it.entry_id === entryId);
-        if (idx >= 0) {
-            const removed = memoryStocktakeItems.splice(idx, 1)[0];
-            broadcastEvent('stock_item_deleted', { entry_id: entryId, store_no: removed.store_no });
-            return jsonResponse({ success: true, message: 'تم الحذف' });
-        }
-        return jsonResponse({ success: false, message: 'الصنف غير موجود' }, 404);
-    }
-
-    // ترحيل وإغلاق الجرد
-    if (path === '/api/stock/settle') {
-        const storeNo = body.store_no || 'ST-001';
-        const store = memoryStores.find(s => s.store_no === storeNo);
-        if (store) store.status = 'settled';
-        broadcastEvent('stock_settled', { store_no: storeNo });
-        return jsonResponse({ success: true, message: 'تم ترحيل واعتماد الجرد بنجاح على Cloudflare!' });
-    }
-
-    // 6. الفواتير
-    if (path === '/api/invoice/active') {
-        return jsonResponse(memoryDraftInvoice);
-    }
-
-    if (path === '/api/invoice/new') {
-        memoryDraftInvoice = {
-            id: Date.now(),
-            invoice_number: 'INV-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + Math.floor(Math.random() * 900 + 100),
-            status: 'draft',
-            date: new Date().toISOString().slice(0, 10),
-            user_name: 'المسؤول',
-            lines: []
-        };
-        broadcastEvent('invoice_created', memoryDraftInvoice);
-        return jsonResponse({ success: true, invoice: memoryDraftInvoice });
-    }
-
-    if (path === '/api/invoice/scan') {
-        const code = String(body.code || '').trim();
-        let prod = memoryProducts.find(p => p.barcode === code || p.gtin === code || p.code === code);
-        if (!prod) {
-            prod = { code: 'PROD-' + Date.now().toString().slice(-4), name: 'صنف ' + code, price: 10, cost: 8 };
-            memoryProducts.push(prod);
-        }
-
-        let line = memoryDraftInvoice.lines.find(l => l.product_code === prod.code);
-        if (line) {
-            line.quantity = (line.quantity || 1) + 1;
-        } else {
-            line = {
-                id: memoryDraftInvoice.lines.length + 1,
-                product_code: prod.code,
-                name: prod.name,
-                price: prod.price || 0,
-                cost: prod.cost || 0,
-                quantity: 1,
-                batch: body.batch || 'B1',
-                expiry: '2027-12'
-            };
-            memoryDraftInvoice.lines.push(line);
-        }
-
-        broadcastEvent('invoice_updated', memoryDraftInvoice);
-        return jsonResponse({ success: true, invoice: memoryDraftInvoice });
-    }
-
-    return jsonResponse({ detail: 'Cloudflare Pages API Endpoint: ' + path, status: 'ok' });
-}
+};
