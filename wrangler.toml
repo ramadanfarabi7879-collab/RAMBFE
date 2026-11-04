@@ -1,6 +1,7 @@
 name = "rambfe"
-compatibility_date = "2026-11-04"
-pages_build_output_dir = "frontend"
+main = "worker.js"
+compatibility_date = "2024-09-23"
 
-[vars]
-ENVIRONMENT = "production"
+[assets]
+directory = "./frontend"
+binding = "ASSETS"
