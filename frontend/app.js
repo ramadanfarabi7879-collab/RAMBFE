@@ -2837,6 +2837,7 @@ function triggerCameraFlashFeedback() {
 }
 
 async function handleCameraDecodedText(decodedText) {
+    if (isCameraScanSuspended) return;
     const raw = String(decodedText || '').trim();
     if (!raw) return;
 
@@ -2908,11 +2909,12 @@ async function handleCameraDecodedText(decodedText) {
             const data = await res.json();
             if (data.success) {
                 if (data.requires_batch_entry) {
-                    // للأصناف ذات الباركود الدولي 1D: إيقاف الكاميرا مؤقتاً وفتح شاشة إدخال الكمية يدوياً كما بالكمبيوتر
+                    // للأصناف ذات الباركود الدولي 1D: تعليق المعالجة وإخفاء النافذة مع إبقاء الكاميرا نشطة ودافئة بالخلفية لاستئناف فوري
+                    isCameraScanSuspended = true;
                     wasCameraActiveBeforeBatch = true;
-                    stopCamera();
                     document.getElementById('modal-camera-scanner')?.classList.add('hidden');
                     openBatchEntryCard(data, 'camera');
+                    return;
                 } else {
                     // لأصناف كيو ار الداتاماتريكس (2D DataMatrix): نزول مباشر بالعدد +1 واستمرار الكاميرا
                     if (data.store_details) {
@@ -2963,6 +2965,7 @@ function startCamera() {
 }
 
 let isProcessingFrame = false;
+let isCameraScanSuspended = false;
 
 async function applyContinuousFocusAndNativeLoop(videoElem) {
     if (!videoElem) return;
@@ -3011,6 +3014,14 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
 
                 const scanFrame = async () => {
                     if (!isNativeScanning || !videoElem || videoElem.paused || videoElem.ended) return;
+                    if (isCameraScanSuspended) {
+                        if ('requestVideoFrameCallback' in videoElem) {
+                            videoElem.requestVideoFrameCallback(scanFrame);
+                        } else {
+                            nativeDetectorAnimFrame = requestAnimationFrame(scanFrame);
+                        }
+                        return;
+                    }
                     if (!isProcessingFrame && videoElem.readyState >= 2) {
                         isProcessingFrame = true;
                         try {
@@ -6638,12 +6649,30 @@ function closeBatchEntryCard(isCommit = false) {
     wasCameraActiveBeforeBatch = false;
 
     if (shouldOpenMobileCamera) {
-        // خاص بالموبايل فقط
-        setTimeout(() => {
+        // خاص بالموبايل فقط: استئناف فوري لحظي للكاميرا بدون أي ثواني انتظار (Instant Resume)
+        const modal = document.getElementById('modal-camera-scanner');
+        modal?.classList.remove('hidden');
+
+        // تصفير آخر كود لضمان المسح اللحظي للعبوة التالية فوراً
+        cameraLastScanCode = '';
+        cameraLastScanTime = 0;
+
+        if (html5QrScannerInstance) {
+            isCameraScanSuspended = false;
+            const video = document.querySelector('#camera-reader-viewport video');
+            if (video && video.paused) {
+                video.play().catch(() => {});
+            }
+        } else {
+            isCameraScanSuspended = false;
             openCameraModal('stocktake');
-        }, 120);
+        }
     } else {
-        // خاص بالكمبيوتر: إرجاع التركيز فوراً لخانة مسح الباركود لاستقبال الصنف التالي بالسكانر
+        // على الكمبيوتر (أو عند إلغاء كارت الباتشات): إيقاف الكاميرا إن كانت معلقة وإرجاع الفوكس لخانة الباركود
+        if (!shouldOpenMobileCamera && html5QrScannerInstance && isCameraScanSuspended) {
+            stopCamera();
+        }
+        isCameraScanSuspended = false;
         if (scanInput) {
             scanInput.focus();
             scanInput.select();
