@@ -2912,7 +2912,7 @@ async function handleCameraDecodedText(decodedText) {
                     wasCameraActiveBeforeBatch = true;
                     stopCamera();
                     document.getElementById('modal-camera-scanner')?.classList.add('hidden');
-                    openBatchEntryCard(data);
+                    openBatchEntryCard(data, 'camera');
                 } else {
                     // لأصناف كيو ار الداتاماتريكس (2D DataMatrix): نزول مباشر بالعدد +1 واستمرار الكاميرا
                     if (data.store_details) {
@@ -6253,9 +6253,19 @@ function updateBecRowCalc(inputEl) {
     }
 }
 
+let batchCardSourceOrigin = 'desktop_input'; // 'camera' (mobile camera) or 'desktop_input' (barcode scanner/PC)
 let wasCameraActiveBeforeBatch = false;
 
-// دالة التنقل بين الباتشات بالسهم أو اعتماد الترحيل عند آخر باتش
+// دالة الكشف هل المستخدم يتصفح من هاتف محمول/تابلت أم من جهاز كمبيوتر ديسكتوب
+function isMobileDeviceEnvironment() {
+    const ua = navigator.userAgent || '';
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    const isSmallScreen = window.innerWidth <= 850;
+    return isMobileUA || (isTouch && isSmallScreen);
+}
+
+// دالة التنقل بين الباتشات بالسهم/Enter أو اعتماد الترحيل عند آخر باتش
 function moveToNextBatchOrCommit(currentIdx) {
     const tbody = document.getElementById('stk-bec-batches-tbody');
     const allInputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
@@ -6282,14 +6292,16 @@ function moveToNextBatchOrCommit(currentIdx) {
             });
         }
     } else {
-        // عند آخر باتش (أو الصنف له باتش واحد فقط): الاعتماد المباشر والترحيل لفاتورة الجرد والتوجيه للكاميرا
+        // عند آخر باتش (أو الصنف له باتش واحد فقط): الاعتماد والترحيل المباشر
         commitAllCardBatches(allInputs);
     }
 }
 
-function openBatchEntryCard(data) {
-    wasCameraActiveBeforeBatch = true;
+function openBatchEntryCard(data, source = 'desktop_input') {
+    batchCardSourceOrigin = source; // حفظ مصدر السحب (كاميرا موبايل أم سكانر كمبيوتر)
+    wasCameraActiveBeforeBatch = (source === 'camera');
     currentActiveBatchCardData = data;
+
     const card = document.getElementById('stk-batch-entry-card');
     if (!card) return;
 
@@ -6385,7 +6397,7 @@ function openBatchEntryCard(data) {
     card.classList.remove('hidden');
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    // حماية مؤقتة تمنع القفز لحقل البحث أثناء فتح كارت الباتشات
+    // حماية تمنع القفز لحقل البحث أثناء فتح كارت الباتشات
     const searchFilter = document.getElementById('stk-items-search-filter');
     if (searchFilter) {
         searchFilter.setAttribute('tabindex', '-1');
@@ -6393,7 +6405,7 @@ function openBatchEntryCard(data) {
 
     const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
 
-    // تأمين النموذج من إرسال المتصفح التلقائي أو قفز مؤشر الهاتف لخارج الجدول
+    // تأمين النموذج من إرسال المتصفح التلقائي
     const batchForm = document.getElementById('stk-bec-batches-form');
     if (batchForm) {
         batchForm.onsubmit = (e) => {
@@ -6453,7 +6465,7 @@ function openBatchEntryCard(data) {
 
         inp.addEventListener('keydown', handleKeyStep);
 
-        // التعامل مع مفاتيح الهواتف المحمولة التي ترسل قبل الإدخال (beforeinput)
+        // التعامل مع مفاتيح الهواتف المحمولة التي ترسل beforeinput
         inp.addEventListener('beforeinput', (e) => {
             if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
                 e.preventDefault();
@@ -6536,7 +6548,9 @@ async function commitAllCardBatches(allInputs) {
             }
         }
 
-        // إغلاق الكارت والتوجيه التلقائي والفوري للكاميرا اسكان مباشرة
+        // إغلاق الكارت مع الفصل التام بين الكمبيوتر والموبايل:
+        // على الموبايل حصراً (وإذا كان المسح بدأ من الكاميرا) يُعاد فتح الكاميرا
+        // على الكمبيوتر (الديسكتوب) يُمنع فتح الكاميرا نهائياً ويعود الفوكس لخانة الباركود
         closeBatchEntryCard(true);
         await loadStocktakeStores();
         await loadCurrentStoreItems();
@@ -6549,7 +6563,7 @@ async function handleBatchInputCommit(inputEl, allInputs, skipAdvance = false) {
     await commitAllCardBatches(allInputs || [inputEl]);
 }
 
-function closeBatchEntryCard(reopenCamera = true) {
+function closeBatchEntryCard(isCommit = false) {
     const card = document.getElementById('stk-batch-entry-card');
     if (card) card.classList.add('hidden');
     currentActiveBatchCardData = null;
@@ -6561,17 +6575,29 @@ function closeBatchEntryCard(reopenCamera = true) {
     }
 
     const scanInput = document.getElementById('stk-scan-input');
-    if (scanInput) {
-        scanInput.focus();
-        scanInput.select();
-    }
 
-    // التوجيه الفوري والتلقائي إلى الكاميرا اسكان بعد ترحيل الصنف
-    if (reopenCamera) {
-        wasCameraActiveBeforeBatch = false;
+    // الفصل الجذري بين الكمبيوتر والموبايل:
+    // تفتح الكاميرا تلقائياً فقط إذا كان الجهاز هاتف محمول/تابلت، وكان المسح قد بدأ من كاميرا الموبايل
+    // على الكمبيوتر (الديسكتوب / PC): لا تفتح الكاميرا نهائياً بل يعود الفوكس فوراً لخانة المسح لاستقبال الباركود التالي بسكانر الكمبيوتر
+    const isMobile = isMobileDeviceEnvironment();
+    const isFromCamera = (batchCardSourceOrigin === 'camera');
+    const shouldOpenMobileCamera = isCommit && isFromCamera && isMobile;
+
+    // تصفير المصدر
+    batchCardSourceOrigin = 'desktop_input';
+    wasCameraActiveBeforeBatch = false;
+
+    if (shouldOpenMobileCamera) {
+        // خاص بالموبايل فقط
         setTimeout(() => {
             openCameraModal('stocktake');
         }, 120);
+    } else {
+        // خاص بالكمبيوتر: إرجاع التركيز فوراً لخانة مسح الباركود لاستقبال الصنف التالي بالسكانر
+        if (scanInput) {
+            scanInput.focus();
+            scanInput.select();
+        }
     }
 }
 
@@ -6595,7 +6621,7 @@ async function processStoreScan(rawCode) {
         if (data.success) {
             if (data.requires_batch_entry) {
                 // للأصناف المسحوبة بباركود 1D أو إدخال كود: تفتح اللوحة العلوية لعرض الصنف وباتشاته
-                openBatchEntryCard(data);
+                openBatchEntryCard(data, 'desktop_input');
                 return;
             }
 
