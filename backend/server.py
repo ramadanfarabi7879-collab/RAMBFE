@@ -1276,6 +1276,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 system_qty = float(data.get('system_qty') or 0.0)
                 cost_price = float(data.get('cost_price') or 0.0)
                 selling_price = float(data.get('selling_price') or 0.0)
+                entry_id = int(data.get('entry_id')) if data.get('entry_id') else None
 
                 res = save_stock_batch_count(
                     store_no=store_no,
@@ -1285,7 +1286,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                     counted_qty=counted_qty,
                     system_qty=system_qty,
                     cost_price=cost_price,
-                    selling_price=selling_price
+                    selling_price=selling_price,
+                    entry_id=entry_id
                 )
                 if res.get("success"):
                     broadcast_sync("stock_qty_updated", {

@@ -5475,6 +5475,7 @@ function initStocktakeTab() {
     });
 
     document.getElementById('btn-close-batch-entry-card')?.addEventListener('click', closeBatchEntryCard);
+    document.getElementById('btn-add-extra-batch-row')?.addEventListener('click', addExtraBatchRowToCard);
     document.getElementById('btn-finish-batch-entry')?.addEventListener('click', async () => {
         const tbody = document.getElementById('stk-bec-batches-tbody');
         const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
@@ -6326,179 +6327,386 @@ function isMobileDeviceEnvironment() {
     return isMobileUA || (isTouch && isSmallScreen);
 }
 
+// دالة توليد رقم تشغيلة تلقائي بصيغة معيارية B{YYMM}-{index}
+function generateDefaultBatchNumber(index = 0) {
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const seq = String(index + 1).padStart(2, '0');
+    return `B${yy}${mm}-${seq}`;
+}
+
+// دالة توحيد وتنسيق تاريخ الصلاحية المدخل يدوياً بمختلف الصيغ (YYYY-MM)
+function normalizeExpiryDate(str) {
+    if (!str) return '';
+    let val = String(str).trim().replace(/\s+/g, '');
+    if (!val || val === '-') return '';
+
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+    // YYYY-MM
+    if (/^\d{4}-\d{2}$/.test(val)) return val;
+    // YYYY/MM/DD -> YYYY-MM-DD
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(val)) return val.replace(/\//g, '-');
+    // YYYY/MM -> YYYY-MM
+    if (/^\d{4}\/\d{2}$/.test(val)) return val.replace(/\//g, '-');
+
+    // MM/YY or MM-YY (e.g. 10/27 or 10-27)
+    let m = val.match(/^(\d{1,2})[\/\-](\d{2})$/);
+    if (m) {
+        let month = m[1].padStart(2, '0');
+        let year = '20' + m[2];
+        return `${year}-${month}`;
+    }
+
+    // MM/YYYY or MM-YYYY (e.g. 10/2027 or 10-2027)
+    m = val.match(/^(\d{1,2})[\/\-](\d{4})$/);
+    if (m) {
+        let month = m[1].padStart(2, '0');
+        let year = m[2];
+        return `${year}-${month}`;
+    }
+
+    // YYYYMM (e.g. 202710)
+    m = val.match(/^(\d{4})(\d{2})$/);
+    if (m) {
+        return `${m[1]}-${m[2]}`;
+    }
+
+    // YYMM (e.g. 2710)
+    m = val.match(/^(\d{2})(\d{2})$/);
+    if (m) {
+        return `20${m[1]}-${m[2]}`;
+    }
+
+    return val;
+}
+
+// إضافة تشغيلة جديدة إضافية لنفس الصنف في كارت الإدخال
+function addExtraBatchRowToCard() {
+    if (!currentActiveBatchCardData) return;
+    if (!currentActiveBatchCardData.batches) currentActiveBatchCardData.batches = [];
+
+    const newIdx = currentActiveBatchCardData.batches.length;
+    const prod = currentActiveBatchCardData.product || {};
+
+    currentActiveBatchCardData.batches.push({
+        batch_number: generateDefaultBatchNumber(newIdx),
+        expiry_date: '',
+        system_qty: 0.0,
+        counted_qty: 0.0,
+        cost_price: Number(prod.cost_price || 0),
+        selling_price: Number(prod.selling_price || 0),
+        entry_id: null,
+        is_new_batch: 1,
+        is_manual_batch: 1,
+        requires_manual_entry: true,
+        is_dynamic_added: true
+    });
+
+    renderBatchCardRows(currentActiveBatchCardData);
+
+    // التركيز التلقائي على خانة الصلاحية للتشغيلة الجديدة المضافة
+    setTimeout(() => {
+        const tbody = document.getElementById('stk-bec-batches-tbody');
+        const newExpiry = tbody?.querySelector(`#stk-bec-row-${newIdx} .stk-bec-expiry-input`);
+        if (newExpiry) {
+            newExpiry.focus();
+            newExpiry.select();
+            newExpiry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }, 60);
+}
+
 // دالة التنقل بين الباتشات بالسهم/Enter أو اعتماد الترحيل عند آخر باتش
 function moveToNextBatchOrCommit(currentIdx) {
     const tbody = document.getElementById('stk-bec-batches-tbody');
-    const allInputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
-    if (!allInputs.length) return;
+    const allQtyInputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
+    if (!allQtyInputs.length) return;
 
-    if (currentIdx < allInputs.length - 1) {
-        // إذا كان هناك باتشات أخرى للصنف: انتقال مباشر لخانة الرصيد الفعلي للباتش التالي
-        const nextInput = allInputs[currentIdx + 1];
-        if (nextInput) {
-            nextInput.focus();
-            nextInput.select();
-            nextInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // فحص إدخال الصلاحية للسطر الحالي إن وُجدت كمية > 0
+    const currentRow = document.getElementById(`stk-bec-row-${currentIdx}`);
+    const currentQtyInput = currentRow?.querySelector('.stk-bec-qty-input');
+    const currentExpiryInput = currentRow?.querySelector('.stk-bec-expiry-input');
+    const countedVal = parseFloat(currentQtyInput?.value || '0');
 
-            // تمييز سطر الباتش النشط بصرياً باللون الأصفر
-            allInputs.forEach((inp, j) => {
-                const r = document.getElementById(`stk-bec-row-${j}`);
-                if (r) {
-                    if (j === currentIdx + 1) {
-                        r.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
-                    } else {
-                        r.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-100/70');
-                    }
-                }
-            });
+    if (countedVal > 0 && currentExpiryInput) {
+        const expVal = normalizeExpiryDate(currentExpiryInput.value);
+        currentExpiryInput.value = expVal;
+        if (!expVal) {
+            playStockAudioAlert(false);
+            showCatalogToast('⚠️ يرجى إدخال تاريخ الصلاحية (الاكسبير) للصنف أولاً');
+            currentExpiryInput.classList.add('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-50');
+            currentExpiryInput.focus();
+            currentExpiryInput.select();
+            return;
         }
+    }
+
+    if (currentIdx < allQtyInputs.length - 1) {
+        // انتقال مباشر للسطر التالي
+        const nextIdx = currentIdx + 1;
+        const nextRow = document.getElementById(`stk-bec-row-${nextIdx}`);
+        const nextExpiryInput = nextRow?.querySelector('.stk-bec-expiry-input');
+        const nextQtyInput = nextRow?.querySelector('.stk-bec-qty-input');
+
+        // إذا كان السطر التالي يتطلب إدخال صلاحية وهو فارغ، نوجه الفوكس إليها أولاً
+        const targetFocus = (nextExpiryInput && !nextExpiryInput.value.trim()) ? nextExpiryInput : nextQtyInput;
+
+        if (targetFocus) {
+            targetFocus.focus();
+            targetFocus.select();
+            targetFocus.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // تمييز سطر الباتش النشط بصرياً باللون الأصفر
+        allQtyInputs.forEach((inp, j) => {
+            const r = document.getElementById(`stk-bec-row-${j}`);
+            if (r) {
+                if (j === nextIdx) {
+                    r.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                } else {
+                    r.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                }
+            }
+        });
     } else {
         // عند آخر باتش (أو الصنف له باتش واحد فقط): الاعتماد والترحيل المباشر
-        commitAllCardBatches(allInputs);
+        commitAllCardBatches(allQtyInputs);
     }
 }
 
-function openBatchEntryCard(data, source = 'desktop_input') {
-    batchCardSourceOrigin = source; // حفظ مصدر السحب (كاميرا موبايل أم سكانر كمبيوتر)
-    wasCameraActiveBeforeBatch = (source === 'camera');
-    currentActiveBatchCardData = data;
-
-    const card = document.getElementById('stk-batch-entry-card');
-    if (!card) return;
+// دالة بناء ورسم سطور كارت الباتشات وربط جميع الأحداث
+function renderBatchCardRows(data) {
+    const tbody = document.getElementById('stk-bec-batches-tbody');
+    const elCount = document.getElementById('stk-bec-batches-count');
+    if (!tbody || !data) return;
 
     const prod = data.product || {};
     const batches = data.batches || [];
 
-    const elCode = document.getElementById('stk-bec-product-code');
-    const elName = document.getElementById('stk-bec-product-name');
-    const elBarcode = document.getElementById('stk-bec-barcode');
-    const elCount = document.getElementById('stk-bec-batches-count');
-    const tbody = document.getElementById('stk-bec-batches-tbody');
-
-    if (elCode) elCode.textContent = prod.code || '-';
-    if (elName) elName.textContent = prod.name || '-';
-    if (elBarcode) elBarcode.textContent = prod.barcode || prod.gtin || '-';
     if (elCount) elCount.textContent = `${batches.length} تشغيلة`;
 
-    if (tbody) {
-        let html = '';
-        batches.forEach((b, idx) => {
-            const hasCounted = Number(b.counted_qty || 0) > 0;
-            const countedVal = hasCounted ? Number(b.counted_qty) : 0;
-            const sysQty = Number(b.system_qty || 0);
-            const diff = Number(countedVal - sysQty).toFixed(2);
-            const cost = Number(b.cost_price || 0);
-            const sale = Number(b.selling_price || 0);
-            const totCost = formatMoney(countedVal * cost);
-            const totSale = formatMoney(countedVal * sale);
+    let html = '';
+    batches.forEach((b, idx) => {
+        const hasCounted = Number(b.counted_qty || 0) > 0;
+        const countedVal = hasCounted ? Number(b.counted_qty) : 0;
+        const sysQty = Number(b.system_qty || 0);
+        const diff = Number(countedVal - sysQty).toFixed(2);
+        const cost = Number(b.cost_price || 0);
+        const sale = Number(b.selling_price || 0);
+        const totCost = formatMoney(countedVal * cost);
+        const totSale = formatMoney(countedVal * sale);
 
-            const batchBadge = b.is_new_batch || sysQty === 0
-                ? `<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300 text-[10px] whitespace-nowrap">⚠️ جديد</span>`
-                : `<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 text-[10px] whitespace-nowrap">مطابق ✅</span>`;
+        // الصنف يعتبر قابل للتعديل اليدوي إن كان جديداً أو بدون باتش مسجل أو بدون صلاحية
+        const isEditable = Boolean(b.is_new_batch || b.requires_manual_entry || b.is_manual_batch || !b.batch_number || b.batch_number === '-' || !b.expiry_date || b.expiry_date === '-' || b.force_edit);
+        const defaultBatch = (b.batch_number && b.batch_number !== '-') ? b.batch_number : generateDefaultBatchNumber(idx);
+        const expiryVal = (b.expiry_date && b.expiry_date !== '-') ? b.expiry_date : '';
 
-            // زر السطر: إن كان هناك باتشات تالية يظهر 'التالي ➔'، وإن كان الأخير يظهر 'ترحيل ↵'
-            const isLastBatch = (idx === batches.length - 1);
-            const actionBtn = isLastBatch
-                ? `<button type="button" class="stk-bec-btn-action px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="commit" data-index="${idx}"><span>ترحيل</span> <span>↵</span></button>`
-                : `<button type="button" class="stk-bec-btn-action px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="next" data-index="${idx}"><span>التالي</span> <span>➔</span></button>`;
+        const batchBadge = (b.is_new_batch || isEditable || sysQty === 0)
+            ? `<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300 text-[10px] whitespace-nowrap">⚠️ تشغيلة جديدة</span>`
+            : `<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 text-[10px] whitespace-nowrap">مطابق ✅</span>`;
 
-            const statusCellContent = hasCounted
-                ? `<div class="flex flex-col items-center gap-1"><span class="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold text-[10px]">✅ تم (${countedVal})</span>${actionBtn}</div>`
-                : actionBtn;
+        // خلية رقم التشغيلة: إدخال مفتوح أو قابل للتعديل
+        const batchCell = isEditable
+            ? `<div class="flex items-center justify-center gap-1">
+                 <input type="text"
+                        class="stk-bec-batch-input font-mono font-black text-center text-xs w-28 py-0.5 px-1 border-2 border-indigo-400 focus:border-indigo-600 focus:bg-indigo-50 rounded bg-white text-indigo-950 shadow-inner outline-none transition"
+                        data-index="${idx}"
+                        value="${escapeHtml(defaultBatch)}"
+                        placeholder="رقم التشغيلة"
+                        dir="ltr"
+                        enterkeyhint="next"
+                        title="رقم التشغيلة (يتم إنشاؤه تلقائياً أو تعديله يدوياً)">
+               </div>`
+            : `<div class="flex items-center justify-center gap-1">
+                 <span class="px-2 py-0.5 rounded bg-indigo-100 border border-indigo-300 text-indigo-950 font-black font-mono text-xs shadow-sm" dir="ltr">${escapeHtml(b.batch_number || '-')}</span>
+                 <button type="button" class="stk-bec-btn-toggle-edit text-slate-400 hover:text-indigo-600 p-0.5 text-[10px]" data-index="${idx}" title="تعديل التشغيلة والصلاحية يدوياً">✏️</button>
+               </div>`;
 
-            html += `
-                <tr class="hover:bg-amber-50/50 transition border-b border-slate-300 text-slate-700 text-xs ${hasCounted ? 'bg-emerald-50/40' : (idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60')}" id="stk-bec-row-${idx}">
-                    <td class="border border-slate-300 p-1 text-center text-slate-500 font-mono text-[11px] select-none bg-slate-50/50">${idx + 1}</td>
-                    <td class="border border-slate-300 p-1 font-mono font-bold text-slate-900 text-center">${escapeHtml(prod.code || '')}</td>
-                    <td class="border border-slate-300 p-1 text-left font-bold text-slate-900 select-text min-w-[260px] whitespace-normal leading-snug" dir="ltr">
-                        ${escapeHtml(prod.name || '')}
-                    </td>
-                    <td class="border border-slate-300 p-1 font-mono text-[11px] text-slate-600 text-center" dir="ltr">${escapeHtml(prod.barcode || prod.gtin || '-')}</td>
-                    <td class="border border-slate-300 p-1 text-center">
-                        <span class="px-2 py-0.5 rounded bg-indigo-100 border border-indigo-300 text-indigo-950 font-black font-mono text-xs shadow-sm" dir="ltr">${escapeHtml(b.batch_number || '-')}</span>
-                    </td>
-                    <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-900 text-xs" dir="ltr">${escapeHtml(b.expiry_date || '-')}</td>
-                    <td class="border border-slate-300 p-1 text-center bg-sky-50/40">
-                        <span class="font-mono font-black text-slate-900 text-xs px-2 py-0.5 rounded bg-slate-200/80 border border-slate-300 shadow-sm">${sysQty}</span>
-                    </td>
-                    <td class="border border-slate-300 p-1 text-center bg-emerald-50/50">
-                        <input type="number" step="any" min="0"
-                               class="stk-bec-qty-input font-mono font-black text-center text-xs w-20 py-0.5 px-1 border-2 border-emerald-500 focus:border-amber-500 focus:bg-amber-50 rounded bg-white text-emerald-950 shadow-inner outline-none transition"
-                               data-index="${idx}"
-                               data-product-code="${escapeHtml(prod.code || '')}"
-                               data-batch="${escapeHtml(b.batch_number || '')}"
-                               data-expiry="${escapeHtml(b.expiry_date || '')}"
-                               data-system-qty="${sysQty}"
-                               data-cost="${cost}"
-                               data-sale="${sale}"
-                               value="${b.counted_qty > 0 ? b.counted_qty : ''}"
-                               placeholder="أدخل..."
-                               tabindex="${idx + 1}"
-                               enterkeyhint="${idx < batches.length - 1 ? 'next' : 'done'}"
-                               inputmode="decimal"
-                               oninput="updateBecRowCalc(this)">
-                    </td>
-                    <td class="border border-slate-300 p-1 text-center font-mono font-bold text-xs">
-                        <span class="bec-diff-cell font-mono font-bold text-xs ${diff < 0 ? 'text-rose-600' : (diff > 0 ? 'text-emerald-700' : 'text-slate-400')}">${diff > 0 ? '+' : ''}${diff}</span>
-                    </td>
-                    <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-800">${formatMoney(cost)}</td>
-                    <td class="border border-slate-300 p-1 text-center font-mono font-bold text-indigo-700">${formatMoney(sale)}</td>
-                    <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-900"><span class="bec-totcost-cell">${totCost}</span></td>
-                    <td class="border border-slate-300 p-1 text-center font-mono font-bold text-indigo-950"><span class="bec-totsale-cell">${totSale}</span></td>
-                    <td class="border border-slate-300 p-1 text-center">${batchBadge}</td>
-                    <td class="border border-slate-300 p-1 text-center" id="stk-bec-cell-status-${idx}">
-                        ${statusCellContent}
-                    </td>
-                </tr>
-            `;
-        });
-        tbody.innerHTML = html;
-    }
+        // خلية الصلاحية: إدخال يدوي إلزامي بالصيغة المطلوبة (YYYY-MM)
+        const expiryCell = isEditable
+            ? `<div class="flex flex-col items-center gap-0.5">
+                 <input type="text"
+                        class="stk-bec-expiry-input font-mono font-black text-center text-xs w-28 py-0.5 px-1 border-2 ${!expiryVal ? 'border-amber-400 bg-amber-50/70' : 'border-slate-300 bg-white'} focus:border-amber-600 focus:bg-amber-100/60 rounded text-slate-900 shadow-inner outline-none transition"
+                        data-index="${idx}"
+                        value="${escapeHtml(expiryVal)}"
+                        placeholder="YYYY-MM (مثال 2027-10)"
+                        dir="ltr"
+                        enterkeyhint="next"
+                        title="تاريخ الصلاحية (إدخال يدوي إلزامي: مثال 2027-10)">
+                 ${!expiryVal ? '<span class="text-[9px] text-amber-700 font-bold whitespace-nowrap">مطلوب يدوياً ⚠️</span>' : ''}
+               </div>`
+            : `<div class="flex items-center justify-center gap-1">
+                 <span class="font-mono font-bold text-slate-900 text-xs" dir="ltr">${escapeHtml(b.expiry_date || '-')}</span>
+               </div>`;
 
-    card.classList.remove('hidden');
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // زر السطر: إن كان هناك باتشات تالية يظهر 'التالي ➔'، وإن كان الأخير يظهر 'ترحيل ↵'
+        const isLastBatch = (idx === batches.length - 1);
+        const actionBtn = isLastBatch
+            ? `<button type="button" class="stk-bec-btn-action px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="commit" data-index="${idx}"><span>ترحيل</span> <span>↵</span></button>`
+            : `<button type="button" class="stk-bec-btn-action px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="next" data-index="${idx}"><span>التالي</span> <span>➔</span></button>`;
 
-    // حماية تمنع القفز لحقل البحث أثناء فتح كارت الباتشات
-    const searchFilter = document.getElementById('stk-items-search-filter');
-    if (searchFilter) {
-        searchFilter.setAttribute('tabindex', '-1');
-    }
+        const deleteRowBtn = (b.is_dynamic_added && batches.length > 1)
+            ? `<button type="button" class="stk-bec-btn-delete-row text-rose-500 hover:text-rose-700 p-0.5 text-xs transition" data-index="${idx}" title="حذف هذه التشغيلة">🗑️</button>`
+            : '';
 
-    const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
+        const statusCellContent = hasCounted
+            ? `<div class="flex flex-col items-center gap-1"><span class="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold text-[10px]">✅ تم (${countedVal})</span><div class="flex items-center gap-1">${actionBtn}${deleteRowBtn}</div></div>`
+            : `<div class="flex items-center justify-center gap-1">${actionBtn}${deleteRowBtn}</div>`;
 
-    // تأمين النموذج من إرسال المتصفح التلقائي
-    const batchForm = document.getElementById('stk-bec-batches-form');
-    if (batchForm) {
-        batchForm.onsubmit = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const activeEl = document.activeElement;
-            let activeIdx = inputs.indexOf(activeEl);
-            if (activeIdx === -1) {
-                activeIdx = inputs.length - 1;
+        html += `
+            <tr class="hover:bg-amber-50/50 transition border-b border-slate-300 text-slate-700 text-xs ${hasCounted ? 'bg-emerald-50/40' : (idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60')}" id="stk-bec-row-${idx}">
+                <td class="border border-slate-300 p-1 text-center text-slate-500 font-mono text-[11px] select-none bg-slate-50/50">${idx + 1}</td>
+                <td class="border border-slate-300 p-1 font-mono font-bold text-slate-900 text-center">${escapeHtml(prod.code || '')}</td>
+                <td class="border border-slate-300 p-1 text-left font-bold text-slate-900 select-text min-w-[260px] whitespace-normal leading-snug" dir="ltr">
+                    ${escapeHtml(prod.name || '')}
+                </td>
+                <td class="border border-slate-300 p-1 font-mono text-[11px] text-slate-600 text-center" dir="ltr">${escapeHtml(prod.barcode || prod.gtin || '-')}</td>
+                <td class="border border-slate-300 p-1 text-center">
+                    ${batchCell}
+                </td>
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-900 text-xs" dir="ltr">
+                    ${expiryCell}
+                </td>
+                <td class="border border-slate-300 p-1 text-center bg-sky-50/40">
+                    <span class="font-mono font-black text-slate-900 text-xs px-2 py-0.5 rounded bg-slate-200/80 border border-slate-300 shadow-sm">${sysQty}</span>
+                </td>
+                <td class="border border-slate-300 p-1 text-center bg-emerald-50/50">
+                    <input type="number" step="any" min="0"
+                           class="stk-bec-qty-input font-mono font-black text-center text-xs w-20 py-0.5 px-1 border-2 border-emerald-500 focus:border-amber-500 focus:bg-amber-50 rounded bg-white text-emerald-950 shadow-inner outline-none transition"
+                           data-index="${idx}"
+                           data-product-code="${escapeHtml(prod.code || '')}"
+                           data-entry-id="${b.entry_id || ''}"
+                           data-batch="${escapeHtml(b.batch_number || '')}"
+                           data-expiry="${escapeHtml(b.expiry_date || '')}"
+                           data-system-qty="${sysQty}"
+                           data-cost="${cost}"
+                           data-sale="${sale}"
+                           value="${b.counted_qty > 0 ? b.counted_qty : ''}"
+                           placeholder="أدخل..."
+                           tabindex="${(idx + 1) * 3}"
+                           enterkeyhint="${idx < batches.length - 1 ? 'next' : 'done'}"
+                           inputmode="decimal"
+                           oninput="updateBecRowCalc(this)">
+                </td>
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-xs">
+                    <span class="bec-diff-cell font-mono font-bold text-xs ${diff < 0 ? 'text-rose-600' : (diff > 0 ? 'text-emerald-700' : 'text-slate-400')}">${diff > 0 ? '+' : ''}${diff}</span>
+                </td>
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-800">${formatMoney(cost)}</td>
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-indigo-700">${formatMoney(sale)}</td>
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-900"><span class="bec-totcost-cell">${totCost}</span></td>
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-indigo-950"><span class="bec-totsale-cell">${totSale}</span></td>
+                <td class="border border-slate-300 p-1 text-center">${batchBadge}</td>
+                <td class="border border-slate-300 p-1 text-center" id="stk-bec-cell-status-${idx}">
+                    ${statusCellContent}
+                </td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = html;
+
+    // ربط مستمعي أحداث حقول الإدخال والأزرار ديناميكياً
+    attachBatchCardRowEvents(data);
+}
+
+// دالة ربط أحداث الإدخال والتنقل الذكي بالسهم والإنتر بين الحقول
+function attachBatchCardRowEvents(data) {
+    const tbody = document.getElementById('stk-bec-batches-tbody');
+    if (!tbody) return;
+
+    const batches = data.batches || [];
+    const qtyInputs = Array.from(tbody.querySelectorAll('.stk-bec-qty-input'));
+
+    // 1. ربط حقول رقم التشغيلة
+    tbody.querySelectorAll('.stk-bec-batch-input').forEach(batchInp => {
+        const idx = parseInt(batchInp.dataset.index);
+        const handleBatchStep = (e) => {
+            const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter');
+            const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
+            const isDown = (e.key === 'ArrowDown' || e.keyCode === 40);
+
+            if (isEnter || isTab || isDown) {
+                e.preventDefault();
+                e.stopPropagation();
+                const expInp = tbody.querySelector(`#stk-bec-row-${idx} .stk-bec-expiry-input`);
+                const qtyInp = tbody.querySelector(`#stk-bec-row-${idx} .stk-bec-qty-input`);
+                const target = expInp || qtyInp;
+                if (target) {
+                    target.focus();
+                    target.select();
+                }
             }
-            moveToNextBatchOrCommit(activeIdx);
-            return false;
         };
-    }
-
-    // التركيز التلقائي المباشر على أول خانة للرصيد الفعلي (Auto-focus & select)
-    setTimeout(() => {
-        const firstInput = tbody?.querySelector('.stk-bec-qty-input');
-        if (firstInput) {
-            firstInput.focus();
-            firstInput.select();
-            const firstRow = document.getElementById('stk-bec-row-0');
-            if (firstRow) {
-                firstRow.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+        batchInp.addEventListener('keydown', handleBatchStep);
+        batchInp.addEventListener('beforeinput', (e) => {
+            if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+                e.preventDefault();
+                e.stopPropagation();
+                const expInp = tbody.querySelector(`#stk-bec-row-${idx} .stk-bec-expiry-input`);
+                const qtyInp = tbody.querySelector(`#stk-bec-row-${idx} .stk-bec-qty-input`);
+                const target = expInp || qtyInp;
+                if (target) {
+                    target.focus();
+                    target.select();
+                }
             }
-        }
-    }, 60);
+        });
+    });
 
-    // ربط التنقل بالسهم / Enter بين الباتشات لعدد N من الباتشات والاعتماد عند آخر باتش
-    inputs.forEach((inp, idx) => {
+    // 2. ربط حقول تاريخ الصلاحية (مع التنسيق والتحقق التلقائي)
+    tbody.querySelectorAll('.stk-bec-expiry-input').forEach(expInp => {
+        const idx = parseInt(expInp.dataset.index);
+
+        expInp.addEventListener('blur', () => {
+            expInp.value = normalizeExpiryDate(expInp.value);
+            if (expInp.value) {
+                expInp.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-50');
+            }
+        });
+
+        const handleExpiryStep = (e) => {
+            const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter');
+            const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
+            const isDown = (e.key === 'ArrowDown' || e.keyCode === 40);
+
+            if (isEnter || isTab || isDown) {
+                e.preventDefault();
+                e.stopPropagation();
+                expInp.value = normalizeExpiryDate(expInp.value);
+                if (expInp.value) {
+                    expInp.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-50');
+                }
+                const qtyInp = tbody.querySelector(`#stk-bec-row-${idx} .stk-bec-qty-input`);
+                if (qtyInp) {
+                    qtyInp.focus();
+                    qtyInp.select();
+                }
+            }
+        };
+
+        expInp.addEventListener('keydown', handleExpiryStep);
+        expInp.addEventListener('beforeinput', (e) => {
+            if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+                e.preventDefault();
+                e.stopPropagation();
+                expInp.value = normalizeExpiryDate(expInp.value);
+                if (expInp.value) {
+                    expInp.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-50');
+                }
+                const qtyInp = tbody.querySelector(`#stk-bec-row-${idx} .stk-bec-qty-input`);
+                if (qtyInp) {
+                    qtyInp.focus();
+                    qtyInp.select();
+                }
+            }
+        });
+    });
+
+    // 3. ربط حقول الرصيد الفعلي (الكمية)
+    qtyInputs.forEach((inp, idx) => {
         inp.addEventListener('focus', () => {
-            inputs.forEach((otherInp, j) => {
+            qtyInputs.forEach((otherInp, j) => {
                 const r = document.getElementById(`stk-bec-row-${j}`);
                 if (r) {
                     if (idx === j) {
@@ -6525,8 +6733,6 @@ function openBatchEntryCard(data, source = 'desktop_input') {
         };
 
         inp.addEventListener('keydown', handleKeyStep);
-
-        // التعامل مع مفاتيح الهواتف المحمولة التي ترسل beforeinput
         inp.addEventListener('beforeinput', (e) => {
             if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
                 e.preventDefault();
@@ -6536,8 +6742,8 @@ function openBatchEntryCard(data, source = 'desktop_input') {
         });
     });
 
-    // ربط أزرار الإجراء (التالي / ترحيل) الموضعية بكل سطر
-    tbody?.querySelectorAll('.stk-bec-btn-action').forEach(btn => {
+    // 4. ربط أزرار الإجراء (التالي / ترحيل) الموضعية بكل سطر
+    tbody.querySelectorAll('.stk-bec-btn-action').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -6545,6 +6751,112 @@ function openBatchEntryCard(data, source = 'desktop_input') {
             moveToNextBatchOrCommit(btnIdx);
         });
     });
+
+    // 5. زر تفعيل التعديل اليدوي للسطر
+    tbody.querySelectorAll('.stk-bec-btn-toggle-edit').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const editIdx = parseInt(btn.dataset.index);
+            if (batches[editIdx]) {
+                batches[editIdx].force_edit = true;
+                renderBatchCardRows(data);
+                setTimeout(() => {
+                    const rowExp = tbody.querySelector(`#stk-bec-row-${editIdx} .stk-bec-expiry-input`);
+                    if (rowExp) {
+                        rowExp.focus();
+                        rowExp.select();
+                    }
+                }, 50);
+            }
+        });
+    });
+
+    // 6. زر حذف التشغيلة المضافة يدوياً
+    tbody.querySelectorAll('.stk-bec-btn-delete-row').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const delIdx = parseInt(btn.dataset.index);
+            if (batches[delIdx]) {
+                batches.splice(delIdx, 1);
+                renderBatchCardRows(data);
+            }
+        });
+    });
+}
+
+function openBatchEntryCard(data, source = 'desktop_input') {
+    batchCardSourceOrigin = source; // حفظ مصدر السحب (كاميرا موبايل أم سكانر كمبيوتر)
+    wasCameraActiveBeforeBatch = (source === 'camera');
+    currentActiveBatchCardData = data;
+
+    const card = document.getElementById('stk-batch-entry-card');
+    if (!card) return;
+
+    const prod = data.product || {};
+    const batches = data.batches || [];
+
+    const elCode = document.getElementById('stk-bec-product-code');
+    const elName = document.getElementById('stk-bec-product-name');
+    const elBarcode = document.getElementById('stk-bec-barcode');
+
+    if (elCode) elCode.textContent = prod.code || '-';
+    if (elName) elName.textContent = prod.name || '-';
+    if (elBarcode) elBarcode.textContent = prod.barcode || prod.gtin || '-';
+
+    // رسم السطور
+    renderBatchCardRows(data);
+
+    card.classList.remove('hidden');
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // حماية تمنع القفز لحقل البحث أثناء فتح كارت الباتشات
+    const searchFilter = document.getElementById('stk-items-search-filter');
+    if (searchFilter) {
+        searchFilter.setAttribute('tabindex', '-1');
+    }
+
+    const tbody = document.getElementById('stk-bec-batches-tbody');
+    const qtyInputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
+
+    // تأمين النموذج من إرسال المتصفح التلقائي
+    const batchForm = document.getElementById('stk-bec-batches-form');
+    if (batchForm) {
+        batchForm.onsubmit = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const activeEl = document.activeElement;
+            let activeIdx = qtyInputs.indexOf(activeEl);
+            if (activeIdx === -1) {
+                activeIdx = qtyInputs.length - 1;
+            }
+            moveToNextBatchOrCommit(activeIdx);
+            return false;
+        };
+    }
+
+    // التركيز التلقائي الذكي: إن كانت هناك خانة صلاحية فارغة نركز عليها، وإلا على خانة الكمية
+    setTimeout(() => {
+        const firstEmptyExpiry = tbody?.querySelector('.stk-bec-expiry-input');
+        const firstQtyInput = tbody?.querySelector('.stk-bec-qty-input');
+
+        if (firstEmptyExpiry && (!firstEmptyExpiry.value || firstEmptyExpiry.value === '-')) {
+            firstEmptyExpiry.focus();
+            firstEmptyExpiry.select();
+            const firstRow = document.getElementById('stk-bec-row-0');
+            if (firstRow) {
+                firstRow.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+            }
+        } else if (firstQtyInput) {
+            firstQtyInput.focus();
+            firstQtyInput.select();
+            const firstRow = document.getElementById('stk-bec-row-0');
+            if (firstRow) {
+                firstRow.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+            }
+        }
+    }, 60);
 }
 
 let isBatchCommittingLock = false;
@@ -6553,40 +6865,78 @@ async function commitAllCardBatches(allInputs) {
     isBatchCommittingLock = true;
 
     try {
-        let savedCount = 0;
-        let lastStoreDetails = null;
+        const tbody = document.getElementById('stk-bec-batches-tbody');
+        const rowsToSave = [];
 
+        // 1. التحقق أولاً من جميع السطور التي تحتوي على كمية فعلية > 0
         for (const inputEl of allInputs) {
             const idx = parseInt(inputEl.dataset.index);
-            const prodCode = inputEl.dataset.productCode;
-            const batch = inputEl.dataset.batch;
-            const expiry = inputEl.dataset.expiry;
-            const sysQty = parseFloat(inputEl.dataset.systemQty) || 0;
-            const cost = parseFloat(inputEl.dataset.cost) || 0;
-            const sale = parseFloat(inputEl.dataset.sale) || 0;
-
+            const rowEl = document.getElementById(`stk-bec-row-${idx}`);
             const val = inputEl.value.trim();
             const countedVal = parseFloat(val);
 
-            // قاعدة هامة جداً: إذا كانت الكمية صفر أو فارغة، لا يتم تسجيل سطر في فاتورة الجرد إطلاقاً
+            // إذا كانت الكمية صفر أو فارغة، نتخطى هذا السطر
             if (isNaN(countedVal) || countedVal <= 0) {
                 continue;
             }
 
+            const batchInput = rowEl?.querySelector('.stk-bec-batch-input');
+            const expiryInput = rowEl?.querySelector('.stk-bec-expiry-input');
+
+            let batch = batchInput ? batchInput.value.trim() : (inputEl.dataset.batch || '');
+            let expiry = expiryInput ? normalizeExpiryDate(expiryInput.value.trim()) : (inputEl.dataset.expiry || '');
+
+            if (batchInput) batchInput.value = batch;
+            if (expiryInput) expiryInput.value = expiry;
+
+            // إذا لم يتم تحديد باتش، ننشئ رقم تشغيلة افتراضي معتمد
+            if (!batch || batch === '-') {
+                batch = generateDefaultBatchNumber(idx);
+                if (batchInput) batchInput.value = batch;
+            }
+
+            // شرط إلزامي قطعي: تاريخ الصلاحية يجب إدخاله للصنف
+            if (!expiry || expiry === '-') {
+                isBatchCommittingLock = false;
+                playStockAudioAlert(false);
+                showCatalogToast('⚠️ يرجى إدخال تاريخ الصلاحية (الاكسبير) للصنف أولاً');
+                if (expiryInput) {
+                    expiryInput.classList.add('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-50');
+                    expiryInput.focus();
+                    expiryInput.select();
+                    expiryInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+                return;
+            }
+
+            rowsToSave.push({
+                store_no: currentActiveStoreNo,
+                product_code: inputEl.dataset.productCode,
+                entry_id: inputEl.dataset.entryId ? parseInt(inputEl.dataset.entryId) : null,
+                batch_number: batch,
+                expiry_date: expiry,
+                counted_qty: countedVal,
+                system_qty: parseFloat(inputEl.dataset.systemQty) || 0,
+                cost_price: parseFloat(inputEl.dataset.cost) || 0,
+                selling_price: parseFloat(inputEl.dataset.sale) || 0
+            });
+        }
+
+        if (rowsToSave.length === 0) {
+            showCatalogToast('ℹ️ لم يتم إدخال أي كمية للجرد');
+            closeBatchEntryCard(false);
+            return;
+        }
+
+        let savedCount = 0;
+        let lastStoreDetails = null;
+
+        for (const rowData of rowsToSave) {
             try {
                 const res = await fetch('/api/stock/save-batch-qty', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        store_no: currentActiveStoreNo,
-                        product_code: prodCode,
-                        batch_number: batch,
-                        expiry_date: expiry,
-                        counted_qty: countedVal,
-                        system_qty: sysQty,
-                        cost_price: cost,
-                        selling_price: sale
-                    })
+                    body: JSON.stringify(rowData)
                 });
                 const resData = await res.json();
                 if (resData.success) {
@@ -6594,9 +6944,11 @@ async function commitAllCardBatches(allInputs) {
                     if (resData.store_details) {
                         lastStoreDetails = resData.store_details;
                     }
+                } else {
+                    console.error('Error saving batch row:', resData.message);
                 }
             } catch (err) {
-                console.error('Error saving batch row', err);
+                console.error('Network error saving batch row', err);
             }
         }
 

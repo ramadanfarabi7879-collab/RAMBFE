@@ -698,17 +698,35 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
                 }
 
         # 3. إذا لم يكن للصنف أي تشغيلة مسجلة: ننشئ سطراً افتراضياً برصيد المخزون 0
+        from datetime import datetime
+        current_ym = datetime.now().strftime('%y%m')
+        default_auto_batch = f"B{current_ym}-01"
+
         if not batches_map:
             batches_map[("-", "-")] = {
-                "batch_number": "-",
-                "expiry_date": "-",
+                "batch_number": default_auto_batch,
+                "expiry_date": "",
                 "system_qty": 0.0,
                 "counted_qty": 0.0,
                 "cost_price": cost_price,
                 "selling_price": selling_price,
                 "entry_id": None,
-                "is_new_batch": 0
+                "is_new_batch": 1,
+                "is_manual_batch": 1,
+                "requires_manual_entry": True
             }
+        else:
+            # فحص التشغيلات السابقة: إذا كانت بدون رقم باتش أو بدون صلاحية نفتح التعديل ونولد باتش تلقائي
+            for k, b_info in batches_map.items():
+                b_num = str(b_info.get("batch_number") or "").strip()
+                exp_d = str(b_info.get("expiry_date") or "").strip()
+                if (b_num in ('-', '', 'None') and exp_d in ('-', '', 'None')) or b_info.get("is_new_batch"):
+                    if b_num in ('-', '', 'None'):
+                        b_info["batch_number"] = default_auto_batch
+                    if exp_d in ('-', '', 'None'):
+                        b_info["expiry_date"] = ""
+                    b_info["is_manual_batch"] = 1
+                    b_info["requires_manual_entry"] = True
 
         batches_list = list(batches_map.values())
 
@@ -934,7 +952,8 @@ def save_stock_batch_count(
     counted_qty: float,
     system_qty: float = 0.0,
     cost_price: float = 0.0,
-    selling_price: float = 0.0
+    selling_price: float = 0.0,
+    entry_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     حفظ وتحديث الكمية الفعلية المجرودة لتشغيلة معينة (من لوحة إدخال الباتشات العلوية):
@@ -971,26 +990,37 @@ def save_stock_batch_count(
     cost_val = float(inv['cost_price']) if (inv and inv['cost_price']) else float(cost_price or (prod.get('cost_price') if prod else 0) or 0.0)
     sale_val = float(inv['selling_price']) if (inv and inv['selling_price']) else float(selling_price or (prod.get('selling_price') if prod else 0) or 0.0)
 
-    # فحص هل يوجد سطر سابق في stocktake_entries
-    c.execute("""
-        SELECT id FROM stocktake_entries
-        WHERE product_code = ? AND store_no = ? AND (batch_number = ? OR (batch_number = '' AND ? = ''))
-        ORDER BY id DESC LIMIT 1
-    """, (product_code, store_no, b_clean, b_clean))
-    row = c.fetchone()
+    # فحص هل يوجد سطر سابق في stocktake_entries (بواسطة entry_id أو بـ product_code والباتش)
+    row = None
+    if entry_id:
+        c.execute("""
+            SELECT id FROM stocktake_entries
+            WHERE id = ? AND store_no = ?
+        """, (entry_id, store_no))
+        row = c.fetchone()
+
+    if not row:
+        c.execute("""
+            SELECT id FROM stocktake_entries
+            WHERE product_code = ? AND store_no = ? AND (batch_number = ? OR (batch_number = '' AND ? = ''))
+            ORDER BY id DESC LIMIT 1
+        """, (product_code, store_no, b_clean, b_clean))
+        row = c.fetchone()
 
     if row:
-        entry_id = row['id']
+        target_id = row['id']
         c.execute("""
             UPDATE stocktake_entries
             SET counted_qty = ?,
+                batch_number = CASE WHEN ? != '' THEN ? ELSE batch_number END,
+                expiry_date = CASE WHEN ? != '' THEN ? ELSE expiry_date END,
                 system_qty = CASE WHEN system_qty = 0 THEN ? ELSE system_qty END,
-                expiry_date = CASE WHEN expiry_date = '' THEN ? ELSE expiry_date END,
                 cost_price = CASE WHEN cost_price = 0 THEN ? ELSE cost_price END,
                 selling_price = CASE WHEN selling_price = 0 THEN ? ELSE selling_price END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (counted_val, sys_val, exp_clean, cost_val, sale_val, entry_id))
+        """, (counted_val, b_clean, b_clean, exp_clean, exp_clean, sys_val, cost_val, sale_val, target_id))
+        entry_id = target_id
     else:
         c.execute("""
             INSERT INTO stocktake_entries (

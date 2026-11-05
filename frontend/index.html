@@ -6,7 +6,7 @@
     <title>نظام إدارة بطاقات الأصناف والمسح بكود QR</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="style.css?v=20261105_warm_camera_v12">
+    <link rel="stylesheet" href="style.css?v=20261105_manual_expiry_v14">
     <!-- Google Fonts: Cairo -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1398,6 +1398,10 @@
                                     <span id="stk-bec-batches-count" class="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 font-bold text-[10px] font-mono"></span>
                                 </div>
                                 <div class="flex items-center gap-1.5">
+                                    <button type="button" id="btn-add-extra-batch-row" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded font-bold text-[11px] shadow transition flex items-center gap-1" title="إضافة تشغيلة أخرى للصنف">
+                                        <span>+</span>
+                                        <span>إضافة تشغيلة</span>
+                                    </button>
                                     <button type="button" id="btn-finish-batch-entry" class="px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-[11px] shadow transition flex items-center gap-1">
                                         <span>✅</span>
                                         <span>اعتماد</span>
@@ -2390,6 +2394,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261105_warm_camera_v12"></script>
+    <script src="app.js?v=20261105_manual_expiry_v14"></script>
 </body>
 </html>
