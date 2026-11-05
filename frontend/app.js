@@ -3117,27 +3117,38 @@ function initMobileCompanionScanner() {
         const modal = document.getElementById('modal-mobile-companion');
         modal?.classList.remove('hidden');
 
-        try {
-            const res = await fetch('/api/network-info');
-            const data = await res.json();
-            const urlText = document.getElementById('mobile-companion-url-text');
-            const targetUrl = data.mobile_url || (data.cloudflare_url ? `${data.cloudflare_url}/mobile` : `http://${data.ip}:${data.port}/mobile`);
-            if (urlText) urlText.textContent = targetUrl;
+        const loadInfo = async () => {
+            try {
+                const res = await fetch('/api/network-info');
+                const data = await res.json();
+                const urlText = document.getElementById('mobile-companion-url-text');
+                const targetUrl = data.cloudflare_url || data.mobile_url || `http://${data.ip}:${data.port}/`;
+                if (urlText) urlText.textContent = targetUrl;
 
-            // توليد كود QR
-            const qrBox = document.getElementById('mobile-companion-qr-box');
-            if (qrBox) {
-                if (typeof qrcode !== 'undefined') {
-                    const qr = qrcode(0, 'M');
-                    qr.addData(targetUrl);
-                    qr.make();
-                    qrBox.innerHTML = qr.createSvgTag({ scalable: true, cellSize: 4 });
-                } else {
-                    qrBox.innerHTML = `<a href="${targetUrl}" target="_blank" class="text-indigo-600 font-bold text-xs underline">${targetUrl}</a>`;
+                // توليد كود QR
+                const qrBox = document.getElementById('mobile-companion-qr-box');
+                if (qrBox) {
+                    if (typeof qrcode !== 'undefined') {
+                        const qr = qrcode(0, 'M');
+                        qr.addData(targetUrl);
+                        qr.make();
+                        qrBox.innerHTML = qr.createSvgTag({ scalable: true, cellSize: 4 });
+                    } else {
+                        qrBox.innerHTML = `<a href="${targetUrl}" target="_blank" class="text-indigo-600 font-bold text-xs underline">${targetUrl}</a>`;
+                    }
                 }
+                return data.is_cloudflare_active;
+            } catch (e) {
+                console.error('Error fetching network info:', e);
+                return false;
             }
-        } catch (e) {
-            console.error('Error fetching network info:', e);
+        };
+
+        const isReady = await loadInfo();
+        if (!isReady) {
+            // إعادة الفحص تلقائياً خلال ثوانٍ عند اكتمال إطلاق نفق Cloudflare
+            setTimeout(loadInfo, 2500);
+            setTimeout(loadInfo, 5000);
         }
 
         lastMobilePollTimestamp = Date.now() / 1000;

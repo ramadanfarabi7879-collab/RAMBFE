@@ -350,12 +350,14 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             ip = get_local_ip()
             port = self.server.server_address[1]
             cf_url = get_cloudflare_url()
-            mobile_url = f"{cf_url}/mobile" if cf_url else f"http://{ip}:{port}/mobile"
+            # الرابط السحابي المباشر لكامل ميزات البرنامج على الموبايل
+            mobile_url = cf_url if cf_url else f"http://{ip}:{port}/"
             self.send_json({
                 "ip": ip,
                 "port": port,
                 "mobile_url": mobile_url,
-                "local_mobile_url": f"http://{ip}:{port}/mobile",
+                "companion_url": f"{cf_url}/mobile" if cf_url else f"http://{ip}:{port}/mobile",
+                "local_mobile_url": f"http://{ip}:{port}/",
                 "cloudflare_url": cf_url or None,
                 "is_cloudflare_active": bool(cf_url)
             })
