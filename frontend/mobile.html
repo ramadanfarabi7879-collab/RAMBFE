@@ -51,7 +51,102 @@
             background-color: rgba(34, 197, 94, 0.45);
             animation: flashSuccess 0.35s ease-out forwards;
             pointer-events: none;
+            z-index: 30;
+        }
+
+        /* تصميم مربع التوجيه الاحترافي لتطبيق طمني (Saudi FDA Tameni) */
+        .tameni-overlay-mask {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             z-index: 20;
+        }
+        .tameni-reticle {
+            position: relative;
+            width: 250px;
+            height: 250px;
+            max-width: 76vw;
+            max-height: 76vw;
+            border-radius: 20px;
+            box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.58);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .tameni-reticle.active-hit {
+            box-shadow: 0 0 0 9999px rgba(16, 185, 129, 0.3), 0 0 35px #10b981;
+            transform: scale(1.04);
+        }
+        .tameni-corner {
+            position: absolute;
+            width: 32px;
+            height: 32px;
+            border-color: #34d399;
+            filter: drop-shadow(0 0 10px #10b981);
+            transition: all 0.2s ease;
+        }
+        .tameni-corner.tr {
+            top: -2px;
+            right: -2px;
+            border-top: 4px solid #34d399;
+            border-right: 4px solid #34d399;
+            border-top-right-radius: 18px;
+        }
+        .tameni-corner.tl {
+            top: -2px;
+            left: -2px;
+            border-top: 4px solid #34d399;
+            border-left: 4px solid #34d399;
+            border-top-left-radius: 18px;
+        }
+        .tameni-corner.br {
+            bottom: -2px;
+            right: -2px;
+            border-bottom: 4px solid #34d399;
+            border-right: 4px solid #34d399;
+            border-bottom-right-radius: 18px;
+        }
+        .tameni-corner.bl {
+            bottom: -2px;
+            left: -2px;
+            border-bottom: 4px solid #34d399;
+            border-left: 4px solid #34d399;
+            border-bottom-left-radius: 18px;
+        }
+        .tameni-laser {
+            position: absolute;
+            left: 10px;
+            right: 10px;
+            height: 3px;
+            background: linear-gradient(90deg, transparent 0%, #10b981 25%, #34d399 50%, #10b981 75%, transparent 100%);
+            box-shadow: 0 0 14px #34d399, 0 0 25px #10b981;
+            border-radius: 9999px;
+            animation: tameniSweep 2.2s ease-in-out infinite;
+        }
+        @keyframes tameniSweep {
+            0% { top: 8%; opacity: 0.7; }
+            50% { top: 90%; opacity: 1; }
+            100% { top: 8%; opacity: 0.7; }
+        }
+        .tameni-badge {
+            position: absolute;
+            top: -34px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(52, 211, 153, 0.5);
+            color: #a7f3d0;
+            padding: 3px 12px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 800;
+            white-space: nowrap;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -128,60 +223,80 @@
     <!-- تبويبات العرض الرئيسية -->
     <main class="flex-1 px-3 py-2">
         
-        <!-- =================== التبويب 1: كاميرا المسح الضوئي (Scanner) =================== -->
+        <!-- =================== التبويب 1: كاميرا المسح الضوئي الذكي (نظام طمني) =================== -->
         <div id="view-scanner" class="space-y-2">
-            <div class="relative w-full max-w-md mx-auto aspect-square max-h-[44vh] bg-black rounded-2xl overflow-hidden border-2 border-indigo-500/60 shadow-2xl flex items-center justify-center">
+            <div class="relative w-full max-w-md mx-auto aspect-square max-h-[46vh] bg-black rounded-3xl overflow-hidden border-2 border-emerald-500/50 shadow-2xl flex items-center justify-center">
                 <!-- شاشة كاميرا المسح -->
                 <div id="mobile-camera-viewport" class="w-full h-full object-cover"></div>
-                <!-- ليزر وميض المسح -->
-                <div id="scanner-laser-bar" class="scanner-laser"></div>
-                <div id="scan-flash-overlay" class="hidden"></div>
-
-                <!-- إطار التوجيه -->
-                <div class="absolute inset-8 sm:inset-10 border-2 border-dashed border-indigo-400/70 rounded-xl pointer-events-none flex flex-col justify-between p-2 shadow-inner">
-                    <div class="flex justify-between">
-                        <div class="w-4 h-4 border-t-2 border-r-2 border-emerald-400"></div>
-                        <div class="w-4 h-4 border-t-2 border-l-2 border-emerald-400"></div>
-                    </div>
-                    <div class="flex justify-between">
-                        <div class="w-4 h-4 border-b-2 border-r-2 border-emerald-400"></div>
-                        <div class="w-4 h-4 border-b-2 border-l-2 border-emerald-400"></div>
+                
+                <!-- طبقة التعتيم والمربع التهديفي لتطبيق طمني (Tameni Reticle) -->
+                <div class="tameni-overlay-mask">
+                    <div id="tameni-reticle-box" class="tameni-reticle">
+                        <div class="tameni-badge">
+                            <span class="animate-pulse text-emerald-400">⚡</span>
+                            <span>وجّه كود العلبة (DataMatrix) داخل المربع</span>
+                        </div>
+                        <div class="tameni-corner tr"></div>
+                        <div class="tameni-corner tl"></div>
+                        <div class="tameni-corner br"></div>
+                        <div class="tameni-corner bl"></div>
+                        <div class="tameni-laser"></div>
                     </div>
                 </div>
 
-                <!-- شارات الصيغ المدعومة -->
-                <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9px] font-bold text-slate-300 bg-slate-950/80 backdrop-blur py-1 px-2 rounded-lg border border-slate-800 pointer-events-none">
-                    <span class="text-emerald-400">✓ 1D Barcode</span>
-                    <span class="text-sky-400">✓ QR Code</span>
-                    <span class="text-indigo-400">✓ GS1 DataMatrix</span>
+                <div id="scan-flash-overlay" class="hidden scan-flash"></div>
+
+                <!-- شارات الصيغ المدعومة بالأسفل -->
+                <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9px] font-bold text-slate-300 bg-slate-950/80 backdrop-blur py-1 px-2 rounded-lg border border-slate-800 pointer-events-none z-30">
+                    <span class="text-emerald-400">✓ داتاماتريكس (GS1)</span>
+                    <span class="text-sky-400">✓ كود QR</span>
+                    <span class="text-indigo-400">✓ باركود 1D</span>
                 </div>
 
                 <!-- زر إعادة تشغيل الكاميرا إن توقفت -->
-                <button id="btn-restart-camera" type="button" class="hidden absolute inset-0 bg-slate-900/90 flex-col items-center justify-center gap-2 p-4 text-center">
-                    <span class="text-3xl">📷</span>
+                <button id="btn-restart-camera" type="button" class="hidden absolute inset-0 bg-slate-900/95 flex-col items-center justify-center gap-2 p-4 text-center z-40">
+                    <span class="text-3xl animate-bounce">📷</span>
                     <span class="text-sm font-bold text-white">اضغط هنا لتشغيل الكاميرا</span>
                     <span class="text-xs text-slate-400">يرجى السماح بالوصول للكاميرا في المتصفح</span>
                 </button>
             </div>
 
-            <!-- بطاقة النتيجة الحية للمسحة الأخيرة -->
-            <div id="mobile-feedback-card" class="max-w-md mx-auto w-full bg-slate-900/90 rounded-xl p-2.5 border border-slate-800 text-xs shadow-md">
-                <div class="flex items-center justify-between gap-1 pb-1 border-b border-slate-800 font-mono text-[11px]">
+            <!-- بطاقة النتيجة الحية للمسحة الأخيرة (HUD Card مع أزرار التحكم في الكمية بدون إغلاق الكاميرا) -->
+            <div id="mobile-feedback-card" class="max-w-md mx-auto w-full bg-slate-900/95 rounded-2xl p-3 border border-slate-800 text-xs shadow-xl backdrop-blur">
+                <div class="flex items-center justify-between gap-1 pb-1.5 border-b border-slate-800 font-mono text-[11px]">
                     <div class="flex items-center gap-1.5">
-                        <span id="scan-status-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        <strong id="scan-status-label" class="text-emerald-400 font-sans">جاهز للمسح</strong>
+                        <span id="scan-status-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]"></span>
+                        <strong id="scan-status-label" class="text-emerald-400 font-sans text-xs">جاهز للسحب الفوري</strong>
                     </div>
-                    <span id="scan-time-label" class="text-slate-400">--:--</span>
-                </div>
-                <div class="mt-1.5 flex items-start justify-between gap-2">
-                    <div class="flex-1">
-                        <p id="scan-product-name" class="font-bold text-white text-xs leading-snug line-clamp-2">وجه الكاميرا نحو باركود الصنف أو كود الدواء...</p>
-                        <p id="scan-product-code" class="text-[10px] text-slate-400 font-mono mt-0.5">-</p>
-                    </div>
-                    <div class="text-left font-mono">
-                        <span id="scan-badge-qty" class="px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-300 font-black text-xs border border-emerald-500/40">
-                            +1
+                    <div class="flex items-center gap-2">
+                        <span id="scan-store-total-badge" class="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 font-sans font-bold text-[10px] border border-indigo-500/30">
+                            إجمالي الجرد: <b id="stat-hud-total-qty" class="text-white font-mono">0</b>
                         </span>
+                        <span id="scan-time-label" class="text-slate-400 font-mono text-[10px]">--:--</span>
+                    </div>
+                </div>
+                
+                <div class="mt-2 flex items-center justify-between gap-2">
+                    <div class="flex-1 min-w-0 text-right">
+                        <p id="scan-product-name" class="font-black text-white text-xs sm:text-sm leading-snug truncate">قرّب علبة الدواء من المربع ليسحب فوراً تلقائياً...</p>
+                        <div class="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                            <span id="scan-product-code">-</span>
+                            <span id="scan-product-batch" class="text-amber-300 font-bold"></span>
+                            <span id="scan-product-exp" class="text-slate-300"></span>
+                        </div>
+                    </div>
+                    
+                    <!-- عداد الكمية الذكي مع أزرار + و - سريعة بدون مغادرة الكاميرا -->
+                    <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                        <button type="button" id="btn-hud-qty-dec" onclick="adjustLastItemQty(-1)" class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-300 font-bold text-sm flex items-center justify-center active:scale-90 transition" title="إنقاص الكمية (-1)">
+                            -
+                        </button>
+                        <span id="scan-badge-qty" class="min-w-8 text-center text-emerald-400 font-black font-mono text-sm px-1">
+                            1
+                        </span>
+                        <button type="button" id="btn-hud-qty-inc" onclick="adjustLastItemQty(1)" class="w-7 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm flex items-center justify-center active:scale-90 transition shadow" title="زيادة الكمية (+1)">
+                            +
+                        </button>
                     </div>
                 </div>
             </div>
@@ -730,33 +845,78 @@
             }
         };
 
-        // إرسال كود ممسوح للسيرفر
+        let lastScannedEntryId = null;
+        let lastScannedItemCurrentQty = 1;
+
+        // تعديل سريع لكمية آخر عبوة تم مسحها مباشرة من بطاقة الكاميرا (+1 أو -1) بدون مغادرة الكاميرا
+        window.adjustLastItemQty = async function(delta) {
+            if (!lastScannedEntryId) return;
+            const newQty = Math.max(0, lastScannedItemCurrentQty + delta);
+            lastScannedItemCurrentQty = newQty;
+            const badge = document.getElementById('scan-badge-qty');
+            if (badge) badge.textContent = newQty;
+
+            try {
+                const res = await fetch('/api/stock/update-qty', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        entry_id: lastScannedEntryId,
+                        counted_qty: newQty,
+                        store_no: currentStoreNo
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    playBeep(true);
+                    await loadStoreItems(false);
+                }
+            } catch(e) {
+                console.error('Adjust qty error:', e);
+            }
+        };
+
+        // إرسال كود ممسوح للسيرفر بنظام طمني السريع
         async function submitScannedCode(rawCode) {
             const code = String(rawCode || '').trim();
             if (!code) return;
 
             const now = Date.now();
-            if (code === lastScannedCode && (now - lastScanTimestamp) < 1200) return;
+            if (code === lastScannedCode && (now - lastScanTimestamp) < 1000) return;
             lastScannedCode = code;
             lastScanTimestamp = now;
 
             triggerSuccessFlash();
+            if (navigator.vibrate) {
+                try { navigator.vibrate([40, 25, 40]); } catch(e) {}
+            }
+
+            // وميض المربع التهديفي لطمني باللون الأخضر النيون
+            const reticle = document.getElementById('tameni-reticle-box');
+            if (reticle) {
+                reticle.classList.add('active-hit');
+                setTimeout(() => reticle.classList.remove('active-hit'), 350);
+            }
 
             const lblStatus = document.getElementById('scan-status-label');
             const dotStatus = document.getElementById('scan-status-dot');
             const lblName = document.getElementById('scan-product-name');
             const lblCode = document.getElementById('scan-product-code');
+            const lblBatch = document.getElementById('scan-product-batch');
+            const lblExp = document.getElementById('scan-product-exp');
             const lblTime = document.getElementById('scan-time-label');
+            const badgeQty = document.getElementById('scan-badge-qty');
 
-            if (lblStatus) lblStatus.textContent = 'جاري الإرسال والمزامنة...';
-            if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping';
+            if (lblStatus) lblStatus.textContent = '⚡ سحب العبوة...';
+            if (dotStatus) dotStatus.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping';
             if (lblTime) lblTime.textContent = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
             try {
                 const payload = {
                     code: code,
                     target: currentTarget,
-                    store_no: currentStoreNo
+                    store_no: currentStoreNo,
+                    force_direct: true
                 };
 
                 const res = await fetch('/api/mobile/scan', {
@@ -769,29 +929,44 @@
 
                 if (data.success) {
                     playBeep(true);
-                    if (lblStatus) lblStatus.textContent = '✓ تم الجرد والمزامنة بنجاح';
-                    if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-emerald-400';
+                    if (lblStatus) lblStatus.textContent = '✓ تم السحب والمزامنة بنجاح';
+                    if (dotStatus) dotStatus.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
                     
                     const prodName = data.product_name || (data.product && data.product.name) || code;
                     const prodCode = data.product_code || (data.product && data.product.code) || code;
-                    const batch = data.batch || '';
+                    const batch = data.batch_number || data.batch || '';
+                    const exp = data.expiry_date || data.expiry || '';
 
                     if (lblName) lblName.textContent = prodName;
-                    if (lblCode) lblCode.textContent = `الكود: ${prodCode} ${batch ? '| تشغيلة: ' + batch : ''}`;
+                    if (lblCode) lblCode.textContent = `كود: ${prodCode}`;
+                    if (lblBatch) lblBatch.textContent = batch ? ` | تشغيلة: ${batch}` : '';
+                    if (lblExp) lblExp.textContent = exp ? ` | صلاحية: ${exp}` : '';
 
-                    // تحديث قائمة الأصناف فوراً
+                    // حفظ معرف السجل وتحديث العداد
+                    if (data.entry_id) {
+                        lastScannedEntryId = data.entry_id;
+                        lastScannedItemCurrentQty = parseFloat(data.counted_qty || 1);
+                        if (badgeQty) badgeQty.textContent = lastScannedItemCurrentQty;
+                    }
+
+                    // تحديث قائمة الأصناف وإجمالي الجرد فوراً
                     await loadStoreItems(false);
+                    const hudTotal = document.getElementById('stat-hud-total-qty');
+                    const storeTotal = document.getElementById('stat-counted-qty');
+                    if (hudTotal && storeTotal) {
+                        hudTotal.textContent = storeTotal.textContent;
+                    }
                 } else {
                     playBeep(false);
                     if (lblStatus) lblStatus.textContent = '⚠️ ' + (data.message || 'تنبيه في الصنف');
-                    if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-rose-400';
+                    if (dotStatus) dotStatus.className = 'w-2.5 h-2.5 rounded-full bg-rose-400';
                     if (lblName) lblName.textContent = data.message || 'لم يتم احتساب الصنف';
                     if (lblCode) lblCode.textContent = `الكود: ${code}`;
                 }
             } catch (err) {
                 playBeep(false);
                 if (lblStatus) lblStatus.textContent = '❌ خطأ في الاتصال';
-                if (dotStatus) dotStatus.className = 'w-2 h-2 rounded-full bg-rose-500';
+                if (dotStatus) dotStatus.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
                 if (lblName) lblName.textContent = err.message || 'تعذر الاتصال بالسيرفر';
             }
         }
@@ -901,11 +1076,12 @@
             };
 
             const scanConfig = {
-                fps: 20,
-                qrbox: (w, h) => ({
-                    width: Math.floor(w * 0.94),
-                    height: Math.floor(h * 0.94)
-                }),
+                fps: 22,
+                qrbox: (w, h) => {
+                    const minE = Math.min(w, h);
+                    const size = Math.floor(minE * 0.72);
+                    return { width: size, height: size };
+                },
                 aspectRatio: undefined,
                 disableFlip: false
             };

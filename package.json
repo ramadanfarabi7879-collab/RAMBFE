@@ -1,0 +1,13 @@
+{
+  "name": "rambfe",
+  "version": "1.0.0",
+  "description": "Invoice Matcher & Pharmacy Stocktake Cloudflare Worker",
+  "main": "worker.js",
+  "scripts": {
+    "build": "echo 'Build complete'",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.88.0"
+  }
+}

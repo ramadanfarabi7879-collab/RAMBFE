@@ -2852,6 +2852,12 @@ async function handleCameraDecodedText(decodedText) {
     playAppScannerBeep(true);
     triggerCameraFlashFeedback();
 
+    const modalReticle = document.getElementById('tameni-reticle-modal');
+    if (modalReticle) {
+        modalReticle.classList.add('active-hit');
+        setTimeout(() => modalReticle.classList.remove('active-hit'), 350);
+    }
+
     const isContinuous = document.getElementById('chk-camera-continuous')?.checked ?? true;
     const lastResBox = document.getElementById('camera-modal-last-result');
     const lastResText = document.getElementById('camera-modal-last-text');
@@ -2895,19 +2901,28 @@ async function handleCameraDecodedText(decodedText) {
                 body: JSON.stringify({
                     code: raw,
                     qr_text: raw,
-                    store_no: currentActiveStoreNo || 'ST-001'
+                    store_no: currentActiveStoreNo || 'ST-001',
+                    force_direct: isContinuous
                 })
             });
             const data = await res.json();
             if (data.success) {
-                if (data.requires_batch_entry) {
+                if (data.requires_batch_entry && !isContinuous) {
                     stopCamera();
                     document.getElementById('modal-camera-scanner')?.classList.add('hidden');
                     openBatchEntryCard(data);
                 } else {
+                    if (data.store_details) {
+                        renderCurrentStoreDetails(data.store_details);
+                    } else {
+                        await loadCurrentStoreItems();
+                    }
                     await loadStocktakeStores();
-                    await loadCurrentStoreItems();
                     showCatalogToast(`⚡ تم سحب العبوة للجرد (+1): ${data.product_name || raw}`);
+                    if (lastResBox && lastResText) {
+                        lastResText.innerHTML = `<span class="text-emerald-700 font-bold">${data.product_name || raw}</span> | كمية: <span class="bg-emerald-600 text-white px-2 py-0.5 rounded font-black">${data.counted_qty || 1}</span>`;
+                        lastResBox.classList.remove('hidden');
+                    }
                 }
             } else {
                 playAppScannerBeep(false);
@@ -3025,11 +3040,12 @@ function initHtml5ScannerInstance() {
     };
 
     const scanConfig = {
-        fps: 20,
-        qrbox: (w, h) => ({
-            width: Math.floor(w * 0.94),
-            height: Math.floor(h * 0.94)
-        }),
+        fps: 22,
+        qrbox: (w, h) => {
+            const minE = Math.min(w, h);
+            const size = Math.floor(minE * 0.72);
+            return { width: size, height: size };
+        },
         aspectRatio: undefined,
         disableFlip: false
     };
@@ -6175,7 +6191,12 @@ function updateBecRowCalc(inputEl) {
     }
 }
 
+let wasCameraActiveBeforeBatch = false;
+
 function openBatchEntryCard(data) {
+    if (html5QrScannerInstance) {
+        wasCameraActiveBeforeBatch = true;
+    }
     currentActiveBatchCardData = data;
     const card = document.getElementById('stk-batch-entry-card');
     if (!card) return;
@@ -6375,6 +6396,13 @@ function closeBatchEntryCard() {
     if (scanInput) {
         scanInput.focus();
         scanInput.select();
+    }
+    // إذا كانت الكاميرا مفعلة سابقاً: إعادة فتح كاميرا طمني تلقائياً لمواصلة سحب العلب
+    if (wasCameraActiveBeforeBatch) {
+        wasCameraActiveBeforeBatch = false;
+        setTimeout(() => {
+            openCameraModal('stocktake');
+        }, 150);
     }
 }
 

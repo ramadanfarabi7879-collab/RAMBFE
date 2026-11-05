@@ -1208,7 +1208,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
                 res = {}
                 if target == 'stocktake':
-                    res = scan_item_to_store(code, store_no=store_no, force_direct=False)
+                    force_direct = bool(data.get('force_direct', True))
+                    res = scan_item_to_store(code, store_no=store_no, force_direct=force_direct)
                 else:
                     if not inv_id:
                         draft = get_or_create_draft_invoice()

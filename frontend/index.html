@@ -1791,11 +1791,25 @@
                 </div>
             </div>
 
-            <!-- حاوية الكاميرا مع مؤشر الليزر -->
-            <div class="relative w-full aspect-video sm:aspect-square max-h-[50vh] bg-black rounded-xl overflow-hidden shadow-inner flex items-center justify-center cursor-pointer" id="camera-viewport-touch-area" title="المس الشاشة لضبط التركيز التلقائي (Autofocus)">
+            <!-- حاوية الكاميرا مع مؤشر ومربع طمني التهديفي -->
+            <div class="relative w-full aspect-video sm:aspect-square max-h-[50vh] bg-black rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center cursor-pointer border border-slate-700" id="camera-viewport-touch-area" title="المس الشاشة لضبط التركيز التلقائي (Autofocus)">
                 <div id="camera-reader-viewport" class="w-full h-full object-cover"></div>
-                <!-- وميض الليزر التوجيهي -->
-                <div class="absolute left-4 right-4 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_8px_#22c55e] animate-pulse pointer-events-none z-10"></div>
+                
+                <!-- طبقة التعتيم والمربع التهديفي لتطبيق طمني (Tameni Reticle) -->
+                <div class="tameni-overlay-mask">
+                    <div id="tameni-reticle-modal" class="tameni-reticle">
+                        <div class="tameni-badge">
+                            <span class="animate-pulse text-emerald-400">⚡</span>
+                            <span>وجّه كود العلبة (DataMatrix) هنا</span>
+                        </div>
+                        <div class="tameni-corner tr"></div>
+                        <div class="tameni-corner tl"></div>
+                        <div class="tameni-corner br"></div>
+                        <div class="tameni-corner bl"></div>
+                        <div class="tameni-laser"></div>
+                    </div>
+                </div>
+
                 <!-- وميض السحب الناجح الأخضر عند التقاط الداتاماتريكس/الباركود -->
                 <div id="camera-scan-flash-overlay" class="hidden absolute inset-0 bg-emerald-500/50 backdrop-blur-[1px] pointer-events-none z-30 transition-all duration-300 flex items-center justify-center">
                     <span class="text-3xl sm:text-4xl filter drop-shadow-md animate-bounce">⚡</span>
@@ -1818,10 +1832,10 @@
                     </div>
                 </div>
                 <!-- وسوم الصيغ المدعومة -->
-                <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9px] font-bold text-white bg-slate-900/80 backdrop-blur py-1 px-2 rounded-lg pointer-events-none z-20">
-                    <span class="text-emerald-400">● باركود محلي وعالمي</span>
+                <div class="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 text-[9px] font-bold text-white bg-slate-900/80 backdrop-blur py-1 px-2 rounded-lg pointer-events-none z-30">
+                    <span class="text-emerald-400">● داتاماتريكس دولي (GS1)</span>
                     <span class="text-sky-400">● كود QR</span>
-                    <span class="text-amber-400">● GS1 DataMatrix دولي</span>
+                    <span class="text-amber-400">● باركود 1D</span>
                 </div>
             </div>
 
