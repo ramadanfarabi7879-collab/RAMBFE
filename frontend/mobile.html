@@ -505,7 +505,13 @@
                         <p class="text-[10px] text-slate-400">حدد الكمية الفعلية ثم اضغط اعتماد</p>
                     </div>
                 </div>
-                <button type="button" id="btn-close-mobile-batch-modal" class="text-slate-400 hover:text-white text-lg font-bold p-1">✕</button>
+                <div class="flex items-center gap-1.5">
+                    <button type="button" id="btn-add-mobile-extra-batch" class="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-[11px] flex items-center gap-1 shadow transition">
+                        <span>+</span>
+                        <span>تشغيلة</span>
+                    </button>
+                    <button type="button" id="btn-close-mobile-batch-modal" class="text-slate-400 hover:text-white text-lg font-bold p-1">✕</button>
+                </div>
             </div>
 
             <!-- بيانات الصنف -->
@@ -875,43 +881,76 @@
         async function commitMobileAllBatches() {
             if (!activeMobileBatchData) return;
             const prod = activeMobileBatchData.product || {};
-            const inputs = Array.from(document.querySelectorAll('.mb-batch-row-qty'));
+            const rows = Array.from(document.querySelectorAll('.mb-batch-row'));
+            const rowsToSave = [];
 
-            let savedCount = 0;
-            for (const inp of inputs) {
-                const val = inp.value.trim();
+            for (const row of rows) {
+                const qtyInp = row.querySelector('.mb-batch-row-qty');
+                if (!qtyInp) continue;
+                const val = qtyInp.value.trim();
                 const countedQty = parseFloat(val);
 
-                // قاعدة هامة جداً: إذا كانت الكمية صفر أو فارغة، لا يتم تسجيل سطر في فاتورة الجرد إطلاقاً
+                // إذا كانت الكمية صفر أو فارغة، نتخطى السطر
                 if (isNaN(countedQty) || countedQty <= 0) {
                     continue;
                 }
 
-                const batchNo = inp.dataset.batch || '';
-                const expDate = inp.dataset.expiry || '';
-                const sysQty = parseFloat(inp.dataset.sys) || 0;
-                const cost = parseFloat(inp.dataset.cost) || 0;
-                const sale = parseFloat(inp.dataset.sale) || 0;
+                const batchInp = row.querySelector('.mb-batch-row-batch');
+                const expiryInp = row.querySelector('.mb-batch-row-expiry');
 
+                let batchNo = batchInp ? batchInp.value.trim() : (qtyInp.dataset.batch || '');
+                let expDate = expiryInp ? normalizeExpiryDate(expiryInp.value.trim()) : (qtyInp.dataset.expiry || '');
+
+                if (batchInp) batchInp.value = batchNo;
+                if (expiryInp) expiryInp.value = expDate;
+
+                if (!batchNo || batchNo === '-') {
+                    const idx = parseInt(qtyInp.dataset.index || '0', 10);
+                    batchNo = generateDefaultBatchNumber(idx);
+                    if (batchInp) batchInp.value = batchNo;
+                }
+
+                // إلزامية إدخال الصلاحية يدوياً
+                if (!expDate || expDate === '-') {
+                    playBeep(false);
+                    if (expiryInp) {
+                        expiryInp.classList.add('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                        expiryInp.focus();
+                        expiryInp.select();
+                        expiryInp.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                    alert('⚠️ يرجى إدخال تاريخ الصلاحية (الاكسبير) للصنف أولاً');
+                    return;
+                }
+
+                rowsToSave.push({
+                    store_no: currentStoreNo,
+                    product_code: prod.code || '',
+                    entry_id: qtyInp.dataset.entryId ? parseInt(qtyInp.dataset.entryId) : null,
+                    batch_number: batchNo,
+                    expiry_date: expDate,
+                    counted_qty: countedQty,
+                    system_qty: parseFloat(qtyInp.dataset.sys) || 0,
+                    cost_price: parseFloat(qtyInp.dataset.cost) || 0,
+                    selling_price: parseFloat(qtyInp.dataset.sale) || 0
+                });
+            }
+
+            if (rowsToSave.length === 0) {
+                closeMobileBatchModal(true);
+                return;
+            }
+
+            let savedCount = 0;
+            for (const rData of rowsToSave) {
                 try {
                     const res = await fetch('/api/stock/save-batch-qty', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            store_no: currentStoreNo,
-                            product_code: prod.code || '',
-                            batch_number: batchNo,
-                            expiry_date: expDate,
-                            counted_qty: countedQty,
-                            system_qty: sysQty,
-                            cost_price: cost,
-                            selling_price: sale
-                        })
+                        body: JSON.stringify(rData)
                     });
                     const data = await res.json();
-                    if (data.success) {
-                        savedCount++;
-                    }
+                    if (data.success) savedCount++;
                 } catch(e) {
                     console.error('Save batch qty error:', e);
                 }
@@ -923,11 +962,12 @@
                 await loadStoreItems(false);
             }
 
-            // إغلاق النافذة والعودة فوراً وتلقائياً للكاميرا كما طلب المستخدم
+            // إغلاق النافذة والعودة فوراً وتلقائياً للكاميرا
             closeMobileBatchModal(true);
         }
 
         document.getElementById('btn-confirm-mobile-batch-qty')?.addEventListener('click', commitMobileAllBatches);
+        document.getElementById('btn-add-mobile-extra-batch')?.addEventListener('click', addMobileExtraBatchRow);
         document.getElementById('btn-close-mobile-batch-modal')?.addEventListener('click', () => closeMobileBatchModal(true));
         document.getElementById('btn-cancel-mobile-batch-qty')?.addEventListener('click', () => closeMobileBatchModal(true));
 
@@ -1090,82 +1130,370 @@
 
         let activeMobileBatchData = null;
 
-        function openMobileBatchModal(data) {
-            activeMobileBatchData = data;
-            const modal = document.getElementById('modal-mobile-batch-entry');
-            if (!modal) return;
+        function generateDefaultBatchNumber(index = 0) {
+            const now = new Date();
+            const yy = String(now.getFullYear()).slice(-2);
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const seq = String(index + 1).padStart(2, '0');
+            return `B${yy}${mm}-${seq}`;
+        }
+
+        function normalizeExpiryDate(str_val) {
+            if (!str_val) return '';
+            let val = String(str_val).trim();
+            val = val.replace(/[\s./\\]+/g, '-').replace(/^-+|-+$/g, '');
+            if (!val || val === '-') return '';
+
+            // Standard ISO already: YYYY-MM-DD or YYYY-MM
+            if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+            if (/^\d{4}-\d{2}$/.test(val)) return val;
+
+            // D-M-YYYY or DD-MM-YYYY (e.g. 1-1-2028, 01-01-2028, 15-10-2027)
+            let m = val.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+            if (m) {
+                let d = parseInt(m[1], 10);
+                let mo = parseInt(m[2], 10);
+                let y = m[3];
+                if (mo > 12 && d <= 12) {
+                    let tmp = d; d = mo; mo = tmp;
+                }
+                return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            }
+
+            // D-M-YY or DD-MM-YY (e.g. 1-1-28, 01-01-28)
+            m = val.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/);
+            if (m) {
+                let d = parseInt(m[1], 10);
+                let mo = parseInt(m[2], 10);
+                let y = '20' + m[3];
+                if (mo > 12 && d <= 12) {
+                    let tmp = d; d = mo; mo = tmp;
+                }
+                return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            }
+
+            // 8 digits pure numbers (DDMMYYYY e.g. 01012028 or YYYYMMDD e.g. 20280101)
+            if (/^\d{8}$/.test(val)) {
+                if (val.startsWith('20') && parseInt(val.slice(4, 6), 10) <= 12 && parseInt(val.slice(6, 8), 10) <= 31) {
+                    return `${val.slice(0, 4)}-${val.slice(4, 6)}-${val.slice(6, 8)}`;
+                } else {
+                    let d = val.slice(0, 2);
+                    let mo = val.slice(2, 4);
+                    let y = val.slice(4, 8);
+                    return `${y}-${mo}-${d}`;
+                }
+            }
+
+            // 7 digits (e.g. 1012028 -> 1-01-2028)
+            if (/^\d{7}$/.test(val)) {
+                let d = '0' + val.slice(0, 1);
+                let mo = val.slice(1, 3);
+                let y = val.slice(3, 7);
+                if (parseInt(mo, 10) <= 12) {
+                    return `${y}-${mo}-${d}`;
+                }
+            }
+
+            // MM-YYYY (e.g. 10-2027 or 01-2028)
+            m = val.match(/^(\d{1,2})-(\d{4})$/);
+            if (m) {
+                return `${m[2]}-${m[1].padStart(2, '0')}`;
+            }
+
+            // MM-YY (e.g. 10-27 or 01-28)
+            m = val.match(/^(\d{1,2})-(\d{2})$/);
+            if (m) {
+                return `20${m[2]}-${m[1].padStart(2, '0')}`;
+            }
+
+            // 6 digits pure numbers (YYYYMM or MMYYYY or DDMMYY)
+            if (/^\d{6}$/.test(val)) {
+                if (val.startsWith('20')) {
+                    let y = val.slice(0, 4);
+                    let mo = val.slice(4, 6);
+                    if (parseInt(mo, 10) <= 12) return `${y}-${mo}`;
+                }
+                if (val.endsWith('2026') || val.endsWith('2027') || val.endsWith('2028') || val.endsWith('2029') || val.endsWith('2030')) {
+                    let mo = val.slice(0, 2);
+                    let y = val.slice(2, 6);
+                    return `${y}-${mo}`;
+                }
+                let d = val.slice(0, 2);
+                let mo = val.slice(2, 4);
+                let y = '20' + val.slice(4, 6);
+                if (parseInt(d, 10) <= 31 && parseInt(mo, 10) <= 12) {
+                    return `${y}-${mo}-${d}`;
+                }
+            }
+
+            // 4 digits pure numbers (MMYY or YYMM)
+            if (/^\d{4}$/.test(val)) {
+                let p1 = parseInt(val.slice(0, 2), 10);
+                let p2 = parseInt(val.slice(2, 4), 10);
+                if (p1 >= 1 && p1 <= 12 && p2 >= 24 && p2 <= 40) {
+                    return `20${val.slice(2, 4)}-${val.slice(0, 2)}`;
+                } else if (p1 >= 24 && p1 <= 40 && p2 >= 1 && p2 <= 12) {
+                    return `20${val.slice(0, 2)}-${val.slice(2, 4)}`;
+                }
+            }
+
+            return val;
+        }
+
+        function addMobileExtraBatchRow() {
+            if (!activeMobileBatchData) return;
+            if (!activeMobileBatchData.batches) activeMobileBatchData.batches = [];
+
+            const newIdx = activeMobileBatchData.batches.length;
+            const prod = activeMobileBatchData.product || {};
+
+            activeMobileBatchData.batches.push({
+                batch_number: generateDefaultBatchNumber(newIdx),
+                expiry_date: '',
+                system_qty: 0,
+                counted_qty: 0,
+                cost_price: Number(prod.cost_price || prod.cost || 0),
+                selling_price: Number(prod.selling_price || prod.price || 0),
+                entry_id: null,
+                is_new_batch: 1,
+                is_manual_batch: 1,
+                requires_manual_entry: true,
+                is_dynamic_added: true
+            });
+
+            renderMobileBatchList(activeMobileBatchData);
+
+            setTimeout(() => {
+                const newExpInp = document.querySelector(`#mb-batch-row-${newIdx} .mb-batch-row-expiry`);
+                if (newExpInp) {
+                    newExpInp.focus();
+                    newExpInp.select();
+                    newExpInp.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            }, 60);
+        }
+
+        window.deleteMobileExtraBatchRow = function(idx) {
+            if (activeMobileBatchData && activeMobileBatchData.batches && activeMobileBatchData.batches[idx]) {
+                activeMobileBatchData.batches.splice(idx, 1);
+                renderMobileBatchList(activeMobileBatchData);
+            }
+        };
+
+        function renderMobileBatchList(data) {
+            const listContainer = document.getElementById('mb-batch-rows-list');
+            if (!listContainer || !data) return;
 
             const prod = data.product || {};
             const batches = data.batches || [];
 
-            const lblName = document.getElementById('mb-batch-prod-name');
-            const lblCode = document.getElementById('mb-batch-prod-code');
-            const lblBarcode = document.getElementById('mb-batch-prod-barcode');
-            const listContainer = document.getElementById('mb-batch-rows-list');
-
-            if (lblName) lblName.textContent = prod.name || prod.code || 'صنف باركود';
-            if (lblCode) lblCode.textContent = prod.code || '-';
-            if (lblBarcode) lblBarcode.textContent = prod.barcode || prod.gtin || '-';
-
             const effectiveBatches = batches.length > 0 ? batches : [{
-                batch_number: '',
+                batch_number: generateDefaultBatchNumber(0),
                 expiry_date: '',
                 system_qty: 0,
+                counted_qty: 0,
                 cost_price: prod.cost || 0,
-                selling_price: prod.price || 0
+                selling_price: prod.price || 0,
+                is_new_batch: 1,
+                is_manual_batch: 1,
+                requires_manual_entry: true
             }];
 
-            if (listContainer) {
-                listContainer.innerHTML = effectiveBatches.map((b, idx) => {
-                    const sysQty = Number(b.system_qty || 0);
-                    const cost = Number(b.cost_price || prod.cost || 0);
-                    const sale = Number(b.selling_price || prod.price || 0);
-                    const isFirst = (idx === 0);
+            listContainer.innerHTML = effectiveBatches.map((b, idx) => {
+                const sysQty = Number(b.system_qty || 0);
+                const cost = Number(b.cost_price || prod.cost || 0);
+                const sale = Number(b.selling_price || prod.price || 0);
+                const isFirst = (idx === 0);
 
-                    return `
-                        <div class="mb-batch-row p-2.5 rounded-xl bg-slate-950 border border-slate-800 transition space-y-1.5" id="mb-batch-row-${idx}">
-                            <div class="flex items-center justify-between text-xs">
-                                <div class="flex items-center gap-1.5">
-                                    <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono font-bold text-[11px] border border-indigo-500/30">
-                                        ${b.batch_number ? b.batch_number : 'بدون تشغيلة'}
-                                    </span>
-                                    <span class="text-[10px] text-slate-400 font-mono">صلاحية: ${b.expiry_date || '-'}</span>
-                                </div>
-                                <div class="text-[10px] text-slate-300 font-mono">
-                                    رصيد السيستم: <strong class="text-white">${sysQty}</strong>
-                                </div>
+                const isEditable = Boolean(b.is_new_batch || b.requires_manual_entry || b.is_manual_batch || !b.batch_number || b.batch_number === '-' || !b.expiry_date || b.expiry_date === '-' || b.force_edit);
+                const defaultBatch = (b.batch_number && b.batch_number !== '-') ? b.batch_number : generateDefaultBatchNumber(idx);
+                const expiryVal = (b.expiry_date && b.expiry_date !== '-') ? b.expiry_date : '';
+
+                const batchBadge = isEditable
+                    ? `<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-bold text-[11px] border border-amber-500/30">⚠️ تشغيلة جديدة</span>`
+                    : `<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold text-[11px] border border-emerald-500/30">مطابق ✅</span>`;
+
+                const deleteRowBtn = (b.is_dynamic_added && effectiveBatches.length > 1)
+                    ? `<button type="button" onclick="deleteMobileExtraBatchRow(${idx})" class="text-rose-400 hover:text-rose-300 text-xs p-1" title="حذف التشغيلة">🗑️</button>`
+                    : '';
+
+                const batchField = isEditable
+                    ? `<div class="flex-1">
+                         <label class="block text-[10px] text-indigo-300 font-bold mb-1">رقم التشغيلة (Batch):</label>
+                         <input type="text"
+                                class="mb-batch-row-batch w-full py-1.5 px-2 rounded-lg bg-slate-900 border border-indigo-500/50 text-indigo-200 font-mono font-bold text-xs text-center focus:border-indigo-400 focus:bg-slate-800 outline-none transition"
+                                data-index="${idx}"
+                                value="${(defaultBatch || '').replace(/"/g, '&quot;')}"
+                                placeholder="رقم التشغيلة"
+                                dir="ltr"
+                                enterkeyhint="next">
+                       </div>`
+                    : `<div class="flex-1">
+                         <label class="block text-[10px] text-slate-400 font-bold mb-1">رقم التشغيلة (Batch):</label>
+                         <div class="py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 text-indigo-300 font-mono font-bold text-xs text-center">
+                             ${b.batch_number || '-'}
+                         </div>
+                       </div>`;
+
+                const expiryField = isEditable
+                    ? `<div class="flex-1">
+                         <div class="flex items-center justify-between mb-1">
+                             <label class="text-[10px] text-amber-300 font-bold">الصلاحية (Exp):</label>
+                             ${!expiryVal ? '<span class="text-[9px] text-amber-400 font-bold">مطلوب ⚠️</span>' : ''}
+                         </div>
+                         <input type="text"
+                                class="mb-batch-row-expiry w-full py-1.5 px-2 rounded-lg ${!expiryVal ? 'border-2 border-amber-400 bg-amber-950/40 text-amber-200' : 'border border-slate-700 bg-slate-900 text-white'} font-mono font-bold text-xs text-center focus:border-amber-400 focus:bg-slate-800 outline-none transition"
+                                data-index="${idx}"
+                                value="${(expiryVal || '').replace(/"/g, '&quot;')}"
+                                placeholder="مثال 01012028 أو 1-1-2028"
+                                dir="ltr"
+                                enterkeyhint="next">
+                       </div>`
+                    : `<div class="flex-1">
+                         <label class="block text-[10px] text-slate-400 font-bold mb-1">الصلاحية (Exp):</label>
+                         <div class="py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 text-slate-300 font-mono font-bold text-xs text-center">
+                             ${b.expiry_date || '-'}
+                         </div>
+                       </div>`;
+
+                return `
+                    <div class="mb-batch-row p-3 rounded-xl bg-slate-950 border border-slate-800 transition space-y-2.5" id="mb-batch-row-${idx}">
+                        <div class="flex items-center justify-between text-xs">
+                            <div class="flex items-center gap-2">
+                                ${batchBadge}
+                                ${deleteRowBtn}
                             </div>
-                            <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-900">
-                                <span class="text-xs font-bold text-amber-300">الكمية الفعلية:</span>
-                                <div class="flex items-center gap-1.5">
-                                    <button type="button" onclick="stepMbBatchRow(${idx}, -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-300 font-bold text-lg flex items-center justify-center border border-slate-700 active:scale-95 transition">-</button>
-                                    <input type="number" step="any" min="0"
-                                           class="mb-batch-row-qty w-20 py-1 px-1 rounded-lg bg-slate-900 border-2 border-emerald-500 text-white text-center font-mono font-black text-base focus:border-amber-400 focus:bg-slate-800 outline-none"
-                                           data-index="${idx}"
-                                           data-batch="${(b.batch_number || '').replace(/"/g, '&quot;')}"
-                                           data-expiry="${(b.expiry_date || '').replace(/"/g, '&quot;')}"
-                                           data-sys="${sysQty}"
-                                           data-cost="${cost}"
-                                           data-sale="${sale}"
-                                           value="${isFirst ? '1' : '0'}"
-                                           placeholder="0"
-                                           tabindex="${idx + 1}"
-                                           enterkeyhint="${idx < effectiveBatches.length - 1 ? 'next' : 'done'}"
-                                           inputmode="decimal">
-                                    <button type="button" onclick="stepMbBatchRow(${idx}, 1)" class="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-lg flex items-center justify-center active:scale-95 transition">+</button>
-                                </div>
+                            <div class="text-[10px] text-slate-300 font-mono">
+                                رصيد السيستم: <strong class="text-white">${sysQty}</strong>
                             </div>
                         </div>
-                    `;
-                }).join('');
-            }
 
-            modal.classList.remove('hidden');
+                        <div class="flex items-center gap-2">
+                            ${batchField}
+                            ${expiryField}
+                        </div>
 
-            const allInputs = Array.from(document.querySelectorAll('.mb-batch-row-qty'));
-            allInputs.forEach((inp, idx) => {
+                        <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-900">
+                            <span class="text-xs font-bold text-emerald-400">الكمية الفعلية (الجرد):</span>
+                            <div class="flex items-center gap-1.5">
+                                <button type="button" onclick="stepMbBatchRow(${idx}, -1)" class="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-rose-300 font-bold text-lg flex items-center justify-center border border-slate-700 transition">-</button>
+                                <input type="number" step="any" min="0"
+                                       class="mb-batch-row-qty w-24 py-1.5 px-1 rounded-lg bg-slate-900 border-2 border-emerald-500 text-white text-center font-mono font-black text-base focus:border-amber-400 focus:bg-slate-800 outline-none"
+                                       data-index="${idx}"
+                                       data-batch="${(b.batch_number || '').replace(/"/g, '&quot;')}"
+                                       data-expiry="${(b.expiry_date || '').replace(/"/g, '&quot;')}"
+                                       data-sys="${sysQty}"
+                                       data-cost="${cost}"
+                                       data-sale="${sale}"
+                                       value="${b.counted_qty > 0 ? b.counted_qty : ''}"
+                                       placeholder="أدخل..."
+                                       tabindex="${(idx + 1) * 3}"
+                                       enterkeyhint="${idx < effectiveBatches.length - 1 ? 'next' : 'done'}"
+                                       inputmode="decimal">
+                                <button type="button" onclick="stepMbBatchRow(${idx}, 1)" class="w-9 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-lg flex items-center justify-center transition">+</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            attachMobileBatchRowEvents(data);
+        }
+
+        function attachMobileBatchRowEvents(data) {
+            const listContainer = document.getElementById('mb-batch-rows-list');
+            if (!listContainer) return;
+
+            // 1. حقول رقم التشغيلة
+            listContainer.querySelectorAll('.mb-batch-row-batch').forEach(batchInp => {
+                const idx = parseInt(batchInp.dataset.index, 10);
+                const handleStep = (e) => {
+                    const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter');
+                    const isTab = (e.key === 'Tab' || e.keyCode === 9) && !e.shiftKey;
+                    const isDown = (e.key === 'ArrowDown' || e.keyCode === 40);
+                    if (isEnter || isTab || isDown) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const row = document.getElementById(`mb-batch-row-${idx}`);
+                        const expInp = row?.querySelector('.mb-batch-row-expiry');
+                        const qtyInp = row?.querySelector('.mb-batch-row-qty');
+                        const target = expInp || qtyInp;
+                        if (target) {
+                            target.focus();
+                            target.select();
+                        }
+                    }
+                };
+                batchInp.addEventListener('keydown', handleStep);
+                batchInp.addEventListener('beforeinput', (e) => {
+                    if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+                        e.preventDefault();
+                        const row = document.getElementById(`mb-batch-row-${idx}`);
+                        const expInp = row?.querySelector('.mb-batch-row-expiry');
+                        const qtyInp = row?.querySelector('.mb-batch-row-qty');
+                        const target = expInp || qtyInp;
+                        if (target) {
+                            target.focus();
+                            target.select();
+                        }
+                    }
+                });
+            });
+
+            // 2. حقول تاريخ الصلاحية
+            listContainer.querySelectorAll('.mb-batch-row-expiry').forEach(expInp => {
+                const idx = parseInt(expInp.dataset.index, 10);
+
+                expInp.addEventListener('blur', () => {
+                    expInp.value = normalizeExpiryDate(expInp.value);
+                    if (expInp.value) {
+                        expInp.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                    }
+                });
+
+                const handleExpiryStep = (e) => {
+                    const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter');
+                    const isTab = (e.key === 'Tab' || e.keyCode === 9) && !e.shiftKey;
+                    const isDown = (e.key === 'ArrowDown' || e.keyCode === 40);
+
+                    if (isEnter || isTab || isDown) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        expInp.value = normalizeExpiryDate(expInp.value);
+                        if (expInp.value) {
+                            expInp.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                        }
+                        const row = document.getElementById(`mb-batch-row-${idx}`);
+                        const qtyInp = row?.querySelector('.mb-batch-row-qty');
+                        if (qtyInp) {
+                            qtyInp.focus();
+                            qtyInp.select();
+                        }
+                    }
+                };
+                expInp.addEventListener('keydown', handleExpiryStep);
+                expInp.addEventListener('beforeinput', (e) => {
+                    if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+                        e.preventDefault();
+                        expInp.value = normalizeExpiryDate(expInp.value);
+                        if (expInp.value) {
+                            expInp.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                        }
+                        const row = document.getElementById(`mb-batch-row-${idx}`);
+                        const qtyInp = row?.querySelector('.mb-batch-row-qty');
+                        if (qtyInp) {
+                            qtyInp.focus();
+                            qtyInp.select();
+                        }
+                    }
+                });
+            });
+
+            // 3. حقول الكمية الفعلية والتنقل والاعتماد
+            const allQtyInputs = Array.from(listContainer.querySelectorAll('.mb-batch-row-qty'));
+            allQtyInputs.forEach((inp, idx) => {
                 inp.addEventListener('focus', () => {
-                    allInputs.forEach((otherInp, j) => {
+                    allQtyInputs.forEach((otherInp, j) => {
                         const r = document.getElementById(`mb-batch-row-${j}`);
                         if (r) {
                             if (idx === j) {
@@ -1177,35 +1505,86 @@
                     });
                 });
 
-                inp.addEventListener('keydown', async (e) => {
+                const handleQtyStep = async (e) => {
                     const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter' || e.code === 'NumpadEnter');
                     const isTab = (e.key === 'Tab' || e.keyCode === 9) && !e.shiftKey;
+
                     if (isEnter || isTab) {
                         e.preventDefault();
                         e.stopPropagation();
-                        if (idx < allInputs.length - 1) {
-                            // يوجد باتشات أخرى للصنف: انتقال للباتش التالي دون اعتماد
-                            const nextInp = allInputs[idx + 1];
-                            if (nextInp) {
-                                nextInp.focus();
-                                nextInp.select();
+
+                        const row = document.getElementById(`mb-batch-row-${idx}`);
+                        const expInp = row?.querySelector('.mb-batch-row-expiry');
+                        const countedVal = parseFloat(inp.value || '0');
+
+                        if (countedVal > 0 && expInp) {
+                            const normalized = normalizeExpiryDate(expInp.value);
+                            expInp.value = normalized;
+                            if (!normalized) {
+                                playBeep(false);
+                                expInp.classList.add('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                                expInp.focus();
+                                expInp.select();
+                                alert('⚠️ يرجى إدخال تاريخ الصلاحية (الاكسبير) للصنف أولاً');
+                                return;
+                            }
+                        }
+
+                        if (idx < allQtyInputs.length - 1) {
+                            const nextRow = document.getElementById(`mb-batch-row-${idx + 1}`);
+                            const nextExp = nextRow?.querySelector('.mb-batch-row-expiry');
+                            const nextQty = nextRow?.querySelector('.mb-batch-row-qty');
+                            const target = (nextExp && !nextExp.value.trim()) ? nextExp : nextQty;
+                            if (target) {
+                                target.focus();
+                                target.select();
+                                target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                             }
                         } else {
-                            // آخر باتش (أو صنف بباتش واحد): اعتماد وترحيل مباشر لفاتورة الجرد
                             await commitMobileAllBatches();
                         }
                     } else if (e.key === 'Escape') {
                         e.preventDefault();
                         closeMobileBatchModal(true);
                     }
+                };
+
+                inp.addEventListener('keydown', handleQtyStep);
+                inp.addEventListener('beforeinput', (e) => {
+                    if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+                        e.preventDefault();
+                        handleQtyStep({ key: 'Enter', keyCode: 13, preventDefault: () => {}, stopPropagation: () => {} });
+                    }
                 });
             });
+        }
+
+        function openMobileBatchModal(data) {
+            activeMobileBatchData = data;
+            const modal = document.getElementById('modal-mobile-batch-entry');
+            if (!modal) return;
+
+            const prod = data.product || {};
+            const lblName = document.getElementById('mb-batch-prod-name');
+            const lblCode = document.getElementById('mb-batch-prod-code');
+            const lblBarcode = document.getElementById('mb-batch-prod-barcode');
+
+            if (lblName) lblName.textContent = prod.name || prod.code || 'صنف باركود دولي';
+            if (lblCode) lblCode.textContent = prod.code || '-';
+            if (lblBarcode) lblBarcode.textContent = prod.barcode || prod.gtin || '-';
+
+            renderMobileBatchList(data);
+            modal.classList.remove('hidden');
 
             setTimeout(() => {
-                const firstInp = allInputs[0];
-                if (firstInp) {
-                    firstInp.focus();
-                    firstInp.select();
+                const firstEmptyExpiry = document.querySelector('.mb-batch-row-expiry');
+                const firstQty = document.querySelector('.mb-batch-row-qty');
+                if (firstEmptyExpiry && (!firstEmptyExpiry.value || firstEmptyExpiry.value === '-')) {
+                    firstEmptyExpiry.focus();
+                    firstEmptyExpiry.select();
+                } else if (firstQty) {
+                    firstQty.focus();
+                    firstQty.select();
                 }
             }, 60);
         }

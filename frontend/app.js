@@ -6336,47 +6336,104 @@ function generateDefaultBatchNumber(index = 0) {
     return `B${yy}${mm}-${seq}`;
 }
 
-// دالة توحيد وتنسيق تاريخ الصلاحية المدخل يدوياً بمختلف الصيغ (YYYY-MM)
-function normalizeExpiryDate(str) {
-    if (!str) return '';
-    let val = String(str).trim().replace(/\s+/g, '');
+// دالة توحيد وتنسيق تاريخ الصلاحية المدخل يدوياً بمختلف الصيغ (01012028، 1-1-2028، 1/1/2028، YYYY-MM)
+function normalizeExpiryDate(str_val) {
+    if (!str_val) return '';
+    let val = String(str_val).trim();
+    val = val.replace(/[\s./\\]+/g, '-').replace(/^-+|-+$/g, '');
     if (!val || val === '-') return '';
 
-    // YYYY-MM-DD
+    // Standard ISO already: YYYY-MM-DD or YYYY-MM
     if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-    // YYYY-MM
     if (/^\d{4}-\d{2}$/.test(val)) return val;
-    // YYYY/MM/DD -> YYYY-MM-DD
-    if (/^\d{4}\/\d{2}\/\d{2}$/.test(val)) return val.replace(/\//g, '-');
-    // YYYY/MM -> YYYY-MM
-    if (/^\d{4}\/\d{2}$/.test(val)) return val.replace(/\//g, '-');
 
-    // MM/YY or MM-YY (e.g. 10/27 or 10-27)
-    let m = val.match(/^(\d{1,2})[\/\-](\d{2})$/);
+    // D-M-YYYY or DD-MM-YYYY (e.g. 1-1-2028, 01-01-2028, 15-10-2027)
+    let m = val.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
     if (m) {
-        let month = m[1].padStart(2, '0');
-        let year = '20' + m[2];
-        return `${year}-${month}`;
+        let d = parseInt(m[1], 10);
+        let mo = parseInt(m[2], 10);
+        let y = m[3];
+        if (mo > 12 && d <= 12) {
+            let tmp = d; d = mo; mo = tmp;
+        }
+        return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     }
 
-    // MM/YYYY or MM-YYYY (e.g. 10/2027 or 10-2027)
-    m = val.match(/^(\d{1,2})[\/\-](\d{4})$/);
+    // D-M-YY or DD-MM-YY (e.g. 1-1-28, 01-01-28)
+    m = val.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/);
     if (m) {
-        let month = m[1].padStart(2, '0');
-        let year = m[2];
-        return `${year}-${month}`;
+        let d = parseInt(m[1], 10);
+        let mo = parseInt(m[2], 10);
+        let y = '20' + m[3];
+        if (mo > 12 && d <= 12) {
+            let tmp = d; d = mo; mo = tmp;
+        }
+        return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     }
 
-    // YYYYMM (e.g. 202710)
-    m = val.match(/^(\d{4})(\d{2})$/);
-    if (m) {
-        return `${m[1]}-${m[2]}`;
+    // 8 digits pure numbers (DDMMYYYY e.g. 01012028 or YYYYMMDD e.g. 20280101)
+    if (/^\d{8}$/.test(val)) {
+        if (val.startsWith('20') && parseInt(val.slice(4, 6), 10) <= 12 && parseInt(val.slice(6, 8), 10) <= 31) {
+            return `${val.slice(0, 4)}-${val.slice(4, 6)}-${val.slice(6, 8)}`;
+        } else {
+            let d = val.slice(0, 2);
+            let mo = val.slice(2, 4);
+            let y = val.slice(4, 8);
+            return `${y}-${mo}-${d}`;
+        }
     }
 
-    // YYMM (e.g. 2710)
-    m = val.match(/^(\d{2})(\d{2})$/);
+    // 7 digits (e.g. 1012028 -> 1-01-2028)
+    if (/^\d{7}$/.test(val)) {
+        let d = '0' + val.slice(0, 1);
+        let mo = val.slice(1, 3);
+        let y = val.slice(3, 7);
+        if (parseInt(mo, 10) <= 12) {
+            return `${y}-${mo}-${d}`;
+        }
+    }
+
+    // MM-YYYY (e.g. 10-2027 or 01-2028)
+    m = val.match(/^(\d{1,2})-(\d{4})$/);
     if (m) {
-        return `20${m[1]}-${m[2]}`;
+        return `${m[2]}-${m[1].padStart(2, '0')}`;
+    }
+
+    // MM-YY (e.g. 10-27 or 01-28)
+    m = val.match(/^(\d{1,2})-(\d{2})$/);
+    if (m) {
+        return `20${m[2]}-${m[1].padStart(2, '0')}`;
+    }
+
+    // 6 digits pure numbers (YYYYMM or MMYYYY or DDMMYY)
+    if (/^\d{6}$/.test(val)) {
+        if (val.startsWith('20')) {
+            let y = val.slice(0, 4);
+            let mo = val.slice(4, 6);
+            if (parseInt(mo, 10) <= 12) return `${y}-${mo}`;
+        }
+        if (val.endsWith('2026') || val.endsWith('2027') || val.endsWith('2028') || val.endsWith('2029') || val.endsWith('2030')) {
+            let mo = val.slice(0, 2);
+            let y = val.slice(2, 6);
+            return `${y}-${mo}`;
+        }
+        let d = val.slice(0, 2);
+        let mo = val.slice(2, 4);
+        let y = '20' + val.slice(4, 6);
+        if (parseInt(d, 10) <= 31 && parseInt(mo, 10) <= 12) {
+            return `${y}-${mo}-${d}`;
+        }
+    }
+
+    // 4 digits pure numbers (MMYY or YYMM)
+    if (/^\d{4}$/.test(val)) {
+        let p1 = parseInt(val.slice(0, 2), 10);
+        let p2 = parseInt(val.slice(2, 4), 10);
+        if (p1 >= 1 && p1 <= 12 && p2 >= 24 && p2 <= 40) {
+            return `20${val.slice(2, 4)}-${val.slice(0, 2)}`;
+        } else if (p1 >= 24 && p1 <= 40 && p2 >= 1 && p2 <= 12) {
+            return `20${val.slice(0, 2)}-${val.slice(2, 4)}`;
+        }
     }
 
     return val;
@@ -6531,7 +6588,7 @@ function renderBatchCardRows(data) {
                         class="stk-bec-expiry-input font-mono font-black text-center text-xs w-28 py-0.5 px-1 border-2 ${!expiryVal ? 'border-amber-400 bg-amber-50/70' : 'border-slate-300 bg-white'} focus:border-amber-600 focus:bg-amber-100/60 rounded text-slate-900 shadow-inner outline-none transition"
                         data-index="${idx}"
                         value="${escapeHtml(expiryVal)}"
-                        placeholder="YYYY-MM (مثال 2027-10)"
+                        placeholder="مثال 01012028 أو 1-1-2028"
                         dir="ltr"
                         enterkeyhint="next"
                         title="تاريخ الصلاحية (إدخال يدوي إلزامي: مثال 2027-10)">
