@@ -158,6 +158,17 @@ export default {
         if (path.startsWith('/api/')) {
             const pcTunnel = activeTunnelUrl || "https://switch-opinion-shortcuts-syracuse.trycloudflare.com";
 
+            let rawBodyText = '';
+            let body = {};
+            if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+                try {
+                    rawBodyText = await request.text();
+                    if (rawBodyText) body = JSON.parse(rawBodyText);
+                } catch (e) {
+                    body = {};
+                }
+            }
+
             // 1. إذا كان نفق الكمبيوتر متوفراً، مرر كافة طلبات الـ API مباشرة لقاعدة بيانات الكمبيوتر!
             if (pcTunnel && !path.startsWith('/api/tunnel/')) {
                 try {
@@ -169,7 +180,7 @@ export default {
                     const proxyReq = new Request(targetUrl.toString(), {
                         method: request.method,
                         headers: proxyHeaders,
-                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : rawBodyText,
                         duplex: 'half'
                     });
 
@@ -190,15 +201,6 @@ export default {
                     }
                 } catch (err) {
                     console.error('Proxy to PC tunnel error, falling back to edge memory:', err);
-                }
-            }
-
-            let body = {};
-            if (method === 'POST') {
-                try {
-                    body = await request.clone().json();
-                } catch (e) {
-                    body = {};
                 }
             }
 
