@@ -5,39 +5,96 @@ from typing import Dict, Any, Optional
 
 def parse_expiry_date(val: Optional[str]) -> Optional[str]:
     """
-    تحويل صيغة تاريخ الانتهاء إلى YYYY-MM-DD
-    يدعم صيغة GS1 (YYMMDD) وتواريخ ISO و DD/MM/YYYY
-    إذا كان اليوم 00 في GS1 يعتبر آخر يوم في الشهر
+    تحويل صيغة تاريخ الانتهاء إلى YYYY-MM-DD أو YYYY-MM
+    يدعم:
+    - الصيغ الرقمية المباشرة: 01012028 (DDMMYYYY) أو 20280101 (YYYYMMDD) أو 15102027
+    - الصيغ المفصولة: 1-1-2028، 01/01/2028، 1.1.2028
+    - سنوات ثنائية: 1-1-28، 010128
+    - شهر وسنة: 10/27، 10-2027، 1027
+    - صيغة GS1 القياسية (YYMMDD - 6 أرقام)
     """
     if not val:
         return None
     s = str(val).strip()
-    
-    # إذا كان بالفعل بتنسيق YYYY-MM-DD أو YYYY/MM/DD
-    m_iso = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', s)
-    if m_iso:
-        y, m, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
-        return f"{y:04d}-{m:02d}-{d:02d}"
-        
-    # إذا كان بتنسيق DD-MM-YYYY أو DD/MM/YYYY
-    m_dmy = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', s)
-    if m_dmy:
-        d, m, y = int(m_dmy.group(1)), int(m_dmy.group(2)), int(m_dmy.group(3))
-        return f"{y:04d}-{m:02d}-{d:02d}"
-        
-    # استخراج الأرقام فقط
+    s = re.sub(r'[\s./\\]+', '-', s).strip('-')
+    if not s or s == '-':
+        return None
+
+    # إذا كان بالفعل بتنسيق YYYY-MM-DD أو YYYY-MM
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+        return s
+    if re.match(r'^\d{4}-\d{2}$', s):
+        return s
+
+    # D-M-YYYY أو DD-MM-YYYY (مثل 1-1-2028 أو 15-10-2027)
+    m = re.match(r'^(\d{1,2})-(\d{1,2})-(\d{4})$', s)
+    if m:
+        d = int(m.group(1))
+        mo = int(m.group(2))
+        y = m.group(3)
+        if mo > 12 and d <= 12:
+            d, mo = mo, d
+        return f"{y}-{mo:02d}-{d:02d}"
+
+    # D-M-YY أو DD-MM-YY (مثل 1-1-28 أو 01-01-28)
+    m = re.match(r'^(\d{1,2})-(\d{1,2})-(\d{2})$', s)
+    if m:
+        d = int(m.group(1))
+        mo = int(m.group(2))
+        y = "20" + m.group(3)
+        if mo > 12 and d <= 12:
+            d, mo = mo, d
+        return f"{y}-{mo:02d}-{d:02d}"
+
+    # MM-YYYY (مثل 10-2027 أو 01-2028)
+    m = re.match(r'^(\d{1,2})-(\d{4})$', s)
+    if m:
+        return f"{m.group(2)}-{int(m.group(1)):02d}"
+
+    # MM-YY (مثل 10-27 أو 01-28)
+    m = re.match(r'^(\d{1,2})-(\d{2})$', s)
+    if m:
+        return f"20{m.group(2)}-{int(m.group(1)):02d}"
+
     digits = re.sub(r'\D', '', s)
-    
-    # صيغة GS1 القياسية (YYMMDD - 6 أرقام)
+
+    # صيغة 8 أرقام (01012028 DDMMYYYY أو 20280101 YYYYMMDD)
+    if len(digits) == 8:
+        if digits.startswith('20') and int(digits[4:6]) <= 12 and int(digits[6:8]) <= 31:
+            return f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}"
+        else:
+            d = digits[0:2]
+            mo = digits[2:4]
+            y = digits[4:8]
+            return f"{y}-{mo}-{d}"
+
+    # صيغة 7 أرقام (مثل 1012028 -> 2028-01-01)
+    if len(digits) == 7:
+        d = '0' + digits[0:1]
+        mo = digits[1:3]
+        y = digits[3:7]
+        if int(mo) <= 12:
+            return f"{y}-{mo}-{d}"
+
+    # صيغة GS1 القياسية (YYMMDD - 6 أرقام) أو 6 أرقام YYYYMM / MMYYYY / DDMMYY
     if len(digits) == 6:
+        if digits.startswith('20'):
+            y = digits[0:4]
+            mo = digits[4:6]
+            if 1 <= int(mo) <= 12:
+                return f"{y}-{mo}"
+        if digits.endswith(('2026', '2027', '2028', '2029', '2030')):
+            mo = digits[0:2]
+            y = digits[2:6]
+            return f"{y}-{mo}"
+        
+        # GS1 YYMMDD
         yy = int(digits[0:2])
         mm = int(digits[2:4])
         dd = int(digits[4:6])
-        # قاعدة القرن: إذا كان الرقم أقل من 70 فهو في 2000 وما بعدها
         year = 2000 + yy if yy < 70 else 1900 + yy
         if 1 <= mm <= 12:
             if dd == 0:
-                # وفق معيار GS1: اليوم 00 يعني اليوم الأخير من الشهر
                 _, last_day = calendar.monthrange(year, mm)
                 dd = last_day
             else:
@@ -45,14 +102,15 @@ def parse_expiry_date(val: Optional[str]) -> Optional[str]:
                 if dd > max_day:
                     dd = max_day
             return f"{year:04d}-{mm:02d}-{dd:02d}"
-            
-    # صيغة 8 أرقام (YYYYMMDD)
-    elif len(digits) == 8:
-        y = int(digits[0:4])
-        m = int(digits[4:6])
-        d = int(digits[6:8])
-        if 1 <= m <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{m:02d}-{d:02d}"
+
+    # صيغة 4 أرقام (MMYY أو YYMM)
+    if len(digits) == 4:
+        p1 = int(digits[0:2])
+        p2 = int(digits[2:4])
+        if 1 <= p1 <= 12 and 24 <= p2 <= 40:
+            return f"20{digits[2:4]}-{digits[0:2]}"
+        elif 24 <= p1 <= 40 and 1 <= p2 <= 12:
+            return f"20{digits[0:2]}-{digits[2:4]}"
 
     return s
 

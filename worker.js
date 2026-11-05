@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://custody-ease-threatening-generating.trycloudflare.com";
+let activeTunnelUrl = "https://lines-musician-pretty-toner.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -113,6 +113,99 @@ function parseGs1Code(rawInput) {
     return { isGs1, gtin: gtin || s, batch, serial, expiry, raw: s };
 }
 
+function normalizeExpiryDate(str_val) {
+    if (!str_val) return '';
+    let val = String(str_val).trim();
+    val = val.replace(/[\s./\\]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!val || val === '-') return '';
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+    if (/^\d{4}-\d{2}$/.test(val)) return val;
+
+    let m = val.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (m) {
+        let d = parseInt(m[1], 10);
+        let mo = parseInt(m[2], 10);
+        let y = m[3];
+        if (mo > 12 && d <= 12) {
+            let tmp = d; d = mo; mo = tmp;
+        }
+        return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+
+    m = val.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/);
+    if (m) {
+        let d = parseInt(m[1], 10);
+        let mo = parseInt(m[2], 10);
+        let y = '20' + m[3];
+        if (mo > 12 && d <= 12) {
+            let tmp = d; d = mo; mo = tmp;
+        }
+        return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+
+    if (/^\d{8}$/.test(val)) {
+        if (val.startsWith('20') && parseInt(val.slice(4, 6), 10) <= 12 && parseInt(val.slice(6, 8), 10) <= 31) {
+            return `${val.slice(0, 4)}-${val.slice(4, 6)}-${val.slice(6, 8)}`;
+        } else {
+            let d = val.slice(0, 2);
+            let mo = val.slice(2, 4);
+            let y = val.slice(4, 8);
+            return `${y}-${mo}-${d}`;
+        }
+    }
+
+    if (/^\d{7}$/.test(val)) {
+        let d = '0' + val.slice(0, 1);
+        let mo = val.slice(1, 3);
+        let y = val.slice(3, 7);
+        if (parseInt(mo, 10) <= 12) {
+            return `${y}-${mo}-${d}`;
+        }
+    }
+
+    m = val.match(/^(\d{1,2})-(\d{4})$/);
+    if (m) {
+        return `${m[2]}-${m[1].padStart(2, '0')}`;
+    }
+
+    m = val.match(/^(\d{1,2})-(\d{2})$/);
+    if (m) {
+        return `20${m[2]}-${m[1].padStart(2, '0')}`;
+    }
+
+    if (/^\d{6}$/.test(val)) {
+        if (val.startsWith('20')) {
+            let y = val.slice(0, 4);
+            let mo = val.slice(4, 6);
+            if (parseInt(mo, 10) <= 12) return `${y}-${mo}`;
+        }
+        if (val.endsWith('2026') || val.endsWith('2027') || val.endsWith('2028') || val.endsWith('2029') || val.endsWith('2030')) {
+            let mo = val.slice(0, 2);
+            let y = val.slice(2, 6);
+            return `${y}-${mo}`;
+        }
+        let d = val.slice(0, 2);
+        let mo = val.slice(2, 4);
+        let y = '20' + val.slice(4, 6);
+        if (parseInt(d, 10) <= 31 && parseInt(mo, 10) <= 12) {
+            return `${y}-${mo}-${d}`;
+        }
+    }
+
+    if (/^\d{4}$/.test(val)) {
+        let p1 = parseInt(val.slice(0, 2), 10);
+        let p2 = parseInt(val.slice(2, 4), 10);
+        if (p1 >= 1 && p1 <= 12 && p2 >= 24 && p2 <= 40) {
+            return `20${val.slice(2, 4)}-${val.slice(0, 2)}`;
+        } else if (p1 >= 24 && p1 <= 40 && p2 >= 1 && p2 <= 12) {
+            return `20${val.slice(0, 2)}-${val.slice(2, 4)}`;
+        }
+    }
+
+    return val;
+}
+
 function broadcastEvent(type, payload) {
     const evt = {
         id: Math.random().toString(36).substring(2, 10),
@@ -156,7 +249,7 @@ export default {
 
         // إذا كان الطلب مسار API
         if (path.startsWith('/api/')) {
-            const pcTunnel = activeTunnelUrl || "https://custody-ease-threatening-generating.trycloudflare.com";
+            const pcTunnel = activeTunnelUrl || "https://lines-musician-pretty-toner.trycloudflare.com";
 
             let rawBodyText = '';
             let body = {};
@@ -470,7 +563,7 @@ export default {
                 const storeNo = String(body.store_no || 'ST-001').trim();
                 const prodCode = String(body.product_code || '').trim();
                 const batchNumber = String(body.batch_number || '').trim();
-                const expiryDate = String(body.expiry_date || '').trim();
+                const expiryDate = normalizeExpiryDate(String(body.expiry_date || '').trim());
                 const countedQty = parseFloat(body.counted_qty || 0);
 
                 let item = memoryStocktakeItems.find(it => it.store_no === storeNo && it.product_code === prodCode && (it.batch_number === batchNumber || !it.batch_number));

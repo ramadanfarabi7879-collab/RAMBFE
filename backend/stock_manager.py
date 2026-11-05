@@ -12,7 +12,7 @@ from .db import (
     find_product_by_gtin_or_barcode,
     get_product_by_code
 )
-from .qr_parser import parse_qr_code, extract_clean_gtin
+from .qr_parser import parse_qr_code, extract_clean_gtin, parse_expiry_date
 
 def init_stock_tables():
     """تهيئة جداول الاستورات والمخزون والجرد مع حسابات التكلفة وسعر البيع معاً"""
@@ -974,6 +974,10 @@ def save_stock_batch_count(
     exp_clean = str(expiry_date or '').strip()
     if exp_clean == '-':
         exp_clean = ''
+    elif exp_clean:
+        norm_exp = parse_expiry_date(exp_clean)
+        if norm_exp:
+            exp_clean = norm_exp
     counted_val = float(counted_qty or 0.0)
 
     # التحقق من المخزون المسجل لهذا الباتش
