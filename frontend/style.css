@@ -17,53 +17,89 @@
 }
 .tameni-reticle {
     position: relative;
-    width: 350px;
-    height: 350px;
-    max-width: 92vw;
-    max-height: 92vw;
-    border-radius: 28px;
-    box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.28);
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    width: min(88vw, 390px);
+    height: min(88vw, 390px);
+    border-radius: 26px;
+    box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.42);
+    transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 .tameni-reticle.active-hit {
-    box-shadow: 0 0 0 9999px rgba(16, 185, 129, 0.35), 0 0 45px #10b981;
-    transform: scale(1.03);
+    box-shadow: 0 0 0 9999px rgba(16, 185, 129, 0.5), 0 0 50px #10b981;
+    transform: scale(1.025);
 }
 .tameni-corner {
     position: absolute;
-    width: 44px;
-    height: 44px;
+    width: 48px;
+    height: 48px;
     border-color: #10b981;
-    filter: drop-shadow(0 0 14px #10b981);
+    filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.9));
     transition: all 0.2s ease;
 }
 .tameni-corner.tr {
     top: -2px;
     right: -2px;
-    border-top: 4px solid #34d399;
-    border-right: 4px solid #34d399;
-    border-top-right-radius: 18px;
+    border-top: 5px solid #34d399;
+    border-right: 5px solid #34d399;
+    border-top-right-radius: 20px;
 }
 .tameni-corner.tl {
     top: -2px;
     left: -2px;
-    border-top: 4px solid #34d399;
-    border-left: 4px solid #34d399;
-    border-top-left-radius: 18px;
+    border-top: 5px solid #34d399;
+    border-left: 5px solid #34d399;
+    border-top-left-radius: 20px;
 }
 .tameni-corner.br {
     bottom: -2px;
     right: -2px;
-    border-bottom: 4px solid #34d399;
-    border-right: 4px solid #34d399;
-    border-bottom-right-radius: 18px;
+    border-bottom: 5px solid #34d399;
+    border-right: 5px solid #34d399;
+    border-bottom-right-radius: 20px;
 }
 .tameni-corner.bl {
     bottom: -2px;
     left: -2px;
-    border-bottom: 4px solid #34d399;
-    border-left: 4px solid #34d399;
-    border-bottom-left-radius: 18px;
+    border-bottom: 5px solid #34d399;
+    border-left: 5px solid #34d399;
+    border-bottom-left-radius: 20px;
+}
+
+/* علامة بؤرة التركيز المركزية الشفافة الخفيفة */
+.tameni-crosshair {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    pointer-events: none;
+    opacity: 0.45;
+}
+.tameni-crosshair::before, .tameni-crosshair::after {
+    content: '';
+    position: absolute;
+    background-color: #34d399;
+    box-shadow: 0 0 6px #10b981;
+    border-radius: 9999px;
+}
+.tameni-crosshair::before {
+    top: 10px;
+    left: 0;
+    width: 22px;
+    height: 2px;
+}
+.tameni-crosshair::after {
+    top: 0;
+    left: 10px;
+    width: 2px;
+    height: 22px;
+}
+
+#camera-reader-viewport video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    border-radius: 1rem;
 }
 .tameni-badge {
     position: absolute;

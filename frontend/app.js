@@ -3077,16 +3077,16 @@ function initHtml5ScannerInstance() {
 
     if (!html5QrScannerInstance) return;
 
-    // قيود الكاميرا القياسية المتوافقة مع آيفون وأندرويد
+    // قيود الكاميرا عالية الدقة وفائقة السرعة
     const cameraConstraints = {
         facingMode: { ideal: (cameraFacingMode === 'user' ? 'user' : 'environment') },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
+        width: { min: 720, ideal: 1280, max: 1920 },
+        height: { min: 720, ideal: 1080, max: 1920 }
     };
 
-    // مسح فائق السرعة وبمساحة عريضة جداً تغطي كامل حساس الكاميرا (Full Frame بدون تقييد أو قص)
+    // مسح احترافي فائق السرعة (30 إطار/ثانية) بكامل مساحة الحساس (Full Sensor Frame)
     const scanConfig = {
-        fps: 25,
+        fps: 30,
         aspectRatio: undefined,
         disableFlip: false
     };
