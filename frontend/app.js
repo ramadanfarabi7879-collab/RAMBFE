@@ -3076,9 +3076,7 @@ function initHtml5ScannerInstance() {
     const scanConfig = {
         fps: 25,
         qrbox: (w, h) => {
-            const minE = Math.min(w, h);
-            const size = Math.floor(minE * 0.92);
-            return { width: size, height: size };
+            return { width: Math.floor(w * 0.98), height: Math.floor(h * 0.98) };
         },
         aspectRatio: undefined,
         disableFlip: false
@@ -5429,13 +5427,7 @@ function initStocktakeTab() {
     document.getElementById('btn-finish-batch-entry')?.addEventListener('click', async () => {
         const tbody = document.getElementById('stk-bec-batches-tbody');
         const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
-        for (const inp of inputs) {
-            if (inp.value.trim() !== '') {
-                await handleBatchInputCommit(inp, inputs, true);
-            }
-        }
-        closeBatchEntryCard();
-        await loadStocktakeStores();
+        await commitAllCardBatches(inputs);
     });
 
     // 4. البحث في الأصناف المجرودة داخل الاستور المختار
@@ -6323,16 +6315,43 @@ function openBatchEntryCard(data) {
         if (firstInput) {
             firstInput.focus();
             firstInput.select();
+            const firstRow = document.getElementById('stk-bec-row-0');
+            if (firstRow) {
+                firstRow.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+            }
         }
     }, 60);
 
-    // ربط الضغط على Enter في كل خانة
+    // ربط التنقل بالسهم / Enter بين الباتشات وعدم الاعتماد إلا بعد آخر باتش
     const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
-    inputs.forEach(inp => {
+    inputs.forEach((inp, idx) => {
+        inp.addEventListener('focus', () => {
+            inputs.forEach((otherInp, j) => {
+                const r = document.getElementById(`stk-bec-row-${j}`);
+                if (r) {
+                    if (idx === j) {
+                        r.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                    } else {
+                        r.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                    }
+                }
+            });
+        });
+
         inp.addEventListener('keydown', async (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                await handleBatchInputCommit(inp, inputs);
+                // إذا لم يكن آخر باتش: الانتقال الفوري للباتش التالي دون إضافة الصنف للفاتورة بعد
+                if (idx < inputs.length - 1) {
+                    const nextInput = inputs[idx + 1];
+                    if (nextInput) {
+                        nextInput.focus();
+                        nextInput.select();
+                    }
+                } else {
+                    // آخر باتش (أو صنف بباتش واحد): اعتماد كافة الكميات المدخلة فقط
+                    await commitAllCardBatches(inputs);
+                }
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 closeBatchEntryCard();
@@ -6340,77 +6359,84 @@ function openBatchEntryCard(data) {
         });
     });
 
-    // ربط أزرار الحفظ في كل سطر
+    // ربط أزرار الحفظ الموضعية بكل سطر
     tbody?.querySelectorAll('.stk-bec-btn-save').forEach(btn => {
         btn.addEventListener('click', async () => {
-            const idx = parseInt(btn.dataset.index);
-            const inp = inputs[idx];
-            if (inp) {
-                await handleBatchInputCommit(inp, inputs);
-            }
+            await commitAllCardBatches(inputs);
         });
     });
 }
 
-async function handleBatchInputCommit(inputEl, allInputs, skipAdvance = false) {
-    const idx = parseInt(inputEl.dataset.index);
-    const prodCode = inputEl.dataset.productCode;
-    const batch = inputEl.dataset.batch;
-    const expiry = inputEl.dataset.expiry;
-    const sysQty = parseFloat(inputEl.dataset.systemQty) || 0;
-    const cost = parseFloat(inputEl.dataset.cost) || 0;
-    const sale = parseFloat(inputEl.dataset.sale) || 0;
+let isBatchCommittingLock = false;
+async function commitAllCardBatches(allInputs) {
+    if (isBatchCommittingLock) return;
+    isBatchCommittingLock = true;
 
-    let val = inputEl.value.trim();
-    if (val === '') {
-        val = '0';
-    }
-    const countedVal = parseFloat(val) || 0;
-
-    // حفظ الكمية في الباك إند فوراً
     try {
-        const res = await fetch('/api/stock/save-batch-qty', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                store_no: currentActiveStoreNo,
-                product_code: prodCode,
-                batch_number: batch,
-                expiry_date: expiry,
-                counted_qty: countedVal,
-                system_qty: sysQty,
-                cost_price: cost,
-                selling_price: sale
-            })
-        });
-        const resData = await res.json();
-        if (resData.success) {
-            playStockAudioAlert(true);
-            const statusCell = document.getElementById(`stk-bec-cell-status-${idx}`);
-            if (statusCell) {
-                statusCell.innerHTML = `<span class="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold text-[10px]">✅ تم (${countedVal})</span>`;
-            }
-            const rowEl = document.getElementById(`stk-bec-row-${idx}`);
-            if (rowEl) {
-                rowEl.classList.remove('bg-white', 'bg-slate-50/60');
-                rowEl.classList.add('bg-emerald-50/70');
+        let savedCount = 0;
+        let lastStoreDetails = null;
+
+        for (const inputEl of allInputs) {
+            const idx = parseInt(inputEl.dataset.index);
+            const prodCode = inputEl.dataset.productCode;
+            const batch = inputEl.dataset.batch;
+            const expiry = inputEl.dataset.expiry;
+            const sysQty = parseFloat(inputEl.dataset.systemQty) || 0;
+            const cost = parseFloat(inputEl.dataset.cost) || 0;
+            const sale = parseFloat(inputEl.dataset.sale) || 0;
+
+            const val = inputEl.value.trim();
+            const countedVal = parseFloat(val);
+
+            // قاعدة هامة جداً: إذا كانت الكمية صفر أو فارغة، لا يتم تسجيل سطر في فاتورة الجرد إطلاقاً
+            if (isNaN(countedVal) || countedVal <= 0) {
+                continue;
             }
 
-            // تحديث جدول وفاتورة الجرد بالأسفل فوراً
-            if (resData.store_details) {
-                renderCurrentStoreDetails(resData.store_details);
+            try {
+                const res = await fetch('/api/stock/save-batch-qty', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        store_no: currentActiveStoreNo,
+                        product_code: prodCode,
+                        batch_number: batch,
+                        expiry_date: expiry,
+                        counted_qty: countedVal,
+                        system_qty: sysQty,
+                        cost_price: cost,
+                        selling_price: sale
+                    })
+                });
+                const resData = await res.json();
+                if (resData.success) {
+                    savedCount++;
+                    if (resData.store_details) {
+                        lastStoreDetails = resData.store_details;
+                    }
+                }
+            } catch (err) {
+                console.error('Error saving batch row', err);
             }
         }
-    } catch (err) {
-        console.error('Failed to commit batch count', err);
+
+        if (savedCount > 0) {
+            playStockAudioAlert(true);
+            if (lastStoreDetails) {
+                renderCurrentStoreDetails(lastStoreDetails);
+            }
+        }
+
+        closeBatchEntryCard();
+        await loadStocktakeStores();
+        await loadCurrentStoreItems();
+    } finally {
+        isBatchCommittingLock = false;
     }
+}
 
-    if (skipAdvance) return;
-
-    // عند الضغط على Enter (سهم الإنتر ↵) أو زر الحفظ: اعتماد الصنف ونزوله إلى فاتورة الجرد فوراً
-    closeBatchEntryCard();
-    await loadStocktakeStores();
-    await loadCurrentStoreItems();
+async function handleBatchInputCommit(inputEl, allInputs, skipAdvance = false) {
+    await commitAllCardBatches(allInputs || [inputEl]);
 }
 
 function closeBatchEntryCard() {

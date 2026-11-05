@@ -66,24 +66,24 @@
         }
         .tameni-reticle {
             position: relative;
-            width: 250px;
-            height: 250px;
-            max-width: 76vw;
-            max-height: 76vw;
-            border-radius: 20px;
-            box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.58);
+            width: 320px;
+            height: 320px;
+            max-width: 88vw;
+            max-height: 88vw;
+            border-radius: 24px;
+            box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.45);
             transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .tameni-reticle.active-hit {
-            box-shadow: 0 0 0 9999px rgba(16, 185, 129, 0.3), 0 0 35px #10b981;
-            transform: scale(1.04);
+            box-shadow: 0 0 0 9999px rgba(16, 185, 129, 0.3), 0 0 40px #10b981;
+            transform: scale(1.03);
         }
         .tameni-corner {
             position: absolute;
-            width: 32px;
-            height: 32px;
-            border-color: #34d399;
-            filter: drop-shadow(0 0 10px #10b981);
+            width: 38px;
+            height: 38px;
+            border-color: #10b981;
+            filter: drop-shadow(0 0 12px #10b981);
             transition: all 0.2s ease;
         }
         .tameni-corner.tr {
@@ -517,35 +517,17 @@
                 </div>
             </div>
 
-            <!-- اختيار التشغيلة (إن وجدت تشغيلات متعددة) -->
-            <div id="mb-batch-select-container" class="space-y-1">
-                <label class="block text-[11px] text-slate-300 font-bold">التشغيلة / الصلاحية:</label>
-                <select id="mb-batch-select" class="w-full py-1.5 px-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-indigo-500">
-                    <!-- تعبئة ديناميكية -->
-                </select>
-            </div>
-
-            <!-- حقل الكمية الفعلي مع أزرار + و - -->
-            <div class="space-y-1 text-center">
-                <label class="block text-xs font-bold text-amber-300">الكمية الفعلية المجرودة (العدد يدوي) ⭐</label>
-                <div class="flex items-center justify-center gap-2">
-                    <button type="button" onclick="adjustMobileBatchQtyInput(-1)" class="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-300 font-bold text-xl flex items-center justify-center active:scale-95 transition border border-slate-700">
-                        -
-                    </button>
-                    <input type="number" step="any" min="1" id="mb-batch-qty-input" value="1" inputmode="numeric"
-                           class="w-24 py-2 px-2 rounded-xl bg-slate-950 border-2 border-emerald-500 text-white text-xl font-mono font-black text-center focus:outline-none focus:border-amber-400 shadow-inner">
-                    <button type="button" onclick="adjustMobileBatchQtyInput(1)" class="w-10 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xl flex items-center justify-center active:scale-95 transition shadow">
-                        +
-                    </button>
-                </div>
+            <!-- قائمة تشغيلات الصنف (كل باتش في صف مستقل مع خانة كميته والتنقل بالسهم ↵) -->
+            <div id="mb-batch-rows-list" class="space-y-2 max-h-[46vh] overflow-y-auto pr-0.5">
+                <!-- تعبئة ديناميكية لكل باتش -->
             </div>
 
             <!-- أزرار الإجراء: اعتماد وإضافة للجرد ثم العودة فوراً للكاميرا -->
-            <div class="pt-1 flex items-center gap-2">
-                <button type="button" id="btn-confirm-mobile-batch-qty" class="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg transition active:scale-95 flex items-center justify-center gap-1.5">
-                    <span>اعتماد وإضافة للجرد ↵</span>
+            <div class="pt-2 flex items-center gap-2 border-t border-slate-800">
+                <button type="button" id="btn-confirm-mobile-batch-qty" class="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg transition active:scale-95 flex items-center justify-center gap-1.5">
+                    <span>اعتماد وترحيل للجرد ↵</span>
                 </button>
-                <button type="button" id="btn-cancel-mobile-batch-qty" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+                <button type="button" id="btn-cancel-mobile-batch-qty" class="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
                     إلغاء
                 </button>
             </div>
@@ -883,56 +865,71 @@
             }
         });
 
-        document.getElementById('btn-confirm-mobile-batch-qty')?.addEventListener('click', async () => {
+        window.stepMbBatchRow = function(idx, delta) {
+            const inp = document.querySelector(`.mb-batch-row-qty[data-index="${idx}"]`);
+            if (!inp) return;
+            const current = parseFloat(inp.value) || 0;
+            inp.value = Math.max(0, current + delta);
+        };
+
+        async function commitMobileAllBatches() {
             if (!activeMobileBatchData) return;
             const prod = activeMobileBatchData.product || {};
-            const batches = activeMobileBatchData.batches || [];
-            const sel = document.getElementById('mb-batch-select');
-            const qtyInp = document.getElementById('mb-batch-qty-input');
+            const inputs = Array.from(document.querySelectorAll('.mb-batch-row-qty'));
 
-            const selectedIdx = sel ? parseInt(sel.value) || 0 : 0;
-            const selectedBatch = batches[selectedIdx] || {};
-            const countedQty = parseFloat(qtyInp ? qtyInp.value : 1) || 1;
+            let savedCount = 0;
+            for (const inp of inputs) {
+                const val = inp.value.trim();
+                const countedQty = parseFloat(val);
 
-            try {
-                const res = await fetch('/api/stock/save-batch-qty', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        store_no: currentStoreNo,
-                        product_code: prod.code || '',
-                        batch_number: selectedBatch.batch_number || '',
-                        expiry_date: selectedBatch.expiry_date || '',
-                        counted_qty: countedQty,
-                        system_qty: selectedBatch.system_qty || 0,
-                        cost_price: selectedBatch.cost_price || 0,
-                        selling_price: selectedBatch.selling_price || 0
-                    })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    playBeep(true);
-                    await loadStoreItems(false);
+                // قاعدة هامة جداً: إذا كانت الكمية صفر أو فارغة، لا يتم تسجيل سطر في فاتورة الجرد إطلاقاً
+                if (isNaN(countedQty) || countedQty <= 0) {
+                    continue;
                 }
-            } catch(e) {
-                console.error('Save batch qty error:', e);
+
+                const batchNo = inp.dataset.batch || '';
+                const expDate = inp.dataset.expiry || '';
+                const sysQty = parseFloat(inp.dataset.sys) || 0;
+                const cost = parseFloat(inp.dataset.cost) || 0;
+                const sale = parseFloat(inp.dataset.sale) || 0;
+
+                try {
+                    const res = await fetch('/api/stock/save-batch-qty', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            store_no: currentStoreNo,
+                            product_code: prod.code || '',
+                            batch_number: batchNo,
+                            expiry_date: expDate,
+                            counted_qty: countedQty,
+                            system_qty: sysQty,
+                            cost_price: cost,
+                            selling_price: sale
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        savedCount++;
+                    }
+                } catch(e) {
+                    console.error('Save batch qty error:', e);
+                }
+            }
+
+            if (savedCount > 0) {
+                playBeep(true);
+                triggerSuccessFlash();
+                await loadStoreItems(false);
             }
 
             // إغلاق النافذة والعودة فوراً وتلقائياً للكاميرا كما طلب المستخدم
             closeMobileBatchModal(true);
-        });
+        }
 
+        document.getElementById('btn-confirm-mobile-batch-qty')?.addEventListener('click', commitMobileAllBatches);
         document.getElementById('btn-close-mobile-batch-modal')?.addEventListener('click', () => closeMobileBatchModal(true));
         document.getElementById('btn-cancel-mobile-batch-qty')?.addEventListener('click', () => closeMobileBatchModal(true));
-        document.getElementById('mb-batch-qty-input')?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                document.getElementById('btn-confirm-mobile-batch-qty')?.click();
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                closeMobileBatchModal(true);
-            }
-        });
 
         // حذف سطر صنف من الجرد
         window.deleteStockEntry = async function(entryId) {
@@ -1104,34 +1101,106 @@
             const lblName = document.getElementById('mb-batch-prod-name');
             const lblCode = document.getElementById('mb-batch-prod-code');
             const lblBarcode = document.getElementById('mb-batch-prod-barcode');
-            const sel = document.getElementById('mb-batch-select');
-            const qtyInput = document.getElementById('mb-batch-qty-input');
+            const listContainer = document.getElementById('mb-batch-rows-list');
 
             if (lblName) lblName.textContent = prod.name || prod.code || 'صنف باركود';
             if (lblCode) lblCode.textContent = prod.code || '-';
             if (lblBarcode) lblBarcode.textContent = prod.barcode || prod.gtin || '-';
 
-            if (sel) {
-                if (batches.length === 0) {
-                    sel.innerHTML = `<option value="0">بدون تشغيلة (الرصيد: 0)</option>`;
-                } else {
-                    sel.innerHTML = batches.map((b, idx) => `
-                        <option value="${idx}">
-                            تشغيلة: ${b.batch_number || '-'} | صلاحية: ${b.expiry_date || '-'} (مخزون: ${b.system_qty || 0})
-                        </option>
-                    `).join('');
-                }
-            }
+            const effectiveBatches = batches.length > 0 ? batches : [{
+                batch_number: '',
+                expiry_date: '',
+                system_qty: 0,
+                cost_price: prod.cost || 0,
+                selling_price: prod.price || 0
+            }];
 
-            if (qtyInput) {
-                qtyInput.value = '1';
+            if (listContainer) {
+                listContainer.innerHTML = effectiveBatches.map((b, idx) => {
+                    const sysQty = Number(b.system_qty || 0);
+                    const cost = Number(b.cost_price || prod.cost || 0);
+                    const sale = Number(b.selling_price || prod.price || 0);
+                    const isFirst = (idx === 0);
+
+                    return `
+                        <div class="mb-batch-row p-2.5 rounded-xl bg-slate-950 border border-slate-800 transition space-y-1.5" id="mb-batch-row-${idx}">
+                            <div class="flex items-center justify-between text-xs">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono font-bold text-[11px] border border-indigo-500/30">
+                                        ${b.batch_number ? b.batch_number : 'بدون تشغيلة'}
+                                    </span>
+                                    <span class="text-[10px] text-slate-400 font-mono">صلاحية: ${b.expiry_date || '-'}</span>
+                                </div>
+                                <div class="text-[10px] text-slate-300 font-mono">
+                                    رصيد السيستم: <strong class="text-white">${sysQty}</strong>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-900">
+                                <span class="text-xs font-bold text-amber-300">الكمية الفعلية:</span>
+                                <div class="flex items-center gap-1.5">
+                                    <button type="button" onclick="stepMbBatchRow(${idx}, -1)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-300 font-bold text-lg flex items-center justify-center border border-slate-700 active:scale-95 transition">-</button>
+                                    <input type="number" step="any" min="0"
+                                           class="mb-batch-row-qty w-20 py-1 px-1 rounded-lg bg-slate-900 border-2 border-emerald-500 text-white text-center font-mono font-black text-base focus:border-amber-400 focus:bg-slate-800 outline-none"
+                                           data-index="${idx}"
+                                           data-batch="${(b.batch_number || '').replace(/"/g, '&quot;')}"
+                                           data-expiry="${(b.expiry_date || '').replace(/"/g, '&quot;')}"
+                                           data-sys="${sysQty}"
+                                           data-cost="${cost}"
+                                           data-sale="${sale}"
+                                           value="${isFirst ? '1' : '0'}"
+                                           placeholder="0"
+                                           inputmode="numeric">
+                                    <button type="button" onclick="stepMbBatchRow(${idx}, 1)" class="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-lg flex items-center justify-center active:scale-95 transition">+</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
             }
 
             modal.classList.remove('hidden');
+
+            const allInputs = Array.from(document.querySelectorAll('.mb-batch-row-qty'));
+            allInputs.forEach((inp, idx) => {
+                inp.addEventListener('focus', () => {
+                    allInputs.forEach((otherInp, j) => {
+                        const r = document.getElementById(`mb-batch-row-${j}`);
+                        if (r) {
+                            if (idx === j) {
+                                r.classList.add('border-amber-400', 'bg-slate-900/90');
+                            } else {
+                                r.classList.remove('border-amber-400', 'bg-slate-900/90');
+                            }
+                        }
+                    });
+                });
+
+                inp.addEventListener('keydown', async (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (idx < allInputs.length - 1) {
+                            // انتقال للباتش التالي دون اعتماد
+                            const nextInp = allInputs[idx + 1];
+                            if (nextInp) {
+                                nextInp.focus();
+                                nextInp.select();
+                            }
+                        } else {
+                            // آخر باتش -> اعتماد وترحيل
+                            await commitMobileAllBatches();
+                        }
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeMobileBatchModal(true);
+                    }
+                });
+            });
+
             setTimeout(() => {
-                if (qtyInput) {
-                    qtyInput.focus();
-                    qtyInput.select();
+                const firstInp = allInputs[0];
+                if (firstInp) {
+                    firstInp.focus();
+                    firstInp.select();
                 }
             }, 60);
         }
@@ -1144,13 +1213,6 @@
                 setTimeout(startMobileCamera, 120);
             }
         }
-
-        window.adjustMobileBatchQtyInput = function(delta) {
-            const inp = document.getElementById('mb-batch-qty-input');
-            if (!inp) return;
-            const current = parseFloat(inp.value) || 0;
-            inp.value = Math.max(1, current + delta);
-        };
 
         let mobileNativeAnimFrame = null;
         let isMobileNativeScanning = false;
@@ -1279,9 +1341,7 @@
             const scanConfig = {
                 fps: 25,
                 qrbox: (w, h) => {
-                    const minE = Math.min(w, h);
-                    const size = Math.floor(minE * 0.92);
-                    return { width: size, height: size };
+                    return { width: Math.floor(w * 0.98), height: Math.floor(h * 0.98) };
                 },
                 aspectRatio: undefined,
                 disableFlip: false
