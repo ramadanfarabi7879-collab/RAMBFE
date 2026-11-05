@@ -6,7 +6,7 @@
     <title>نظام إدارة بطاقات الأصناف والمسح بكود QR</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="style.css?v=20261105_tameni_v101">
+    <link rel="stylesheet" href="style.css?v=20261105_scanner_pro_v1">
     <!-- Google Fonts: Cairo -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1791,22 +1791,25 @@
                 </div>
             </div>
 
-            <!-- حاوية الكاميرا مع مؤشر ومربع طمني التهديفي -->
-            <div class="relative w-full aspect-video sm:aspect-square max-h-[50vh] bg-black rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center cursor-pointer border border-slate-700" id="camera-viewport-touch-area" title="المس الشاشة لضبط التركيز التلقائي (Autofocus)">
+            <!-- حاوية الكاميرا مع مربع المسح الثابت المضيء -->
+            <div class="relative w-full aspect-video sm:aspect-square max-h-[52vh] bg-black rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center cursor-pointer border border-slate-700" id="camera-viewport-touch-area" title="المس الشاشة لضبط التركيز التلقائي (Autofocus)">
                 <div id="camera-reader-viewport" class="w-full h-full object-cover"></div>
                 
-                <!-- طبقة التعتيم والمربع التهديفي لتطبيق طمني (Tameni Reticle) -->
+                <!-- طبقة التعتيم والمربع التهديفي الثابت بأركان مضيئة بدون خط متحرك -->
                 <div class="tameni-overlay-mask">
                     <div id="tameni-reticle-modal" class="tameni-reticle">
-                        <div class="tameni-badge">
-                            <span class="animate-pulse text-emerald-400">⚡</span>
-                            <span>وجّه كود العلبة (DataMatrix) هنا</span>
-                        </div>
+                        <!-- الأركان الأربعة المضيئة -->
                         <div class="tameni-corner tr"></div>
                         <div class="tameni-corner tl"></div>
                         <div class="tameni-corner br"></div>
                         <div class="tameni-corner bl"></div>
-                        <div class="tameni-laser"></div>
+                        
+                        <!-- إرشاد بسيط داخل المربع -->
+                        <div class="absolute inset-0 flex items-center justify-center pointer-events-none p-4">
+                            <span class="px-3 py-1.5 rounded-xl bg-slate-950/75 backdrop-blur-sm border border-emerald-400/30 text-emerald-300 font-bold text-xs shadow-lg text-center select-none">
+                                « وجّه QR داخل الإطار للمسح »
+                            </span>
+                        </div>
                     </div>
                 </div>
 
@@ -2382,6 +2385,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261105_tameni_v101"></script>
+    <script src="app.js?v=20261105_scanner_pro_v1"></script>
 </body>
 </html>

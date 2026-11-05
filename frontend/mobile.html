@@ -223,24 +223,27 @@
     <!-- تبويبات العرض الرئيسية -->
     <main class="flex-1 px-3 py-2">
         
-        <!-- =================== التبويب 1: كاميرا المسح الضوئي الذكي (نظام طمني) =================== -->
+        <!-- =================== التبويب 1: كاميرا المسح الضوئي الاحترافي السريع =================== -->
         <div id="view-scanner" class="space-y-2">
             <div class="relative w-full max-w-md mx-auto aspect-square max-h-[46vh] bg-black rounded-3xl overflow-hidden border-2 border-emerald-500/50 shadow-2xl flex items-center justify-center">
                 <!-- شاشة كاميرا المسح -->
                 <div id="mobile-camera-viewport" class="w-full h-full object-cover"></div>
                 
-                <!-- طبقة التعتيم والمربع التهديفي لتطبيق طمني (Tameni Reticle) -->
+                <!-- طبقة التعتيم والمربع التهديفي الثابت بأركان مضيئة بدون خط ليزر متحرك -->
                 <div class="tameni-overlay-mask">
                     <div id="tameni-reticle-box" class="tameni-reticle">
-                        <div class="tameni-badge">
-                            <span class="animate-pulse text-emerald-400">⚡</span>
-                            <span>وجّه كود العلبة (DataMatrix) داخل المربع</span>
-                        </div>
+                        <!-- الأركان الأربعة المضيئة -->
                         <div class="tameni-corner tr"></div>
                         <div class="tameni-corner tl"></div>
                         <div class="tameni-corner br"></div>
                         <div class="tameni-corner bl"></div>
-                        <div class="tameni-laser"></div>
+                        
+                        <!-- إرشاد بسيط داخل المربع -->
+                        <div class="absolute inset-0 flex items-center justify-center pointer-events-none p-4">
+                            <span class="px-3 py-1.5 rounded-xl bg-slate-950/75 backdrop-blur-sm border border-emerald-400/30 text-emerald-300 font-bold text-xs shadow-lg text-center select-none">
+                                « وجّه QR داخل الإطار للمسح »
+                            </span>
+                        </div>
                     </div>
                 </div>
 
@@ -1277,7 +1280,7 @@
                 fps: 25,
                 qrbox: (w, h) => {
                     const minE = Math.min(w, h);
-                    const size = Math.floor(minE * 0.85);
+                    const size = Math.floor(minE * 0.92);
                     return { width: size, height: size };
                 },
                 aspectRatio: undefined,

@@ -2962,10 +2962,12 @@ function startCamera() {
     initHtml5ScannerInstance();
 }
 
+let isProcessingFrame = false;
+
 async function applyContinuousFocusAndNativeLoop(videoElem) {
     if (!videoElem) return;
 
-    // تفعيل الفوكس التلقائي المستمر عبر كاميرا الموبايل
+    // تفعيل الفوكس التلقائي المستمر عبر كاميرا الموبايل وضبط التعريض
     try {
         if (videoElem.srcObject) {
             const [track] = videoElem.srcObject.getVideoTracks();
@@ -2977,6 +2979,9 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
                 }
                 if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
                     adv.exposureMode = 'continuous';
+                }
+                if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) {
+                    adv.whiteBalanceMode = 'continuous';
                 }
                 if (Object.keys(adv).length > 0) {
                     track.applyConstraints({ advanced: [adv] }).catch(() => {});
@@ -2998,8 +3003,9 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
 
                 const scanFrame = async () => {
                     if (!isNativeScanning || !videoElem || videoElem.paused || videoElem.ended) return;
-                    try {
-                        if (videoElem.readyState >= 2) {
+                    if (!isProcessingFrame && videoElem.readyState >= 2) {
+                        isProcessingFrame = true;
+                        try {
                             const barcodes = await detector.detect(videoElem);
                             if (barcodes && barcodes.length > 0) {
                                 const match = barcodes[0];
@@ -3007,8 +3013,9 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
                                     handleCameraDecodedText(match.rawValue);
                                 }
                             }
-                        }
-                    } catch(e) {}
+                        } catch(e) {}
+                        isProcessingFrame = false;
+                    }
                     if (isNativeScanning) {
                         if ('requestVideoFrameCallback' in videoElem) {
                             videoElem.requestVideoFrameCallback(scanFrame);
@@ -3070,7 +3077,7 @@ function initHtml5ScannerInstance() {
         fps: 25,
         qrbox: (w, h) => {
             const minE = Math.min(w, h);
-            const size = Math.floor(minE * 0.85);
+            const size = Math.floor(minE * 0.92);
             return { width: size, height: size };
         },
         aspectRatio: undefined,
@@ -6400,19 +6407,10 @@ async function handleBatchInputCommit(inputEl, allInputs, skipAdvance = false) {
 
     if (skipAdvance) return;
 
-    // الانتقال التلقائي للباتش التالي أو إغلاق اللوحة إذا كان هذا آخر باتش
-    const nextIdx = idx + 1;
-    if (nextIdx < allInputs.length) {
-        const nextInput = allInputs[nextIdx];
-        if (nextInput) {
-            nextInput.focus();
-            nextInput.select();
-        }
-    } else {
-        // تم إنهاء جميع الباتشات: يختفي الصنف فوراً وينزل بجدول الجرد
-        closeBatchEntryCard();
-        await loadStocktakeStores();
-    }
+    // عند الضغط على Enter (سهم الإنتر ↵) أو زر الحفظ: اعتماد الصنف ونزوله إلى فاتورة الجرد فوراً
+    closeBatchEntryCard();
+    await loadStocktakeStores();
+    await loadCurrentStoreItems();
 }
 
 function closeBatchEntryCard() {
