@@ -6,7 +6,7 @@
     <title>نظام إدارة بطاقات الأصناف والمسح بكود QR</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="style.css?v=20261105_ios_submit_v4">
+    <link rel="stylesheet" href="style.css?v=20261105_arrow_step_v5">
     <!-- Google Fonts: Cairo -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1434,17 +1434,6 @@
                                     </tbody>
                                 </table>
                             </div>
-
-                            <!-- زر اعتماد وترحيل مباشر للجرد (SUBMIT) مخصص للموبايل والكمبيوتر -->
-                            <div class="p-2.5 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border-2 border-emerald-400 flex items-center justify-between gap-2 shadow-sm mt-1">
-                                <button type="button" id="btn-submit-batch-entry-main" class="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-xl font-black text-sm shadow-md transition flex items-center justify-center gap-2">
-                                    <span class="text-base">✅</span>
-                                    <span>اعتماد وترحيل الصنف للفاتورة (SUBMIT) ↵</span>
-                                </button>
-                                <button type="button" onclick="closeBatchEntryCard()" class="py-3 px-3.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs transition">
-                                    إلغاء (Esc)
-                                </button>
-                            </div>
                         </div>
 
                         <!-- جدول بنود الأصناف المجرودة داخل هذا الاستور -->
@@ -1457,6 +1446,7 @@
                                 <div class="flex items-center gap-2">
                                     <!-- بحث في الأصناف المجرودة متبع لنفس طرق البرنامج -->
                                     <input type="text" id="stk-items-search-filter" placeholder="بحث بالاسم، الكود، الباركود، أو الباتش..."
+                                           tabindex="100"
                                            class="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs focus:border-indigo-600 outline-none w-56">
                                 </div>
                             </div>
@@ -2396,6 +2386,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261105_ios_submit_v4"></script>
+    <script src="app.js?v=20261105_arrow_step_v5"></script>
 </body>
 </html>

@@ -6310,6 +6310,9 @@ function openBatchEntryCard(data) {
                                data-sale="${sale}"
                                value="${b.counted_qty > 0 ? b.counted_qty : ''}"
                                placeholder="أدخل..."
+                               tabindex="${idx + 1}"
+                               enterkeyhint="${idx < batches.length - 1 ? 'next' : 'done'}"
+                               inputmode="decimal"
                                oninput="updateBecRowCalc(this)">
                     </td>
                     <td class="border border-slate-300 p-1 text-center font-mono font-bold text-xs">
@@ -6345,7 +6348,7 @@ function openBatchEntryCard(data) {
         }
     }, 60);
 
-    // ربط التنقل بالسهم / Enter بين الباتشات وعدم الاعتماد إلا بعد آخر باتش
+    // ربط التنقل بالسهم / Enter بين الباتشات لعدد N من الباتشات والاعتماد عند آخر باتش
     const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
     inputs.forEach((inp, idx) => {
         inp.addEventListener('focus', () => {
@@ -6361,25 +6364,33 @@ function openBatchEntryCard(data) {
             });
         });
 
-        inp.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter') {
+        const handleStepOrCommit = async (e) => {
+            const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter' || e.code === 'NumpadEnter');
+            const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
+
+            if (isEnter || isTab) {
                 e.preventDefault();
-                // إذا لم يكن آخر باتش: الانتقال الفوري للباتش التالي دون إضافة الصنف للفاتورة بعد
+                e.stopPropagation();
+
+                // إذا كان يوجد باتشات أخرى للصنف (لم نصل لآخر باتش بعد)
                 if (idx < inputs.length - 1) {
                     const nextInput = inputs[idx + 1];
                     if (nextInput) {
                         nextInput.focus();
                         nextInput.select();
+                        nextInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                     }
                 } else {
-                    // آخر باتش (أو صنف بباتش واحد): اعتماد كافة الكميات المدخلة فقط
+                    // آخر باتش (أو الصنف له باتش واحد فقط): التعميد المباشر لفاتورة الجرد وترحيل السجلات
                     await commitAllCardBatches(inputs);
                 }
             } else if (e.key === 'Escape') {
                 e.preventDefault();
                 closeBatchEntryCard();
             }
-        });
+        };
+
+        inp.addEventListener('keydown', handleStepOrCommit);
     });
 
     // ربط أزرار الحفظ الموضعية بكل سطر

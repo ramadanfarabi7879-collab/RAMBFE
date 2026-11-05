@@ -1149,7 +1149,9 @@
                                            data-sale="${sale}"
                                            value="${isFirst ? '1' : '0'}"
                                            placeholder="0"
-                                           inputmode="numeric">
+                                           tabindex="${idx + 1}"
+                                           enterkeyhint="${idx < effectiveBatches.length - 1 ? 'next' : 'done'}"
+                                           inputmode="decimal">
                                     <button type="button" onclick="stepMbBatchRow(${idx}, 1)" class="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-lg flex items-center justify-center active:scale-95 transition">+</button>
                                 </div>
                             </div>
@@ -1176,17 +1178,20 @@
                 });
 
                 inp.addEventListener('keydown', async (e) => {
-                    if (e.key === 'Enter') {
+                    const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter' || e.code === 'NumpadEnter');
+                    const isTab = (e.key === 'Tab' || e.keyCode === 9) && !e.shiftKey;
+                    if (isEnter || isTab) {
                         e.preventDefault();
+                        e.stopPropagation();
                         if (idx < allInputs.length - 1) {
-                            // انتقال للباتش التالي دون اعتماد
+                            // يوجد باتشات أخرى للصنف: انتقال للباتش التالي دون اعتماد
                             const nextInp = allInputs[idx + 1];
                             if (nextInp) {
                                 nextInp.focus();
                                 nextInp.select();
                             }
                         } else {
-                            // آخر باتش -> اعتماد وترحيل
+                            // آخر باتش (أو صنف بباتش واحد): اعتماد وترحيل مباشر لفاتورة الجرد
                             await commitMobileAllBatches();
                         }
                     } else if (e.key === 'Escape') {
