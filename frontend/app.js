@@ -6308,6 +6308,7 @@ function openBatchEntryCard(data) {
     }
 
     card.classList.remove('hidden');
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     // التركيز التلقائي المباشر على أول خانة للرصيد الفعلي (Auto-focus & select)
     setTimeout(() => {

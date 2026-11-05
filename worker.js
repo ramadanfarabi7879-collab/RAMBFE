@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "";
+let activeTunnelUrl = "https://cam-scientist-vault-powell.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
