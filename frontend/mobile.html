@@ -1392,7 +1392,10 @@
                         </div>
 
                         <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-900">
-                            <span class="text-xs font-bold text-emerald-400">الكمية الفعلية (الجرد):</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-emerald-400">الكمية الفعلية:</span>
+                                ${idx < batches.length - 1 ? '<span class="text-[10px] text-amber-400 font-mono font-bold bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-500/30">سهم ➔ التالي</span>' : '<span class="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">سهم ↵ ترحيل</span>'}
+                            </div>
                             <div class="flex items-center gap-1.5">
                                 <button type="button" onclick="stepMbBatchRow(${idx}, -1)" class="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-rose-300 font-bold text-lg flex items-center justify-center border border-slate-700 transition">-</button>
                                 <input type="text"
@@ -1406,7 +1409,7 @@
                                        data-sale="${sale}"
                                        value="${b.counted_qty > 0 ? b.counted_qty : ''}"
                                        placeholder="أدخل..."
-                                       enterkeyhint="done">
+                                       enterkeyhint="${idx < batches.length - 1 ? 'next' : 'done'}">
                                 <button type="button" onclick="stepMbBatchRow(${idx}, 1)" class="w-9 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-lg flex items-center justify-center transition">+</button>
                             </div>
                         </div>
@@ -1511,6 +1514,69 @@
                 });
             });
 
+            // 3. حقول الكمية الفعلية والتنقل والاعتماد
+            const allQtyInputs = Array.from(listContainer.querySelectorAll('.mb-batch-row-qty'));
+            let lastMobileQtyStepTime = 0;
+
+            // دالة التنقل بين الباتشات بالسهم أو اعتماد الترحيل عند آخر باتش في الموبايل
+            async function moveToNextMobileBatchOrCommit(currentIdx) {
+                const now = Date.now();
+                if (now - lastMobileQtyStepTime < 300) return;
+                lastMobileQtyStepTime = now;
+
+                if (!allQtyInputs.length) return;
+
+                const row = document.getElementById(`mb-batch-row-${currentIdx}`);
+                const expInp = row?.querySelector('.mb-batch-row-expiry');
+                const currentQtyInp = row?.querySelector('.mb-batch-row-qty');
+                const countedVal = parseQtyInput(currentQtyInp?.value || '0');
+
+                if (countedVal > 0 && expInp) {
+                    const normalized = normalizeExpiryDate(expInp.value);
+                    expInp.value = normalized;
+                    if (!normalized) {
+                        playBeep(false);
+                        expInp.classList.add('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                        expInp.focus();
+                        expInp.select();
+                        alert('⚠️ يرجى إدخال تاريخ الصلاحية (الاكسبير) للصنف أولاً');
+                        return;
+                    }
+                }
+
+                // إذا كان هناك باتش تالي: ننتقل مباشرة إلى خانة العدد في الباتش التالي
+                if (currentIdx < allQtyInputs.length - 1) {
+                    const nextIdx = currentIdx + 1;
+                    const nextRow = document.getElementById(`mb-batch-row-${nextIdx}`);
+                    const nextExp = nextRow?.querySelector('.mb-batch-row-expiry');
+                    const nextQty = nextRow?.querySelector('.mb-batch-row-qty');
+
+                    // إذا كان الباتش التالي يحتاج إدخال تاريخ الصلاحية يدوياً وهو فارغ، نوجه الفوكس إليها أولاً، وإلا إلى خانة العدد
+                    const target = (nextExp && (!nextExp.value.trim() || nextExp.value === '-')) ? nextExp : nextQty;
+
+                    if (target) {
+                        target.focus();
+                        target.select();
+                        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+
+                    // تمييز السطر النشط
+                    allQtyInputs.forEach((_, j) => {
+                        const r = document.getElementById(`mb-batch-row-${j}`);
+                        if (r) {
+                            if (j === nextIdx) {
+                                r.classList.add('border-amber-400', 'bg-slate-900/90');
+                            } else {
+                                r.classList.remove('border-amber-400', 'bg-slate-900/90');
+                            }
+                        }
+                    });
+                } else {
+                    // عند آخر باتش (أو الصنف له باتش واحد فقط): يتم الاعتماد والترحيل المباشر
+                    await commitMobileAllBatches();
+                }
+            }
+
             // ربط نموذج الموبايل: التوجيه الذكي لمفاتيح الكيبورد الافتراضية
             const mbBatchForm = document.getElementById('mb-batch-form');
             if (mbBatchForm) {
@@ -1541,14 +1607,16 @@
                         return false;
                     }
 
-                    // فقط إذا كان المؤشر في خانة الكمية -> يتم الاعتماد والترحيل
-                    await commitMobileAllBatches();
+                    // إذا كان المؤشر في خانة الكمية -> الانتقال للباتش التالي أو الاعتماد والترحيل عند آخر باتش
+                    let activeIdx = allQtyInputs.indexOf(active);
+                    if (activeIdx === -1) {
+                        activeIdx = allQtyInputs.length - 1;
+                    }
+                    await moveToNextMobileBatchOrCommit(activeIdx);
                     return false;
                 };
             }
 
-            // 3. حقول الكمية الفعلية والتنقل والاعتماد
-            const allQtyInputs = Array.from(listContainer.querySelectorAll('.mb-batch-row-qty'));
             allQtyInputs.forEach((inp, idx) => {
                 inp.addEventListener('focus', () => {
                     allQtyInputs.forEach((otherInp, j) => {
@@ -1572,27 +1640,7 @@
                     if (isEnter || isTab || isDown || isAction) {
                         if (e.preventDefault) e.preventDefault();
                         if (e.stopPropagation) e.stopPropagation();
-
-                        const row = document.getElementById(`mb-batch-row-${idx}`);
-                        const expInp = row?.querySelector('.mb-batch-row-expiry');
-                        const countedVal = parseQtyInput(inp.value || '0');
-
-                        if (countedVal > 0 && expInp) {
-                            const normalized = normalizeExpiryDate(expInp.value);
-                            expInp.value = normalized;
-                            if (!normalized) {
-                                playBeep(false);
-                                expInp.classList.add('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
-                                expInp.focus();
-                                expInp.select();
-                                alert('⚠️ يرجى إدخال تاريخ الصلاحية (الاكسبير) للصنف أولاً');
-                                return;
-                            }
-                        }
-
-                        // في الموبايل: عند وضع الكمية وضغط السهم يتم اعتماد الصنف مباشرة والترحيل للجرد
-                        // بدون الرجوع إلى خانة الصلاحية أو القفز العشوائي
-                        await commitMobileAllBatches();
+                        await moveToNextMobileBatchOrCommit(idx);
                     } else if (e.key === 'Escape') {
                         if (e.preventDefault) e.preventDefault();
                         closeMobileBatchModal(true);
@@ -1606,10 +1654,11 @@
                         handleQtyStep(e);
                     }
                 });
-                inp.addEventListener('beforeinput', (e) => {
+                inp.addEventListener('beforeinput', async (e) => {
                     if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
                         e.preventDefault();
-                        commitMobileAllBatches();
+                        e.stopPropagation();
+                        await moveToNextMobileBatchOrCommit(idx);
                     }
                 });
             });

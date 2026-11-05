@@ -6515,8 +6515,14 @@ function addExtraBatchRowToCard() {
     }, 60);
 }
 
+let lastBatchStepTime = 0;
+
 // دالة التنقل بين الباتشات بالسهم/Enter أو اعتماد الترحيل عند آخر باتش
 function moveToNextBatchOrCommit(currentIdx) {
+    const now = Date.now();
+    if (now - lastBatchStepTime < 300) return;
+    lastBatchStepTime = now;
+
     const tbody = document.getElementById('stk-bec-batches-tbody');
     const allQtyInputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
     if (!allQtyInputs.length) return;
@@ -6540,22 +6546,15 @@ function moveToNextBatchOrCommit(currentIdx) {
         }
     }
 
-    const isMobile = isMobileDeviceEnvironment();
-    // على الموبايل: اعتماد وترحيل مباشر فور إدخال الكمية وضغط السهم دون القفز أو الرجوع لتاريخ الصلاحية
-    if (isMobile || currentIdx >= allQtyInputs.length - 1) {
-        commitAllCardBatches(allQtyInputs);
-        return;
-    }
-
     if (currentIdx < allQtyInputs.length - 1) {
-        // انتقال مباشر للسطر التالي
+        // انتقال مباشر للسطر التالي في خانة الكمية (أو الصلاحية إذا كانت مطلوبة وفارغة)
         const nextIdx = currentIdx + 1;
         const nextRow = document.getElementById(`stk-bec-row-${nextIdx}`);
         const nextExpiryInput = nextRow?.querySelector('.stk-bec-expiry-input');
         const nextQtyInput = nextRow?.querySelector('.stk-bec-qty-input');
 
-        // إذا كان السطر التالي يتطلب إدخال صلاحية وهو فارغ، نوجه الفوكس إليها أولاً
-        const targetFocus = (nextExpiryInput && !nextExpiryInput.value.trim()) ? nextExpiryInput : nextQtyInput;
+        // إذا كان السطر التالي يتطلب إدخال صلاحية وهو فارغ، نوجه الفوكس إليها أولاً، وإلا إلى خانة الكمية مباشرة
+        const targetFocus = (nextExpiryInput && (!nextExpiryInput.value.trim() || nextExpiryInput.value === '-')) ? nextExpiryInput : nextQtyInput;
 
         if (targetFocus) {
             targetFocus.focus();
