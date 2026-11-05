@@ -524,9 +524,11 @@
             </div>
 
             <!-- قائمة تشغيلات الصنف (كل باتش في صف مستقل مع خانة كميته والتنقل بالسهم ↵) -->
-            <div id="mb-batch-rows-list" class="space-y-2 max-h-[46vh] overflow-y-auto pr-0.5">
+            <form id="mb-batch-form" onsubmit="return false;" autocomplete="off" class="space-y-2 max-h-[46vh] overflow-y-auto pr-0.5">
+                <div id="mb-batch-rows-list" class="space-y-2">
                 <!-- تعبئة ديناميكية لكل باتش -->
-            </div>
+                </div>
+            </form>
 
             <!-- أزرار الإجراء: اعتماد وإضافة للجرد ثم العودة فوراً للكاميرا -->
             <div class="pt-2 flex items-center gap-2 border-t border-slate-800">
@@ -871,6 +873,15 @@
             }
         });
 
+        function parseQtyInput(val) {
+            if (!val) return 0;
+            let s = String(val).trim();
+            s = s.replace(/[٠-٩]/g, d => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)]);
+            s = s.replace(/[۰-۹]/g, d => '0123456789'['۰۱۲۳۴۵۶۷۸۹'.indexOf(d)]);
+            const n = parseFloat(s);
+            return isNaN(n) ? 0 : n;
+        }
+
         window.stepMbBatchRow = function(idx, delta) {
             const inp = document.querySelector(`.mb-batch-row-qty[data-index="${idx}"]`);
             if (!inp) return;
@@ -888,7 +899,7 @@
                 const qtyInp = row.querySelector('.mb-batch-row-qty');
                 if (!qtyInp) continue;
                 const val = qtyInp.value.trim();
-                const countedQty = parseFloat(val);
+                const countedQty = parseQtyInput(val);
 
                 // إذا كانت الكمية صفر أو فارغة، نتخطى السطر
                 if (isNaN(countedQty) || countedQty <= 0) {
@@ -1377,7 +1388,8 @@
                             <span class="text-xs font-bold text-emerald-400">الكمية الفعلية (الجرد):</span>
                             <div class="flex items-center gap-1.5">
                                 <button type="button" onclick="stepMbBatchRow(${idx}, -1)" class="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-rose-300 font-bold text-lg flex items-center justify-center border border-slate-700 transition">-</button>
-                                <input type="number" step="any" min="0"
+                                <input type="text"
+                                       inputmode="decimal"
                                        class="mb-batch-row-qty w-24 py-1.5 px-1 rounded-lg bg-slate-900 border-2 border-emerald-500 text-white text-center font-mono font-black text-base focus:border-amber-400 focus:bg-slate-800 outline-none"
                                        data-index="${idx}"
                                        data-batch="${(b.batch_number || '').replace(/"/g, '&quot;')}"
@@ -1387,9 +1399,7 @@
                                        data-sale="${sale}"
                                        value="${b.counted_qty > 0 ? b.counted_qty : ''}"
                                        placeholder="أدخل..."
-                                       tabindex="${(idx + 1) * 3}"
-                                       enterkeyhint="${idx < effectiveBatches.length - 1 ? 'next' : 'done'}"
-                                       inputmode="decimal">
+                                       enterkeyhint="done">
                                 <button type="button" onclick="stepMbBatchRow(${idx}, 1)" class="w-9 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-lg flex items-center justify-center transition">+</button>
                             </div>
                         </div>
@@ -1489,6 +1499,17 @@
                 });
             });
 
+            // ربط نموذج الموبايل لاعتماد مباشر عند ضغط سهم الكيبورد الافتراضي
+            const mbBatchForm = document.getElementById('mb-batch-form');
+            if (mbBatchForm) {
+                mbBatchForm.onsubmit = async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    await commitMobileAllBatches();
+                    return false;
+                };
+            }
+
             // 3. حقول الكمية الفعلية والتنقل والاعتماد
             const allQtyInputs = Array.from(listContainer.querySelectorAll('.mb-batch-row-qty'));
             allQtyInputs.forEach((inp, idx) => {
@@ -1507,15 +1528,17 @@
 
                 const handleQtyStep = async (e) => {
                     const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter' || e.code === 'NumpadEnter');
-                    const isTab = (e.key === 'Tab' || e.keyCode === 9) && !e.shiftKey;
+                    const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
+                    const isDown = (e.key === 'ArrowDown' || e.keyCode === 40 || e.key === 'ArrowRight' || e.keyCode === 39);
+                    const isAction = (e.key === 'Done' || e.key === 'Go' || e.key === 'Next' || e.key === 'Submit');
 
-                    if (isEnter || isTab) {
-                        e.preventDefault();
-                        e.stopPropagation();
+                    if (isEnter || isTab || isDown || isAction) {
+                        if (e.preventDefault) e.preventDefault();
+                        if (e.stopPropagation) e.stopPropagation();
 
                         const row = document.getElementById(`mb-batch-row-${idx}`);
                         const expInp = row?.querySelector('.mb-batch-row-expiry');
-                        const countedVal = parseFloat(inp.value || '0');
+                        const countedVal = parseQtyInput(inp.value || '0');
 
                         if (countedVal > 0 && expInp) {
                             const normalized = normalizeExpiryDate(expInp.value);
@@ -1530,30 +1553,26 @@
                             }
                         }
 
-                        if (idx < allQtyInputs.length - 1) {
-                            const nextRow = document.getElementById(`mb-batch-row-${idx + 1}`);
-                            const nextExp = nextRow?.querySelector('.mb-batch-row-expiry');
-                            const nextQty = nextRow?.querySelector('.mb-batch-row-qty');
-                            const target = (nextExp && !nextExp.value.trim()) ? nextExp : nextQty;
-                            if (target) {
-                                target.focus();
-                                target.select();
-                                target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                            }
-                        } else {
-                            await commitMobileAllBatches();
-                        }
+                        // في الموبايل: عند وضع الكمية وضغط السهم يتم اعتماد الصنف مباشرة والترحيل للجرد
+                        // بدون الرجوع إلى خانة الصلاحية أو القفز العشوائي
+                        await commitMobileAllBatches();
                     } else if (e.key === 'Escape') {
-                        e.preventDefault();
+                        if (e.preventDefault) e.preventDefault();
                         closeMobileBatchModal(true);
                     }
                 };
 
                 inp.addEventListener('keydown', handleQtyStep);
+                inp.addEventListener('keyup', (e) => {
+                    // التقاط مفاتيح كيبورد الموبايل عند الإفلات
+                    if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+                        handleQtyStep(e);
+                    }
+                });
                 inp.addEventListener('beforeinput', (e) => {
                     if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
                         e.preventDefault();
-                        handleQtyStep({ key: 'Enter', keyCode: 13, preventDefault: () => {}, stopPropagation: () => {} });
+                        commitMobileAllBatches();
                     }
                 });
             });

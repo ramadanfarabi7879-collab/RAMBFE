@@ -6328,6 +6328,15 @@ function isMobileDeviceEnvironment() {
 }
 
 // دالة توليد رقم تشغيلة تلقائي بصيغة معيارية B{YYMM}-{index}
+function parseQtyInput(val) {
+    if (!val) return 0;
+    let s = String(val).trim();
+    s = s.replace(/[٠-٩]/g, d => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)]);
+    s = s.replace(/[۰-۹]/g, d => '0123456789'['۰۱۲۳۴۵۶۷۸۹'.indexOf(d)]);
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+}
+
 function generateDefaultBatchNumber(index = 0) {
     const now = new Date();
     const yy = String(now.getFullYear()).slice(-2);
@@ -6485,7 +6494,7 @@ function moveToNextBatchOrCommit(currentIdx) {
     const currentRow = document.getElementById(`stk-bec-row-${currentIdx}`);
     const currentQtyInput = currentRow?.querySelector('.stk-bec-qty-input');
     const currentExpiryInput = currentRow?.querySelector('.stk-bec-expiry-input');
-    const countedVal = parseFloat(currentQtyInput?.value || '0');
+    const countedVal = parseQtyInput(currentQtyInput?.value || '0');
 
     if (countedVal > 0 && currentExpiryInput) {
         const expVal = normalizeExpiryDate(currentExpiryInput.value);
@@ -6498,6 +6507,13 @@ function moveToNextBatchOrCommit(currentIdx) {
             currentExpiryInput.select();
             return;
         }
+    }
+
+    const isMobile = isMobileDeviceEnvironment();
+    // على الموبايل: اعتماد وترحيل مباشر فور إدخال الكمية وضغط السهم دون القفز أو الرجوع لتاريخ الصلاحية
+    if (isMobile || currentIdx >= allQtyInputs.length - 1) {
+        commitAllCardBatches(allQtyInputs);
+        return;
     }
 
     if (currentIdx < allQtyInputs.length - 1) {
@@ -6630,7 +6646,8 @@ function renderBatchCardRows(data) {
                     <span class="font-mono font-black text-slate-900 text-xs px-2 py-0.5 rounded bg-slate-200/80 border border-slate-300 shadow-sm">${sysQty}</span>
                 </td>
                 <td class="border border-slate-300 p-1 text-center bg-emerald-50/50">
-                    <input type="number" step="any" min="0"
+                    <input type="text"
+                           inputmode="decimal"
                            class="stk-bec-qty-input font-mono font-black text-center text-xs w-20 py-0.5 px-1 border-2 border-emerald-500 focus:border-amber-500 focus:bg-amber-50 rounded bg-white text-emerald-950 shadow-inner outline-none transition"
                            data-index="${idx}"
                            data-product-code="${escapeHtml(prod.code || '')}"
@@ -6642,9 +6659,7 @@ function renderBatchCardRows(data) {
                            data-sale="${sale}"
                            value="${b.counted_qty > 0 ? b.counted_qty : ''}"
                            placeholder="أدخل..."
-                           tabindex="${(idx + 1) * 3}"
-                           enterkeyhint="${idx < batches.length - 1 ? 'next' : 'done'}"
-                           inputmode="decimal"
+                           enterkeyhint="done"
                            oninput="updateBecRowCalc(this)">
                 </td>
                 <td class="border border-slate-300 p-1 text-center font-mono font-bold text-xs">
@@ -6778,18 +6793,25 @@ function attachBatchCardRowEvents(data) {
         const handleKeyStep = (e) => {
             const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter' || e.code === 'NumpadEnter');
             const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
+            const isDown = (e.key === 'ArrowDown' || e.keyCode === 40 || e.key === 'ArrowRight' || e.keyCode === 39);
+            const isAction = (e.key === 'Done' || e.key === 'Go' || e.key === 'Next' || e.key === 'Submit');
 
-            if (isEnter || isTab) {
-                e.preventDefault();
-                e.stopPropagation();
+            if (isEnter || isTab || isDown || isAction) {
+                if (e.preventDefault) e.preventDefault();
+                if (e.stopPropagation) e.stopPropagation();
                 moveToNextBatchOrCommit(idx);
             } else if (e.key === 'Escape') {
-                e.preventDefault();
+                if (e.preventDefault) e.preventDefault();
                 closeBatchEntryCard(false);
             }
         };
 
         inp.addEventListener('keydown', handleKeyStep);
+        inp.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+                handleKeyStep(e);
+            }
+        });
         inp.addEventListener('beforeinput', (e) => {
             if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
                 e.preventDefault();
@@ -6930,7 +6952,7 @@ async function commitAllCardBatches(allInputs) {
             const idx = parseInt(inputEl.dataset.index);
             const rowEl = document.getElementById(`stk-bec-row-${idx}`);
             const val = inputEl.value.trim();
-            const countedVal = parseFloat(val);
+            const countedVal = parseQtyInput(val);
 
             // إذا كانت الكمية صفر أو فارغة، نتخطى هذا السطر
             if (isNaN(countedVal) || countedVal <= 0) {
