@@ -67,6 +67,37 @@ function initNavigation() {
     document.getElementById('btn-goto-import-tab')?.addEventListener('click', () => switchTab('import'));
     document.getElementById('btn-report-view-catalog')?.addEventListener('click', () => switchTab('catalog'));
 
+    // زر ملء الشاشة للكمبيوتر واللابتوب (Toggle Fullscreen)
+    const btnFullscreen = document.getElementById('btn-toggle-fullscreen');
+    if (btnFullscreen) {
+        btnFullscreen.addEventListener('click', () => {
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                } else if (document.documentElement.webkitRequestFullscreen) {
+                    document.documentElement.webkitRequestFullscreen();
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen().catch(() => {});
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                }
+            }
+        });
+
+        const updateFullscreenBtn = () => {
+            const isFull = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+            btnFullscreen.innerHTML = isFull
+                ? '<span class="text-sm">🗗</span><span class="hidden md:inline">تصغير الشاشة</span>'
+                : '<span class="text-sm">⛶</span><span class="hidden md:inline">ملء الشاشة</span>';
+            btnFullscreen.setAttribute('title', isFull ? 'الخروج من وضع ملء الشاشة (Esc)' : 'تبديل وضع ملء الشاشة (F11)');
+        };
+
+        document.addEventListener('fullscreenchange', updateFullscreenBtn);
+        document.addEventListener('webkitfullscreenchange', updateFullscreenBtn);
+    }
+
     // زر المسح السريع بكاميرا الهاتف
     document.getElementById('btn-mobile-quick-scan')?.addEventListener('click', () => {
         if (typeof openCameraModal === 'function') {

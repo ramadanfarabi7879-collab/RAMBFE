@@ -305,3 +305,95 @@ input:focus, select:focus {
 .safe-area-pb {
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
 }
+
+/* ==================== تحسينات الشاشات الكبيرة واللابتوب بكامل الشاشة (Laptop & Desktop Full-Width & Large Typography) ==================== */
+@media (min-width: 1024px) {
+    /* استغلال كامل مساحة الشاشة وإلغاء الهوامش الضائعة */
+    .excel-grid-table {
+        font-size: 13px !important;
+        width: 100% !important;
+    }
+    .excel-grid-table th {
+        font-size: 12px !important;
+        padding: 6px 8px !important;
+        line-height: 1.25 !important;
+    }
+    .excel-grid-table td {
+        font-size: 13px !important;
+        padding: 5px 8px !important;
+        line-height: 1.35 !important;
+    }
+
+    /* تكبير وتوسيع جدول الجرد الفعلي */
+    #stk-items-table-tbody tr {
+        font-size: 13.5px !important;
+    }
+    #stk-items-table-tbody td {
+        padding: 6px 8px !important;
+    }
+    #stk-items-table-tbody input {
+        font-size: 13px !important;
+        padding: 2px 4px !important;
+        width: 4.5rem !important;
+    }
+
+    /* لوحة فحص الباتشات العلوية بالجرد */
+    #stk-bec-batches-tbody tr {
+        font-size: 13.5px !important;
+    }
+    #stk-bec-batches-tbody td {
+        padding: 6px 8px !important;
+    }
+    .stk-bec-batch-input, .stk-bec-expiry-input {
+        font-size: 13px !important;
+        width: 8.5rem !important;
+        padding: 3px 6px !important;
+    }
+    .stk-bec-qty-input {
+        font-size: 14px !important;
+        width: 6.5rem !important;
+        padding: 3px 6px !important;
+    }
+
+    /* خانة مسح الباركود المباشرة */
+    #stk-scan-input {
+        font-size: 15px !important;
+        padding-top: 0.75rem !important;
+        padding-bottom: 0.75rem !important;
+    }
+
+    /* حقول الإدخال اليدوي */
+    .custom-fieldset input {
+        font-size: 0.95rem !important;
+        height: 1.55rem !important;
+    }
+    .custom-fieldset legend {
+        font-size: 0.75rem !important;
+    }
+
+    /* بطاقات وأزرار التصفح العلوية */
+    .nav-tab-btn {
+        font-size: 13px !important;
+        padding: 0.5rem 1.15rem !important;
+    }
+}
+
+@media (min-width: 1440px) {
+    .excel-grid-table {
+        font-size: 14px !important;
+    }
+    .excel-grid-table th {
+        font-size: 12.5px !important;
+        padding: 7px 10px !important;
+    }
+    .excel-grid-table td {
+        font-size: 13.5px !important;
+        padding: 6px 10px !important;
+    }
+    #stk-items-table-tbody tr {
+        font-size: 14px !important;
+    }
+    #stk-items-table-tbody td {
+        padding: 7px 10px !important;
+    }
+}

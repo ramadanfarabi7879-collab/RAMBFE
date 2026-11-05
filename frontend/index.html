@@ -6,7 +6,7 @@
     <title>نظام إدارة بطاقات الأصناف والمسح بكود QR</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="style.css?v=20261105_flexible_expiry_v15">
+    <link rel="stylesheet" href="style.css?v=20261105_fullscreen_desktop_v19">
     <!-- Google Fonts: Cairo -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +20,7 @@
 
     <!-- شريط الرأس Navigation Bar المتجاوب للشاشات الكبيرة والموبايل -->
     <header class="bg-slate-900 text-white shadow-md sticky top-0 z-40 border-b border-slate-800">
-        <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex justify-between items-center gap-2">
+        <div class="w-full px-2 sm:px-4 lg:px-6 xl:px-8 py-2 flex justify-between items-center gap-2">
             <!-- الشعار والاسم -->
             <div class="flex items-center space-x-2 sm:space-x-3 space-x-reverse">
                 <div class="px-2 py-1 rounded-xl bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 flex items-center gap-1.5 text-white font-black text-xs shadow-md border-2 border-amber-400/80" dir="ltr" title="R · A M B F · E">
@@ -73,6 +73,11 @@
             <!-- أدوات الموبايل وشارة المزامنة السحابية اللحظية -->
             <div class="flex items-center gap-2">
                 <!-- شارة المزامنة السحابية اللحظية -->
+                <!-- زر ملء الشاشة للكمبيوتر واللابتوب -->
+                <button type="button" id="btn-toggle-fullscreen" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition shadow-sm" title="تبديل وضع ملء الشاشة (F11)">
+                    <span class="text-sm">⛶</span>
+                    <span class="hidden md:inline">ملء الشاشة</span>
+                </button>
                 <div id="header-sync-pill" class="px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] sm:text-xs font-bold flex items-center gap-1.5 shadow-sm" title="متزامن عبر نفق Cloudflare">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
                     <span class="hidden sm:inline">مزامنة سحابية لحظية ⚡</span>
@@ -100,7 +105,7 @@
     </header>
 
     <!-- المحتوى الرئيسي للمشروع -->
-    <main class="w-full max-w-7xl mx-auto px-2 sm:px-4 py-2 flex-1 pb-24 lg:pb-6">
+    <main class="w-full px-2 sm:px-4 lg:px-6 xl:px-8 py-2 flex-1 pb-24 lg:pb-6">
 
         <!-- =================== التبويب 1: المسح الضوئي والفاتورة الحالية =================== -->
         <section id="tab-scanner" class="tab-content space-y-1.5">
@@ -1473,7 +1478,7 @@
                                 </div>
                             </div>
 
-                            <div class="overflow-x-auto max-h-96 overflow-y-auto border border-slate-300 rounded-lg">
+                            <div class="overflow-x-auto max-h-[500px] lg:max-h-[68vh] xl:max-h-[75vh] overflow-y-auto border border-slate-300 rounded-lg">
                                 <table class="w-full text-xs text-right border-collapse border border-slate-300 bg-white shadow-sm font-sans">
                                     <thead class="bg-slate-200/90 text-slate-800 font-bold sticky top-0 z-10 text-[11px] border-b-2 border-slate-400 select-none">
                                         <tr class="divide-x divide-x-reverse divide-slate-300">
@@ -2394,6 +2399,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261105_mobile_focus_flow_v17"></script>
+    <script src="app.js?v=20261105_fullscreen_desktop_v19"></script>
 </body>
 </html>
