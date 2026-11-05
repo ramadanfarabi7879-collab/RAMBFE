@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://cam-scientist-vault-powell.trycloudflare.com";
+let activeTunnelUrl = "https://switch-opinion-shortcuts-syracuse.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -156,7 +156,7 @@ export default {
 
         // إذا كان الطلب مسار API
         if (path.startsWith('/api/')) {
-            const pcTunnel = activeTunnelUrl || "https://cam-scientist-vault-powell.trycloudflare.com";
+            const pcTunnel = activeTunnelUrl || "https://switch-opinion-shortcuts-syracuse.trycloudflare.com";
 
             // 1. إذا كان نفق الكمبيوتر متوفراً، مرر كافة طلبات الـ API مباشرة لقاعدة بيانات الكمبيوتر!
             if (pcTunnel && !path.startsWith('/api/tunnel/')) {
@@ -174,16 +174,20 @@ export default {
                     });
 
                     const resp = await fetch(proxyReq);
-                    const respHeaders = new Headers(resp.headers);
-                    respHeaders.set('Access-Control-Allow-Origin', '*');
-                    respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
-                    respHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+                    if (resp.status >= 500 && resp.status <= 599) {
+                        console.warn('Proxy to tunnel returned status', resp.status, 'falling back to edge handler');
+                    } else {
+                        const respHeaders = new Headers(resp.headers);
+                        respHeaders.set('Access-Control-Allow-Origin', '*');
+                        respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+                        respHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-                    return new Response(resp.body, {
-                        status: resp.status,
-                        statusText: resp.statusText,
-                        headers: respHeaders
-                    });
+                        return new Response(resp.body, {
+                            status: resp.status,
+                            statusText: resp.statusText,
+                            headers: respHeaders
+                        });
+                    }
                 } catch (err) {
                     console.error('Proxy to PC tunnel error, falling back to edge memory:', err);
                 }
@@ -382,6 +386,10 @@ export default {
                 }
 
                 if (!is2d && !forceDirect) {
+                    const now = new Date();
+                    const yy = String(now.getFullYear()).slice(-2);
+                    const mm = String(now.getMonth() + 1).padStart(2, '0');
+                    const autoBatch = `B${yy}${mm}-01`;
                     return jsonResponse({
                         success: true,
                         requires_batch_entry: true,
@@ -395,12 +403,15 @@ export default {
                         },
                         batches: [
                             {
-                                batch_number: 'B1',
-                                expiry_date: '2027-12',
+                                batch_number: autoBatch,
+                                expiry_date: '',
                                 system_qty: 0,
                                 counted_qty: 0,
                                 cost_price: prod.cost || 0,
-                                selling_price: prod.price || 0
+                                selling_price: prod.price || 0,
+                                is_new_batch: 1,
+                                is_manual_batch: 1,
+                                requires_manual_entry: true
                             }
                         ],
                         store_no: storeNo
@@ -449,6 +460,44 @@ export default {
                     gtin: gs1.gtin,
                     batch: gs1.batch,
                     message: `تم سحب العبوة للجرد (+1): ${prod.name}`
+                });
+            }
+
+            if (path === '/api/stock/save-batch-qty') {
+                const storeNo = String(body.store_no || 'ST-001').trim();
+                const prodCode = String(body.product_code || '').trim();
+                const batchNumber = String(body.batch_number || '').trim();
+                const expiryDate = String(body.expiry_date || '').trim();
+                const countedQty = parseFloat(body.counted_qty || 0);
+
+                let item = memoryStocktakeItems.find(it => it.store_no === storeNo && it.product_code === prodCode && (it.batch_number === batchNumber || !it.batch_number));
+                if (item) {
+                    item.actual_qty = countedQty;
+                    item.batch_number = batchNumber;
+                    if (expiryDate) item.expiry_date = expiryDate;
+                } else {
+                    const prod = memoryProducts.find(p => p.code === prodCode) || { name: 'صنف دوائي', price: 0, cost: 0, barcode: '' };
+                    item = {
+                        entry_id: memoryStocktakeItems.length + 1,
+                        store_no: storeNo,
+                        product_code: prodCode,
+                        item_name: prod.name,
+                        barcode: prod.barcode || '',
+                        batch_number: batchNumber,
+                        expiry_date: expiryDate,
+                        actual_qty: countedQty,
+                        system_qty: parseFloat(body.system_qty || 0),
+                        cost_price: parseFloat(body.cost_price || prod.cost || 0),
+                        selling_price: parseFloat(body.selling_price || prod.price || 0)
+                    };
+                    memoryStocktakeItems.push(item);
+                }
+                broadcastEvent('stock_qty_updated', { store_no: storeNo, entry_id: item.entry_id, quantity: item.actual_qty });
+                return jsonResponse({
+                    success: true,
+                    entry_id: item.entry_id,
+                    message: `تم حفظ: ${item.item_name} | تشغيلة: ${batchNumber || '-'} | الفعلي: ${countedQty}`,
+                    store_details: getStoreDetails(storeNo)
                 });
             }
 
