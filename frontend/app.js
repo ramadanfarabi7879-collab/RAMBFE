@@ -6740,11 +6740,11 @@ function attachBatchCardRowEvents(data) {
         const handleExpiryStep = (e) => {
             const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter');
             const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
-            const isDown = (e.key === 'ArrowDown' || e.keyCode === 40);
+            const isDown = (e.key === 'ArrowDown' || e.keyCode === 40 || e.key === 'ArrowRight' || e.keyCode === 39);
 
             if (isEnter || isTab || isDown) {
-                e.preventDefault();
-                e.stopPropagation();
+                if (e.preventDefault) e.preventDefault();
+                if (e.stopPropagation) e.stopPropagation();
                 expInp.value = normalizeExpiryDate(expInp.value);
                 if (expInp.value) {
                     expInp.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-50');
@@ -6758,6 +6758,11 @@ function attachBatchCardRowEvents(data) {
         };
 
         expInp.addEventListener('keydown', handleExpiryStep);
+        expInp.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+                handleExpiryStep(e);
+            }
+        });
         expInp.addEventListener('beforeinput', (e) => {
             if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
                 e.preventDefault();
@@ -6899,13 +6904,35 @@ function openBatchEntryCard(data, source = 'desktop_input') {
     const tbody = document.getElementById('stk-bec-batches-tbody');
     const qtyInputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
 
-    // تأمين النموذج من إرسال المتصفح التلقائي
+    // تأمين النموذج من إرسال المتصفح التلقائي والتوجيه الذكي لمفاتيح الكيبورد
     const batchForm = document.getElementById('stk-bec-batches-form');
     if (batchForm) {
         batchForm.onsubmit = (e) => {
             e.preventDefault();
             e.stopPropagation();
             const activeEl = document.activeElement;
+
+            // إذا كان المؤشر في خانة رقم التشغيلة -> توجه لخانة الصلاحية
+            if (activeEl && activeEl.classList.contains('stk-bec-batch-input')) {
+                const idx = parseInt(activeEl.dataset.index, 10);
+                const expInp = tbody?.querySelector(`#stk-bec-row-${idx} .stk-bec-expiry-input`);
+                if (expInp) { expInp.focus(); expInp.select(); }
+                return false;
+            }
+
+            // إذا كان المؤشر في خانة الصلاحية -> نسق التاريخ وتوجه لخانة الكمية (ممنوع الإغلاق أو الاعتماد هنا)
+            if (activeEl && activeEl.classList.contains('stk-bec-expiry-input')) {
+                activeEl.value = normalizeExpiryDate(activeEl.value);
+                if (activeEl.value) {
+                    activeEl.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-50');
+                }
+                const idx = parseInt(activeEl.dataset.index, 10);
+                const qtyInp = tbody?.querySelector(`#stk-bec-row-${idx} .stk-bec-qty-input`);
+                if (qtyInp) { qtyInp.focus(); qtyInp.select(); }
+                return false;
+            }
+
+            // فقط إذا كان المؤشر في خانة الكمية -> يتم الاعتماد والترحيل
             let activeIdx = qtyInputs.indexOf(activeEl);
             if (activeIdx === -1) {
                 activeIdx = qtyInputs.length - 1;
@@ -7002,8 +7029,13 @@ async function commitAllCardBatches(allInputs) {
         }
 
         if (rowsToSave.length === 0) {
-            showCatalogToast('ℹ️ لم يتم إدخال أي كمية للجرد');
-            closeBatchEntryCard(false);
+            playStockAudioAlert(false);
+            showCatalogToast('⚠️ يرجى إدخال الكمية الفعلية للصنف أولاً');
+            const firstQty = tbody.querySelector('.stk-bec-qty-input');
+            if (firstQty) {
+                firstQty.focus();
+                firstQty.select();
+            }
             return;
         }
 

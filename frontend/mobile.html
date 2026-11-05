@@ -948,7 +948,14 @@
             }
 
             if (rowsToSave.length === 0) {
-                closeMobileBatchModal(true);
+                playBeep(false);
+                const firstQty = document.querySelector('.mb-batch-row-qty');
+                if (firstQty) {
+                    firstQty.classList.add('border-amber-400', 'ring-2', 'ring-amber-400');
+                    firstQty.focus();
+                    firstQty.select();
+                }
+                alert('⚠️ يرجى إدخال الكمية الفعلية للصنف أولاً');
                 return;
             }
 
@@ -1482,6 +1489,11 @@
                     }
                 };
                 expInp.addEventListener('keydown', handleExpiryStep);
+                expInp.addEventListener('keyup', (e) => {
+                    if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+                        handleExpiryStep(e);
+                    }
+                });
                 expInp.addEventListener('beforeinput', (e) => {
                     if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
                         e.preventDefault();
@@ -1499,12 +1511,37 @@
                 });
             });
 
-            // ربط نموذج الموبايل لاعتماد مباشر عند ضغط سهم الكيبورد الافتراضي
+            // ربط نموذج الموبايل: التوجيه الذكي لمفاتيح الكيبورد الافتراضية
             const mbBatchForm = document.getElementById('mb-batch-form');
             if (mbBatchForm) {
                 mbBatchForm.onsubmit = async (e) => {
                     e.preventDefault();
                     e.stopPropagation();
+
+                    const active = document.activeElement;
+                    // إذا كان المؤشر في خانة رقم التشغيلة -> توجه لخانة الصلاحية
+                    if (active && active.classList.contains('mb-batch-row-batch')) {
+                        const idx = parseInt(active.dataset.index, 10);
+                        const row = document.getElementById(`mb-batch-row-${idx}`);
+                        const exp = row?.querySelector('.mb-batch-row-expiry');
+                        if (exp) { exp.focus(); exp.select(); }
+                        return false;
+                    }
+
+                    // إذا كان المؤشر في خانة الصلاحية -> نسق التاريخ وانتقل فوراً لخانة الكمية (ممنوع الإغلاق أو الاعتماد هنا)
+                    if (active && active.classList.contains('mb-batch-row-expiry')) {
+                        active.value = normalizeExpiryDate(active.value);
+                        if (active.value) {
+                            active.classList.remove('border-rose-500', 'ring-2', 'ring-rose-500', 'bg-rose-950/60');
+                        }
+                        const idx = parseInt(active.dataset.index, 10);
+                        const row = document.getElementById(`mb-batch-row-${idx}`);
+                        const qty = row?.querySelector('.mb-batch-row-qty');
+                        if (qty) { qty.focus(); qty.select(); }
+                        return false;
+                    }
+
+                    // فقط إذا كان المؤشر في خانة الكمية -> يتم الاعتماد والترحيل
                     await commitMobileAllBatches();
                     return false;
                 };
