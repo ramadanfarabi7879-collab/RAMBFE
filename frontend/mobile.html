@@ -896,14 +896,12 @@
                 html5QrCode = new Html5Qrcode("mobile-camera-viewport", { verbose: false });
             }
 
-            const highResCamera = {
-                facingMode: { ideal: currentFacingMode },
-                width: { min: 1280, ideal: 1920, max: 3840 },
-                height: { min: 720, ideal: 1080, max: 2160 }
+            const cameraConstraints = {
+                facingMode: currentFacingMode === 'user' ? 'user' : 'environment'
             };
 
             const scanConfig = {
-                fps: 24,
+                fps: 20,
                 qrbox: (w, h) => ({
                     width: Math.floor(w * 0.94),
                     height: Math.floor(h * 0.94)
@@ -912,28 +910,40 @@
                 disableFlip: false
             };
 
-            const startWithFallback = (cfg) => {
-                return html5QrCode.start(
-                    cfg,
-                    scanConfig,
-                    (decodedText) => {
-                        submitScannedCode(decodedText);
-                    },
-                    () => {}
-                );
-            };
-
-            startWithFallback(highResCamera)
-                .catch(() => startWithFallback({ facingMode: currentFacingMode }))
-                .then(() => {
+            html5QrCode.start(
+                cameraConstraints,
+                scanConfig,
+                (decodedText) => {
+                    submitScannedCode(decodedText);
+                },
+                () => {}
+            ).then(() => {
+                const video = document.querySelector('#mobile-camera-viewport video');
+                applyMobileFocusAndNativeLoop(video);
+            }).catch(err => {
+                console.warn('Direct facingMode failed, trying getCameras fallback:', err);
+                Html5Qrcode.getCameras().then(devices => {
+                    if (devices && devices.length > 0) {
+                        const back = devices.find(d => (d.label || '').toLowerCase().includes('back')) || devices[0];
+                        try { html5QrCode.clear(); } catch(e) {}
+                        html5QrCode = new Html5Qrcode("mobile-camera-viewport", { verbose: false });
+                        return html5QrCode.start(
+                            back.id,
+                            scanConfig,
+                            (t) => submitScannedCode(t),
+                            () => {}
+                        );
+                    }
+                    throw new Error('لا توجد كاميرا');
+                }).then(() => {
                     const video = document.querySelector('#mobile-camera-viewport video');
                     applyMobileFocusAndNativeLoop(video);
-                })
-                .catch(err => {
-                    console.error("Camera start error:", err);
+                }).catch(err2 => {
+                    console.error("Camera start error:", err2);
                     const btnRestart = document.getElementById('btn-restart-camera');
                     if (btnRestart) btnRestart.classList.remove('hidden');
                 });
+            });
         }
 
         // كشاف الكاميرا

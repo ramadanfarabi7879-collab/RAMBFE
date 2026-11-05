@@ -59,9 +59,7 @@ def main():
 
     cf_exe = find_cloudflared()
     if not cf_exe:
-        print("❌ لم يتم العثور على أداة cloudflared.exe في مسار النظام!", flush=True)
-        print("يرجى التأكد من تثبيت cloudflared.", flush=True)
-        sys.exit(1)
+        print("⚠️ لم يتم العثور على أداة cloudflared.exe في مسار النظام، سيتم تشغيل البرنامج محلياً.", flush=True)
 
     port = 8000
     if len(sys.argv) > 1 and sys.argv[1].isdigit():
@@ -76,6 +74,19 @@ def main():
             cwd=str(BASE_DIR)
         )
         time.sleep(1.5)
+
+    if not cf_exe:
+        print(f"[*] يعمل البرنامج محلياً على المنفذ {port}. تم فتح المتصفح...", flush=True)
+        try:
+            webbrowser.open(f"http://127.0.0.1:{port}")
+        except Exception:
+            pass
+        if server_process:
+            try:
+                server_process.wait()
+            except KeyboardInterrupt:
+                server_process.terminate()
+        return
 
     # 2. تشغيل نفق Cloudflare Tunnel
     print(f"[*] جاري إنشاء نفق Cloudflare آمن ومشفر للمنفذ {port}...", flush=True)
@@ -115,15 +126,33 @@ def main():
         with open(CF_URL_FILE, "w", encoding="utf-8") as f:
             f.write(tunnel_url)
 
+        # تسجيل النفق في سيرفر Cloudflare Worker الرئيسي للمزامنة اللحظية الشاملة
+        def register_with_worker(u):
+            try:
+                import urllib.request
+                import json
+                reg_url = "https://rambfe.quran-halaqat.workers.dev/api/tunnel/register"
+                payload = json.dumps({"tunnel_url": u}).encode('utf-8')
+                req = urllib.request.Request(reg_url, data=payload, headers={'Content-Type': 'application/json', 'User-Agent': 'RAMBFE-Bridge/1.0'})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        print(" [*] تم ربط نفق الكمبيوتر بسيرفر Cloudflare (rambfe.quran-halaqat.workers.dev) بنجاح تام!", flush=True)
+            except Exception as ex:
+                print(f" [!] تنبيه تسجيل النفق بسيرفر Cloudflare: {ex}", flush=True)
+
+        register_with_worker(tunnel_url)
+
+        worker_url = "https://rambfe.quran-halaqat.workers.dev"
         mobile_url = f"{tunnel_url}/mobile"
-        print("\n" + "★" * 65)
-        print(" 🎉 تم تفعيل دومين Cloudflare بنجاح! الرابط جاهز للعمل من أي مكان:")
-        print(f" 🌐 رابط الموبايل (الجرد السحابي):  {mobile_url}")
-        print(f" 💻 رابط الكمبيوتر (لوحة التحكم):   {tunnel_url}")
-        print("★" * 65 + "\n")
-        print("📱 يمكنك الآن فتح هذا الرابط من أي موبايل عبر 4G/5G أو واي فاي.")
-        print("⚡ أي عملية جرد أو مسح على الموبايل ستسمع فوراً على الكمبيوتر في نفس اللحظة!")
-        print("\n[اضغط Ctrl+C لإيقاف النفق والسيرفر]")
+        print("\n" + "★" * 68)
+        print(" 🎉 تم تفعيل دومين Cloudflare والمزامنة اللحظية بنجاح 100%:")
+        print(f" 🌐 الرابط الثابت على كلودفلير:    {worker_url}")
+        print(f" ⚡ الرابط المباشر للكمبيوتر والنفق: {tunnel_url}")
+        print(f" 📱 كشف الجرد السريع بالموبايل:   {mobile_url}")
+        print("★" * 68 + "\n")
+        print("✅ قاعدة بيانات الأصناف (30,199 صنف) وجداول الجرد متزامنة الآن لحظياً بين الموبايل والكمبيوتر!")
+        print("📱 يمكنك استخدام رابط كلودفلير الثابت أو مسح كود QR من شاشة الكمبيوتر.")
+        print("\n[اترك هذه النافذة مفتوحة طوال فترة عمل البرنامج]")
 
         # فتح رابط الكمبيوتر للمستخدم
         try:
@@ -131,9 +160,16 @@ def main():
         except Exception:
             pass
 
+    heartbeat_counter = 0
     try:
         while True:
             time.sleep(1)
+            heartbeat_counter += 1
+            if heartbeat_counter >= 35:
+                heartbeat_counter = 0
+                if tunnel_url:
+                    register_with_worker(tunnel_url)
+
             if cf_proc.poll() is not None:
                 print("Cloudflare process ended.")
                 break

@@ -109,7 +109,13 @@ def main():
     print("[*] جاري تجهيز الملفات (git add .)...")
     run_cmd(git_bin, ["add", "."])
 
-    commit_msg = input("\n📝 أدخل رسالة التحديث (أو اضغط Enter للاعتماد الافتراضي): ").strip()
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        commit_msg = sys.argv[1].strip()
+        interactive = False
+    else:
+        commit_msg = input("\n📝 أدخل رسالة التحديث (أو اضغط Enter للاعتماد الافتراضي): ").strip()
+        interactive = True
+
     if not commit_msg:
         commit_msg = "update: Latest project improvements and mobile sync updates"
 
@@ -135,8 +141,9 @@ def main():
         print(" 2. أو اسم المستخدم الخاص بك و Personal Access Token (PAT) ككلمة مرور.")
         print("!" * 65)
 
-    print()
-    input("اضغط Enter للإغلاق...")
+    if interactive:
+        print()
+        input("اضغط Enter للإغلاق...")
     return 0
 
 if __name__ == '__main__':

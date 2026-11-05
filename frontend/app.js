@@ -2771,12 +2771,12 @@ function initCameraScanner() {
     });
 
     // التقاط صورة بديلة بالكاميرا
-    document.getElementById('modal-camera-file-input')?.addEventListener('change', async (e) => {
+    const handleSnapFileInput = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
         try {
             if (!html5QrScannerInstance) {
-                initHtml5ScannerInstance();
+                html5QrScannerInstance = new Html5Qrcode("camera-reader-viewport", { verbose: false });
             }
             const decodedText = await html5QrScannerInstance.scanFile(file, true);
             if (decodedText) {
@@ -2787,7 +2787,9 @@ function initCameraScanner() {
         } finally {
             e.target.value = '';
         }
-    });
+    };
+    document.getElementById('modal-camera-file-input')?.addEventListener('change', handleSnapFileInput);
+    document.getElementById('modal-camera-fallback-file')?.addEventListener('change', handleSnapFileInput);
 
     // تهيئة ربط الجوال كاسكانر لاسلكي
     initMobileCompanionScanner();
@@ -3010,19 +3012,20 @@ function initHtml5ScannerInstance() {
             }
         });
     } catch(e) {
-        html5QrScannerInstance = new Html5Qrcode("camera-reader-viewport", {
-            verbose: false
-        });
+        try {
+            html5QrScannerInstance = new Html5Qrcode("camera-reader-viewport", { verbose: false });
+        } catch(e2) {}
     }
 
-    const highResCameraConfig = {
-        facingMode: { ideal: cameraFacingMode },
-        width: { min: 1280, ideal: 1920, max: 3840 },
-        height: { min: 720, ideal: 1080, max: 2160 }
+    if (!html5QrScannerInstance) return;
+
+    // استخدام إعدادات كاميرا قياسية متوافقة 100% مع جميع أجهزة الموبايل دون قيود دقة تسبب أخطاء
+    const cameraConstraints = {
+        facingMode: cameraFacingMode === 'user' ? 'user' : 'environment'
     };
 
     const scanConfig = {
-        fps: 24,
+        fps: 20,
         qrbox: (w, h) => ({
             width: Math.floor(w * 0.94),
             height: Math.floor(h * 0.94)
@@ -3031,33 +3034,54 @@ function initHtml5ScannerInstance() {
         disableFlip: false
     };
 
-    const onScanSuccess = (decodedText) => {
-        handleCameraDecodedText(decodedText);
-    };
+    const banner = document.getElementById('camera-permission-banner');
 
-    const startWithFallback = (cfg) => {
-        return html5QrScannerInstance.start(
-            cfg,
-            scanConfig,
-            onScanSuccess,
-            () => {}
-        );
-    };
-
-    // البدء بدقة عالية Full HD لقراءة علب الأدوية، مع التراجع التلقائي إذا كانت الكاميرا قديمة
-    startWithFallback(highResCameraConfig)
-        .catch(() => {
-            return startWithFallback({ facingMode: cameraFacingMode });
-        })
-        .then(() => {
-            const video = document.querySelector('#camera-reader-viewport video');
+    html5QrScannerInstance.start(
+        cameraConstraints,
+        scanConfig,
+        (decodedText) => {
+            handleCameraDecodedText(decodedText);
+        },
+        () => {}
+    ).then(() => {
+        if (banner) banner.classList.add('hidden');
+        const video = document.querySelector('#camera-reader-viewport video');
+        if (video) {
             applyContinuousFocusAndNativeLoop(video);
-        })
-        .catch(err => {
-            console.error('Camera start error', err);
-            alert('تعذر فتح الكاميرا: يُرجى التأكد من السماح بصلاحيات الكاميرا في المتصفح، أو يمكنك رفع صورة واضحة للعلبة عبر زر (صورة).');
-            document.getElementById('modal-camera-scanner')?.classList.add('hidden');
+        }
+    }).catch(err => {
+        console.warn('Direct facingMode start failed, trying device list enumeration:', err);
+        // محاولة استخدام قائمة الكاميرات المتاحة في الجهاز كبديل مباشر
+        Html5Qrcode.getCameras().then(devices => {
+            if (devices && devices.length > 0) {
+                const backCam = devices.find(d => {
+                    const l = (d.label || '').toLowerCase();
+                    return l.includes('back') || l.includes('rear') || l.includes('environment');
+                }) || devices[0];
+
+                try { html5QrScannerInstance.clear(); } catch(e) {}
+                html5QrScannerInstance = new Html5Qrcode("camera-reader-viewport", { verbose: false });
+                return html5QrScannerInstance.start(
+                    backCam.id,
+                    scanConfig,
+                    (decodedText) => handleCameraDecodedText(decodedText),
+                    () => {}
+                );
+            }
+            throw new Error('لا توجد كاميرا متوفرة');
+        }).then(() => {
+            if (banner) banner.classList.add('hidden');
+            const video = document.querySelector('#camera-reader-viewport video');
+            if (video) applyContinuousFocusAndNativeLoop(video);
+        }).catch(finalErr => {
+            console.error('All camera attempts failed:', finalErr);
+            if (banner) {
+                banner.classList.remove('hidden');
+            } else {
+                alert('تعذر فتح الكاميرا: يُرجى التأكد من السماح بصلاحيات الكاميرا في المتصفح، أو اضغط زر (📸 صورة) لالتقاط صورة للعلبة.');
+            }
         });
+    });
 }
 
 function stopCamera() {
@@ -6602,14 +6626,21 @@ async function deleteStoreItem(id) {
             })
         });
         const data = await res.json();
-        if (data.success && data.store_details) {
+        if (data.success) {
             selectedStockEntryIds.delete(id);
             updateStockSelectionBar();
-            renderCurrentStoreDetails(data.store_details);
-            loadStocktakeStores();
+            if (data.store_details) {
+                renderCurrentStoreDetails(data.store_details);
+            } else {
+                await loadCurrentStoreItems();
+            }
+            await loadStocktakeStores();
+            showCatalogToast('🗑️ تم مسح الصنف من الجرد بنجاح');
+        } else {
+            alert('فشل المسح: ' + (data.message || 'خطأ'));
         }
     } catch (e) {
-        alert('خطأ: ' + e.message);
+        alert('خطأ أثناء المسح: ' + e.message);
     }
 }
 

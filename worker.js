@@ -31,6 +31,32 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
+let activeTunnelUrl = "";
+
+function getStoreDetails(storeNo) {
+    const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
+    let totActual = 0, totSystem = 0, totCost = 0, totSale = 0;
+    items.forEach(it => {
+        const act = Number(it.actual_qty || 0);
+        const sys = Number(it.system_qty || 0);
+        totActual += act;
+        totSystem += sys;
+        totCost += act * (it.cost_price || 0);
+        totSale += act * (it.selling_price || 0);
+    });
+    return {
+        items: items,
+        totals: {
+            total_items: items.length,
+            total_actual_qty: totActual,
+            total_system_qty: totSystem,
+            total_diff_qty: totActual - totSystem,
+            total_actual_cost: totCost,
+            total_actual_sale: totSale
+        },
+        active_store: memoryStores.find(s => s.store_no === storeNo) || { store_no: storeNo, store_name: 'المستودع' }
+    };
+}
 
 function parseGs1Code(rawInput) {
     if (!rawInput) return { isGs1: false, gtin: '', batch: '', serial: '', expiry: '', raw: '' };
@@ -133,9 +159,59 @@ export default {
             let body = {};
             if (method === 'POST') {
                 try {
-                    body = await request.json();
+                    body = await request.clone().json();
                 } catch (e) {
                     body = {};
+                }
+            }
+
+            // 1. تسجيل نفق الكمبيوتر للربط السحابي اللحظي
+            if (path === '/api/tunnel/register') {
+                const newTunnel = String(body.tunnel_url || '').trim().replace(/\/+$/, '');
+                if (newTunnel && newTunnel.startsWith('http')) {
+                    activeTunnelUrl = newTunnel;
+                }
+                return jsonResponse({
+                    success: true,
+                    message: 'تم تسجيل نفق Cloudflare بنجاح والمزامنة الحية مفعلة',
+                    active_tunnel: activeTunnelUrl
+                });
+            }
+
+            if (path === '/api/tunnel/status') {
+                return jsonResponse({
+                    is_connected: Boolean(activeTunnelUrl),
+                    tunnel_url: activeTunnelUrl
+                });
+            }
+
+            // 2. إذا كان نفق الكمبيوتر مسجلاً، قم بتمرير كافة طلبات الـ API مباشرة لقاعدة بيانات الكمبيوتر!
+            if (activeTunnelUrl && !path.startsWith('/api/tunnel/')) {
+                try {
+                    const targetUrl = new URL(path + url.search, activeTunnelUrl);
+                    const proxyHeaders = new Headers(request.headers);
+                    proxyHeaders.set('Host', new URL(activeTunnelUrl).host);
+                    proxyHeaders.set('X-Forwarded-Host', url.host);
+
+                    const proxyReq = new Request(targetUrl.toString(), {
+                        method: request.method,
+                        headers: proxyHeaders,
+                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer()
+                    });
+
+                    const resp = await fetch(proxyReq);
+                    const respHeaders = new Headers(resp.headers);
+                    respHeaders.set('Access-Control-Allow-Origin', '*');
+                    respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+                    respHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+                    return new Response(resp.body, {
+                        status: resp.status,
+                        statusText: resp.statusText,
+                        headers: respHeaders
+                    });
+                } catch (err) {
+                    console.error('Proxy to PC tunnel error, falling back to edge memory:', err);
                 }
             }
 
@@ -359,13 +435,48 @@ export default {
 
             if (path === '/api/stock/delete-item') {
                 const entryId = Number(body.entry_id || body.id);
+                const storeNo = String(body.store_no || 'ST-001').trim();
                 const idx = memoryStocktakeItems.findIndex(it => it.entry_id === entryId);
                 if (idx >= 0) {
-                    const removed = memoryStocktakeItems.splice(idx, 1)[0];
-                    broadcastEvent('stock_item_deleted', { entry_id: entryId, store_no: removed.store_no });
-                    return jsonResponse({ success: true });
+                    memoryStocktakeItems.splice(idx, 1);
+                    broadcastEvent('stock_item_deleted', { entry_id: entryId, store_no: storeNo });
+                    return jsonResponse({
+                        success: true,
+                        message: 'تم حذف الصنف بنجاح',
+                        store_details: getStoreDetails(storeNo)
+                    });
                 }
-                return jsonResponse({ success: false }, 404);
+                return jsonResponse({ success: false, message: 'الصنف غير موجود' }, 404);
+            }
+
+            if (path === '/api/stock/bulk-delete') {
+                const entryIds = (body.entry_ids || []).map(Number);
+                const storeNo = String(body.store_no || 'ST-001').trim();
+                memoryStocktakeItems = memoryStocktakeItems.filter(it => !entryIds.includes(it.entry_id));
+                broadcastEvent('stock_item_deleted', { store_no: storeNo, entry_ids: entryIds });
+                return jsonResponse({
+                    success: true,
+                    message: `تم حذف ${entryIds.length} صنف بنجاح`,
+                    store_details: getStoreDetails(storeNo)
+                });
+            }
+
+            if (path === '/api/stock/delete-store') {
+                const storeNo = String(body.store_no || '').trim();
+                const idx = memoryStores.findIndex(s => s.store_no === storeNo);
+                if (idx >= 0) {
+                    memoryStores.splice(idx, 1);
+                    memoryStocktakeItems = memoryStocktakeItems.filter(it => it.store_no !== storeNo);
+                    broadcastEvent('store_deleted', { store_no: storeNo });
+                    return jsonResponse({ success: true, message: 'تم مسح المستودع بالكامل' });
+                }
+                return jsonResponse({ success: false, message: 'المستودع غير موجود' });
+            }
+
+            if (path === '/api/stock/reset-all') {
+                memoryStocktakeItems = [];
+                broadcastEvent('stock_reset', {});
+                return jsonResponse({ success: true, message: 'تم تصفير بيانات الجرد بالكامل' });
             }
 
             if (path === '/api/stock/settle') {
@@ -468,6 +579,27 @@ export default {
                     expiry: gs1.expiry || line.expiry,
                     line_qty: line.quantity
                 });
+            }
+
+            if (path === '/api/invoice/delete-line') {
+                const lineId = Number(body.line_id);
+                const idx = memoryDraftInvoice.lines.findIndex(l => l.id === lineId);
+                if (idx >= 0) {
+                    memoryDraftInvoice.lines.splice(idx, 1);
+                    broadcastEvent('invoice_updated', memoryDraftInvoice);
+                    return jsonResponse({
+                        success: true,
+                        message: 'تم مسح الصنف من الفاتورة بنجاح',
+                        invoice: memoryDraftInvoice
+                    });
+                }
+                return jsonResponse({ success: false, message: 'السطر غير موجود' });
+            }
+
+            if (path === '/api/invoice/clear') {
+                memoryDraftInvoice.lines = [];
+                broadcastEvent('invoice_updated', memoryDraftInvoice);
+                return jsonResponse({ success: true, message: 'تم مسح كافة سطور الفاتورة', invoice: memoryDraftInvoice });
             }
 
             return jsonResponse({ status: 'ok', endpoint: path });
