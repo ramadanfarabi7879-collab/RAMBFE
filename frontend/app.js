@@ -3389,7 +3389,7 @@ function initCatalogAutocomplete() {
                 activeAutocompleteIndex = (activeAutocompleteIndex - 1 + currentAutocompleteResults.length) % currentAutocompleteResults.length;
                 updateAutocompleteHighlight();
             }
-        } else if (e.key === 'Enter') {
+        } else if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.key === 'Go' || e.key === 'Search' || e.key === 'Next') {
             e.preventDefault();
             if (isDropdownOpen) {
                 if (selectedAutocompleteCodes.size > 0) {
@@ -5423,21 +5423,44 @@ function initStocktakeTab() {
         }, 250);
     });
 
-    // 3. مسح الباركود والداتا ماتريكس بالاسكانر
-    scanInput?.addEventListener('keydown', async (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            let raw = scanInput.value.trim();
-            if (!raw) return;
+    // 3. مسح أو بحث الصنف برقم الكود أو الباركود (يدعم مفتاح السهم / Enter في الموبايل والكمبيوتر)
+    const handleScanExecute = async () => {
+        let raw = scanInput?.value?.trim() || '';
+        if (!raw) return;
 
-            if (typeof decodeArabicKeyboard === 'function') {
-                raw = decodeArabicKeyboard(raw);
-            }
-
-            scanInput.value = '';
-            await processStoreScan(raw);
-            scanInput.focus();
+        if (typeof decodeArabicKeyboard === 'function') {
+            raw = decodeArabicKeyboard(raw);
         }
+
+        scanInput.value = '';
+        await processStoreScan(raw);
+        scanInput.focus();
+    };
+
+    scanInput?.addEventListener('keydown', async (e) => {
+        const isEnterOrArrow = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 ||
+                                e.key === 'Go' || e.key === 'Search' || e.key === 'Next' ||
+                                e.code === 'Enter' || e.code === 'NumpadEnter');
+        if (isEnterOrArrow) {
+            e.preventDefault();
+            e.stopPropagation();
+            await handleScanExecute();
+        }
+    });
+
+    scanInput?.addEventListener('beforeinput', async (e) => {
+        if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+            e.preventDefault();
+            e.stopPropagation();
+            await handleScanExecute();
+        }
+    });
+
+    document.getElementById('stk-scan-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleScanExecute();
+        return false;
     });
 
     document.getElementById('btn-close-batch-entry-card')?.addEventListener('click', closeBatchEntryCard);
@@ -5466,12 +5489,39 @@ function initStocktakeTab() {
         }
     });
 
-    // 4. البحث في الأصناف المجرودة داخل الاستور المختار
+    // 4. البحث في الأصناف المجرودة داخل الاستور المختار (يدعم مفتاح السهم / Enter في الموبايل والكمبيوتر)
+    const handleItemsSearchExecute = () => {
+        clearTimeout(stockItemsSearchTimer);
+        const q = itemsSearch?.value?.trim() || '';
+        loadCurrentStoreItems(q);
+    };
+
     itemsSearch?.addEventListener('input', () => {
         clearTimeout(stockItemsSearchTimer);
         stockItemsSearchTimer = setTimeout(() => {
             loadCurrentStoreItems(itemsSearch.value.trim());
         }, 200);
+    });
+
+    itemsSearch?.addEventListener('keydown', (e) => {
+        const isEnterOrArrow = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 ||
+                                e.key === 'Go' || e.key === 'Search' || e.key === 'Next' ||
+                                e.code === 'Enter' || e.code === 'NumpadEnter');
+        if (isEnterOrArrow) {
+            e.preventDefault();
+            e.stopPropagation();
+            handleItemsSearchExecute();
+            itemsSearch.blur();
+        }
+    });
+
+    itemsSearch?.addEventListener('beforeinput', (e) => {
+        if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+            e.preventDefault();
+            e.stopPropagation();
+            handleItemsSearchExecute();
+            itemsSearch.blur();
+        }
     });
 
     // 5. رفع رصيد المخزون للاستور النشط
