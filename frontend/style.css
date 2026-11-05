@@ -1,3 +1,10 @@
+/* إخفاء التظليل الرمادي القديم لمكتبة Html5Qrcode لإظهار مربع طمني النيون النقي */
+#qr-shaded-region,
+#camera-reader-viewport #qr-shaded-region,
+#mobile-camera-viewport #qr-shaded-region {
+    display: none !important;
+}
+
 /* تصميم مربع التوجيه الاحترافي لتطبيق طمني (Saudi FDA Tameni) */
 .tameni-overlay-mask {
     position: absolute;

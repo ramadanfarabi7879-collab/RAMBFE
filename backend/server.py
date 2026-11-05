@@ -711,6 +711,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', mime_type)
             self.send_header('Content-Length', str(len(content)))
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
             self.end_headers()
             self.wfile.write(content)
         else:
@@ -1208,7 +1211,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
                 res = {}
                 if target == 'stocktake':
-                    force_direct = bool(data.get('force_direct', True))
+                    force_direct = bool(data.get('force_direct', False))
                     res = scan_item_to_store(code, store_no=store_no, force_direct=force_direct)
                 else:
                     if not inv_id:

@@ -2902,16 +2902,19 @@ async function handleCameraDecodedText(decodedText) {
                     code: raw,
                     qr_text: raw,
                     store_no: currentActiveStoreNo || 'ST-001',
-                    force_direct: isContinuous
+                    force_direct: false
                 })
             });
             const data = await res.json();
             if (data.success) {
-                if (data.requires_batch_entry && !isContinuous) {
+                if (data.requires_batch_entry) {
+                    // للأصناف ذات الباركود الدولي 1D: إيقاف الكاميرا مؤقتاً وفتح شاشة إدخال الكمية يدوياً كما بالكمبيوتر
+                    wasCameraActiveBeforeBatch = true;
                     stopCamera();
                     document.getElementById('modal-camera-scanner')?.classList.add('hidden');
                     openBatchEntryCard(data);
                 } else {
+                    // لأصناف كيو ار الداتاماتريكس (2D DataMatrix): نزول مباشر بالعدد +1 واستمرار الكاميرا
                     if (data.store_details) {
                         renderCurrentStoreDetails(data.store_details);
                     } else {
@@ -2937,7 +2940,7 @@ async function handleCameraDecodedText(decodedText) {
         executeScan(raw);
     }
 
-    if (!isContinuous) {
+    if (!isContinuous && cameraScanMode !== 'stocktake') {
         stopCamera();
         document.getElementById('modal-camera-scanner')?.classList.add('hidden');
     }
@@ -2959,49 +2962,71 @@ function startCamera() {
     initHtml5ScannerInstance();
 }
 
-function applyContinuousFocusAndNativeLoop(videoElem) {
+async function applyContinuousFocusAndNativeLoop(videoElem) {
     if (!videoElem) return;
 
-    // تفعيل الفوكس المستمر عبر كاميرا الموبايل
+    // تفعيل الفوكس التلقائي المستمر عبر كاميرا الموبايل
     try {
         if (videoElem.srcObject) {
             const [track] = videoElem.srcObject.getVideoTracks();
             if (track && track.getCapabilities) {
                 const caps = track.getCapabilities();
+                const adv = {};
                 if (caps.focusMode && caps.focusMode.includes('continuous')) {
-                    track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+                    adv.focusMode = 'continuous';
+                }
+                if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
+                    adv.exposureMode = 'continuous';
+                }
+                if (Object.keys(adv).length > 0) {
+                    track.applyConstraints({ advanced: [adv] }).catch(() => {});
                 }
             }
         }
     } catch(e) {}
 
-    // محرك الفحص فائق السرعة عبر العتاد المباشر BarcodeDetector في متصفحات الجوال
+    // محرك الفحص فائق السرعة عبر العتاد المباشر BarcodeDetector مع فحص الصيغ المدعومة بأمان
     if ('BarcodeDetector' in window) {
         try {
-            const detector = new BarcodeDetector({
-                formats: ['data_matrix', 'qr_code', 'ean_13', 'code_128', 'ean_8', 'upc_a', 'upc_e', 'code_39']
-            });
+            const supported = await BarcodeDetector.getSupportedFormats();
+            const desired = ['data_matrix', 'qr_code', 'ean_13', 'code_128', 'ean_8', 'upc_a', 'upc_e', 'code_39'];
+            const validFormats = desired.filter(f => supported.includes(f));
+            
+            if (validFormats.length > 0) {
+                const detector = new BarcodeDetector({ formats: validFormats });
+                isNativeScanning = true;
 
-            isNativeScanning = true;
-            const scanFrame = async () => {
-                if (!isNativeScanning || !videoElem || videoElem.paused || videoElem.ended) return;
-                try {
-                    if (videoElem.readyState >= 2) {
-                        const barcodes = await detector.detect(videoElem);
-                        if (barcodes && barcodes.length > 0) {
-                            const match = barcodes[0];
-                            if (match && match.rawValue) {
-                                handleCameraDecodedText(match.rawValue);
+                const scanFrame = async () => {
+                    if (!isNativeScanning || !videoElem || videoElem.paused || videoElem.ended) return;
+                    try {
+                        if (videoElem.readyState >= 2) {
+                            const barcodes = await detector.detect(videoElem);
+                            if (barcodes && barcodes.length > 0) {
+                                const match = barcodes[0];
+                                if (match && match.rawValue) {
+                                    handleCameraDecodedText(match.rawValue);
+                                }
                             }
                         }
+                    } catch(e) {}
+                    if (isNativeScanning) {
+                        if ('requestVideoFrameCallback' in videoElem) {
+                            videoElem.requestVideoFrameCallback(scanFrame);
+                        } else {
+                            nativeDetectorAnimFrame = requestAnimationFrame(scanFrame);
+                        }
                     }
-                } catch(e) {}
-                if (isNativeScanning) {
+                };
+
+                if ('requestVideoFrameCallback' in videoElem) {
+                    videoElem.requestVideoFrameCallback(scanFrame);
+                } else {
                     nativeDetectorAnimFrame = requestAnimationFrame(scanFrame);
                 }
-            };
-            nativeDetectorAnimFrame = requestAnimationFrame(scanFrame);
-        } catch(e) {}
+            }
+        } catch(e) {
+            console.warn('BarcodeDetector setup warning:', e);
+        }
     }
 }
 
@@ -3034,16 +3059,18 @@ function initHtml5ScannerInstance() {
 
     if (!html5QrScannerInstance) return;
 
-    // استخدام إعدادات كاميرا قياسية متوافقة 100% مع جميع أجهزة الموبايل دون قيود دقة تسبب أخطاء
+    // استخدام إعدادات كاميرا قياسية فائقة الدقة (1080p Full HD) لقراءة أصغر كود داتاماتريكس فورا
     const cameraConstraints = {
-        facingMode: cameraFacingMode === 'user' ? 'user' : 'environment'
+        facingMode: cameraFacingMode === 'user' ? 'user' : 'environment',
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
     };
 
     const scanConfig = {
-        fps: 22,
+        fps: 25,
         qrbox: (w, h) => {
             const minE = Math.min(w, h);
-            const size = Math.floor(minE * 0.72);
+            const size = Math.floor(minE * 0.85);
             return { width: size, height: size };
         },
         aspectRatio: undefined,

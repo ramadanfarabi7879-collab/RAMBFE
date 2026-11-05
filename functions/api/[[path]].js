@@ -356,6 +356,8 @@ export default {
                 const storeNo = String(body.store_no || 'ST-001').trim();
                 const gs1 = parseGs1Code(rawCode);
                 const searchGtin = gs1.gtin || rawCode;
+                const is2d = Boolean(gs1.isGs1 && (gs1.batch || gs1.serial));
+                const forceDirect = Boolean(body.force_direct);
 
                 let prod = memoryProducts.find(p =>
                     (p.gtin && (p.gtin === searchGtin || p.gtin === rawCode)) ||
@@ -374,6 +376,32 @@ export default {
                         category: 'MEDICINE'
                     };
                     memoryProducts.push(prod);
+                }
+
+                if (!is2d && !forceDirect) {
+                    return jsonResponse({
+                        success: true,
+                        requires_batch_entry: true,
+                        product: {
+                            code: prod.code,
+                            name: prod.name,
+                            barcode: prod.barcode || searchGtin,
+                            gtin: searchGtin,
+                            cost_price: prod.cost || 0,
+                            selling_price: prod.price || 0
+                        },
+                        batches: [
+                            {
+                                batch_number: 'B1',
+                                expiry_date: '2027-12',
+                                system_qty: 0,
+                                counted_qty: 0,
+                                cost_price: prod.cost || 0,
+                                selling_price: prod.price || 0
+                            }
+                        ],
+                        store_no: storeNo
+                    });
                 }
 
                 let item = memoryStocktakeItems.find(it => it.store_no === storeNo && (it.product_code === prod.code || it.barcode === searchGtin));
