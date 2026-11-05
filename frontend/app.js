@@ -2967,7 +2967,10 @@ let isProcessingFrame = false;
 async function applyContinuousFocusAndNativeLoop(videoElem) {
     if (!videoElem) return;
 
-    // تفعيل الفوكس التلقائي المستمر عبر كاميرا الموبايل وضبط التعريض
+    // التحقق من بيئة iOS / Safari (آيفون وآيباد)
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    // تفعيل الفوكس التلقائي المستمر عبر كاميرا الموبايل وضبط التعريض إن كان مدعوماً
     try {
         if (videoElem.srcObject) {
             const [track] = videoElem.srcObject.getVideoTracks();
@@ -2990,7 +2993,12 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
         }
     } catch(e) {}
 
-    // محرك الفحص فائق السرعة عبر العتاد المباشر BarcodeDetector مع فحص الصيغ المدعومة بأمان
+    // على أجهزة iOS Safari: نعتمد حصراً على محرك Html5Qrcode WASM/JS المستقر لتفادي مشاكل WebKit BarcodeDetector مع DataMatrix
+    if (isIOS) {
+        return;
+    }
+
+    // محرك الفحص فائق السرعة عبر العتاد المباشر BarcodeDetector لأجهزة أندرويد
     if ('BarcodeDetector' in window) {
         try {
             const supported = await BarcodeDetector.getSupportedFormats();
@@ -3038,6 +3046,8 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
 }
 
 function initHtml5ScannerInstance() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
     const formatsToSupport = [
         Html5QrcodeSupportedFormats.DATA_MATRIX,
         Html5QrcodeSupportedFormats.QR_CODE,
@@ -3055,7 +3065,8 @@ function initHtml5ScannerInstance() {
             formatsToSupport: formatsToSupport,
             verbose: false,
             experimentalFeatures: {
-                useBarCodeDetectorIfSupported: true
+                // إيقاف BarcodeDetector التجريبي على آيفون لضمان قراءة الداتاماتريكس بمحرك ZXing الأصلي
+                useBarCodeDetectorIfSupported: !isIOS
             }
         });
     } catch(e) {
@@ -3066,23 +3077,33 @@ function initHtml5ScannerInstance() {
 
     if (!html5QrScannerInstance) return;
 
-    // استخدام إعدادات كاميرا قياسية فائقة الدقة (1080p Full HD) لقراءة أصغر كود داتاماتريكس فورا
+    // قيود الكاميرا القياسية المتوافقة مع آيفون وأندرويد
     const cameraConstraints = {
-        facingMode: cameraFacingMode === 'user' ? 'user' : 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
+        facingMode: { ideal: (cameraFacingMode === 'user' ? 'user' : 'environment') },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
     };
 
+    // مسح فائق السرعة وبمساحة عريضة جداً تغطي كامل حساس الكاميرا (Full Frame بدون تقييد أو قص)
     const scanConfig = {
         fps: 25,
-        qrbox: (w, h) => {
-            return { width: Math.floor(w * 0.98), height: Math.floor(h * 0.98) };
-        },
         aspectRatio: undefined,
         disableFlip: false
     };
 
     const banner = document.getElementById('camera-permission-banner');
+
+    const setupVideoForIOS = () => {
+        const video = document.querySelector('#camera-reader-viewport video');
+        if (video) {
+            video.setAttribute('playsinline', 'true');
+            video.setAttribute('webkit-playsinline', 'true');
+            video.setAttribute('muted', 'true');
+            video.muted = true;
+            video.play().catch(() => {});
+            applyContinuousFocusAndNativeLoop(video);
+        }
+    };
 
     html5QrScannerInstance.start(
         cameraConstraints,
@@ -3093,10 +3114,7 @@ function initHtml5ScannerInstance() {
         () => {}
     ).then(() => {
         if (banner) banner.classList.add('hidden');
-        const video = document.querySelector('#camera-reader-viewport video');
-        if (video) {
-            applyContinuousFocusAndNativeLoop(video);
-        }
+        setupVideoForIOS();
     }).catch(err => {
         console.warn('Direct facingMode start failed, trying device list enumeration:', err);
         // محاولة استخدام قائمة الكاميرات المتاحة في الجهاز كبديل مباشر
@@ -3119,14 +3137,13 @@ function initHtml5ScannerInstance() {
             throw new Error('لا توجد كاميرا متوفرة');
         }).then(() => {
             if (banner) banner.classList.add('hidden');
-            const video = document.querySelector('#camera-reader-viewport video');
-            if (video) applyContinuousFocusAndNativeLoop(video);
+            setupVideoForIOS();
         }).catch(finalErr => {
             console.error('All camera attempts failed:', finalErr);
             if (banner) {
                 banner.classList.remove('hidden');
             } else {
-                alert('تعذر فتح الكاميرا: يُرجى التأكد من السماح بصلاحيات الكاميرا في المتصفح، أو اضغط زر (📸 صورة) لالتقاط صورة للعلبة.');
+                alert('تعذر فتح الكاميرا: يُرجى التأكد من السماح بصلاحيات الكاميرا في المتصفح.');
             }
         });
     });
@@ -5425,6 +5442,11 @@ function initStocktakeTab() {
 
     document.getElementById('btn-close-batch-entry-card')?.addEventListener('click', closeBatchEntryCard);
     document.getElementById('btn-finish-batch-entry')?.addEventListener('click', async () => {
+        const tbody = document.getElementById('stk-bec-batches-tbody');
+        const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
+        await commitAllCardBatches(inputs);
+    });
+    document.getElementById('btn-submit-batch-entry-main')?.addEventListener('click', async () => {
         const tbody = document.getElementById('stk-bec-batches-tbody');
         const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
         await commitAllCardBatches(inputs);

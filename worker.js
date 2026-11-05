@@ -156,6 +156,39 @@ export default {
 
         // إذا كان الطلب مسار API
         if (path.startsWith('/api/')) {
+            const pcTunnel = activeTunnelUrl || "https://cam-scientist-vault-powell.trycloudflare.com";
+
+            // 1. إذا كان نفق الكمبيوتر متوفراً، مرر كافة طلبات الـ API مباشرة لقاعدة بيانات الكمبيوتر!
+            if (pcTunnel && !path.startsWith('/api/tunnel/')) {
+                try {
+                    const targetUrl = new URL(path + url.search, pcTunnel);
+                    const proxyHeaders = new Headers(request.headers);
+                    proxyHeaders.set('Host', new URL(pcTunnel).host);
+                    proxyHeaders.set('X-Forwarded-Host', url.host);
+
+                    const proxyReq = new Request(targetUrl.toString(), {
+                        method: request.method,
+                        headers: proxyHeaders,
+                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+                        duplex: 'half'
+                    });
+
+                    const resp = await fetch(proxyReq);
+                    const respHeaders = new Headers(resp.headers);
+                    respHeaders.set('Access-Control-Allow-Origin', '*');
+                    respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+                    respHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+                    return new Response(resp.body, {
+                        status: resp.status,
+                        statusText: resp.statusText,
+                        headers: respHeaders
+                    });
+                } catch (err) {
+                    console.error('Proxy to PC tunnel error, falling back to edge memory:', err);
+                }
+            }
+
             let body = {};
             if (method === 'POST') {
                 try {
@@ -165,7 +198,7 @@ export default {
                 }
             }
 
-            // 1. تسجيل نفق الكمبيوتر للربط السحابي اللحظي
+            // 2. تسجيل نفق الكمبيوتر للربط السحابي اللحظي
             if (path === '/api/tunnel/register') {
                 const newTunnel = String(body.tunnel_url || '').trim().replace(/\/+$/, '');
                 if (newTunnel && newTunnel.startsWith('http')) {
@@ -183,36 +216,6 @@ export default {
                     is_connected: Boolean(activeTunnelUrl),
                     tunnel_url: activeTunnelUrl
                 });
-            }
-
-            // 2. إذا كان نفق الكمبيوتر مسجلاً، قم بتمرير كافة طلبات الـ API مباشرة لقاعدة بيانات الكمبيوتر!
-            if (activeTunnelUrl && !path.startsWith('/api/tunnel/')) {
-                try {
-                    const targetUrl = new URL(path + url.search, activeTunnelUrl);
-                    const proxyHeaders = new Headers(request.headers);
-                    proxyHeaders.set('Host', new URL(activeTunnelUrl).host);
-                    proxyHeaders.set('X-Forwarded-Host', url.host);
-
-                    const proxyReq = new Request(targetUrl.toString(), {
-                        method: request.method,
-                        headers: proxyHeaders,
-                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer()
-                    });
-
-                    const resp = await fetch(proxyReq);
-                    const respHeaders = new Headers(resp.headers);
-                    respHeaders.set('Access-Control-Allow-Origin', '*');
-                    respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
-                    respHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-                    return new Response(resp.body, {
-                        status: resp.status,
-                        statusText: resp.statusText,
-                        headers: respHeaders
-                    });
-                } catch (err) {
-                    console.error('Proxy to PC tunnel error, falling back to edge memory:', err);
-                }
             }
 
             if (path === '/api/stats') {

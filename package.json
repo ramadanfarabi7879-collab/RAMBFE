@@ -5,7 +5,7 @@
   "description": "Invoice Matcher & Pharmacy Stocktake Cloudflare Worker",
   "main": "worker.js",
   "scripts": {
-    "build": "exit 0"
+    "build": "echo Ready"
   },
   "dependencies": {
     "wrangler": "^3.88.0"
