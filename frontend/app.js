@@ -5452,6 +5452,20 @@ function initStocktakeTab() {
         await commitAllCardBatches(inputs);
     });
 
+    // حماية تمنع نزول المؤشر إلى خانة البحث عند أصناف الاستور المسحوبة إذا كان كارت الباتشات مفتوحاً
+    itemsSearch?.addEventListener('focus', (e) => {
+        const card = document.getElementById('stk-batch-entry-card');
+        if (card && !card.classList.contains('hidden')) {
+            e.preventDefault();
+            const activeInput = document.querySelector('.stk-bec-qty-input:focus') ||
+                                document.querySelector('.stk-bec-qty-input');
+            if (activeInput) {
+                activeInput.focus();
+                activeInput.select();
+            }
+        }
+    });
+
     // 4. البحث في الأصناف المجرودة داخل الاستور المختار
     itemsSearch?.addEventListener('input', () => {
         clearTimeout(stockItemsSearchTimer);
@@ -6241,10 +6255,40 @@ function updateBecRowCalc(inputEl) {
 
 let wasCameraActiveBeforeBatch = false;
 
-function openBatchEntryCard(data) {
-    if (html5QrScannerInstance) {
-        wasCameraActiveBeforeBatch = true;
+// دالة التنقل بين الباتشات بالسهم أو اعتماد الترحيل عند آخر باتش
+function moveToNextBatchOrCommit(currentIdx) {
+    const tbody = document.getElementById('stk-bec-batches-tbody');
+    const allInputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
+    if (!allInputs.length) return;
+
+    if (currentIdx < allInputs.length - 1) {
+        // إذا كان هناك باتشات أخرى للصنف: انتقال مباشر لخانة الرصيد الفعلي للباتش التالي
+        const nextInput = allInputs[currentIdx + 1];
+        if (nextInput) {
+            nextInput.focus();
+            nextInput.select();
+            nextInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            // تمييز سطر الباتش النشط بصرياً باللون الأصفر
+            allInputs.forEach((inp, j) => {
+                const r = document.getElementById(`stk-bec-row-${j}`);
+                if (r) {
+                    if (j === currentIdx + 1) {
+                        r.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                    } else {
+                        r.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                    }
+                }
+            });
+        }
+    } else {
+        // عند آخر باتش (أو الصنف له باتش واحد فقط): الاعتماد المباشر والترحيل لفاتورة الجرد والتوجيه للكاميرا
+        commitAllCardBatches(allInputs);
     }
+}
+
+function openBatchEntryCard(data) {
+    wasCameraActiveBeforeBatch = true;
     currentActiveBatchCardData = data;
     const card = document.getElementById('stk-batch-entry-card');
     if (!card) return;
@@ -6279,9 +6323,15 @@ function openBatchEntryCard(data) {
                 ? `<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300 text-[10px] whitespace-nowrap">⚠️ جديد</span>`
                 : `<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 text-[10px] whitespace-nowrap">مطابق ✅</span>`;
 
+            // زر السطر: إن كان هناك باتشات تالية يظهر 'التالي ➔'، وإن كان الأخير يظهر 'ترحيل ↵'
+            const isLastBatch = (idx === batches.length - 1);
+            const actionBtn = isLastBatch
+                ? `<button type="button" class="stk-bec-btn-action px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="commit" data-index="${idx}"><span>ترحيل</span> <span>↵</span></button>`
+                : `<button type="button" class="stk-bec-btn-action px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="next" data-index="${idx}"><span>التالي</span> <span>➔</span></button>`;
+
             const statusCellContent = hasCounted
-                ? `<span class="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold text-[10px]">✅ تم (${countedVal})</span>`
-                : `<button type="button" class="stk-bec-btn-save px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition shadow-sm" data-index="${idx}">حفظ ↵</button>`;
+                ? `<div class="flex flex-col items-center gap-1"><span class="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold text-[10px]">✅ تم (${countedVal})</span>${actionBtn}</div>`
+                : actionBtn;
 
             html += `
                 <tr class="hover:bg-amber-50/50 transition border-b border-slate-300 text-slate-700 text-xs ${hasCounted ? 'bg-emerald-50/40' : (idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60')}" id="stk-bec-row-${idx}">
@@ -6335,6 +6385,30 @@ function openBatchEntryCard(data) {
     card.classList.remove('hidden');
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+    // حماية مؤقتة تمنع القفز لحقل البحث أثناء فتح كارت الباتشات
+    const searchFilter = document.getElementById('stk-items-search-filter');
+    if (searchFilter) {
+        searchFilter.setAttribute('tabindex', '-1');
+    }
+
+    const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
+
+    // تأمين النموذج من إرسال المتصفح التلقائي أو قفز مؤشر الهاتف لخارج الجدول
+    const batchForm = document.getElementById('stk-bec-batches-form');
+    if (batchForm) {
+        batchForm.onsubmit = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const activeEl = document.activeElement;
+            let activeIdx = inputs.indexOf(activeEl);
+            if (activeIdx === -1) {
+                activeIdx = inputs.length - 1;
+            }
+            moveToNextBatchOrCommit(activeIdx);
+            return false;
+        };
+    }
+
     // التركيز التلقائي المباشر على أول خانة للرصيد الفعلي (Auto-focus & select)
     setTimeout(() => {
         const firstInput = tbody?.querySelector('.stk-bec-qty-input');
@@ -6349,7 +6423,6 @@ function openBatchEntryCard(data) {
     }, 60);
 
     // ربط التنقل بالسهم / Enter بين الباتشات لعدد N من الباتشات والاعتماد عند آخر باتش
-    const inputs = Array.from(tbody?.querySelectorAll('.stk-bec-qty-input') || []);
     inputs.forEach((inp, idx) => {
         inp.addEventListener('focus', () => {
             inputs.forEach((otherInp, j) => {
@@ -6364,39 +6437,39 @@ function openBatchEntryCard(data) {
             });
         });
 
-        const handleStepOrCommit = async (e) => {
+        const handleKeyStep = (e) => {
             const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter' || e.code === 'NumpadEnter');
             const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
 
             if (isEnter || isTab) {
                 e.preventDefault();
                 e.stopPropagation();
-
-                // إذا كان يوجد باتشات أخرى للصنف (لم نصل لآخر باتش بعد)
-                if (idx < inputs.length - 1) {
-                    const nextInput = inputs[idx + 1];
-                    if (nextInput) {
-                        nextInput.focus();
-                        nextInput.select();
-                        nextInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }
-                } else {
-                    // آخر باتش (أو الصنف له باتش واحد فقط): التعميد المباشر لفاتورة الجرد وترحيل السجلات
-                    await commitAllCardBatches(inputs);
-                }
+                moveToNextBatchOrCommit(idx);
             } else if (e.key === 'Escape') {
                 e.preventDefault();
-                closeBatchEntryCard();
+                closeBatchEntryCard(false);
             }
         };
 
-        inp.addEventListener('keydown', handleStepOrCommit);
+        inp.addEventListener('keydown', handleKeyStep);
+
+        // التعامل مع مفاتيح الهواتف المحمولة التي ترسل قبل الإدخال (beforeinput)
+        inp.addEventListener('beforeinput', (e) => {
+            if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+                e.preventDefault();
+                e.stopPropagation();
+                moveToNextBatchOrCommit(idx);
+            }
+        });
     });
 
-    // ربط أزرار الحفظ الموضعية بكل سطر
-    tbody?.querySelectorAll('.stk-bec-btn-save').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            await commitAllCardBatches(inputs);
+    // ربط أزرار الإجراء (التالي / ترحيل) الموضعية بكل سطر
+    tbody?.querySelectorAll('.stk-bec-btn-action').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const btnIdx = parseInt(btn.dataset.index);
+            moveToNextBatchOrCommit(btnIdx);
         });
     });
 }
@@ -6456,12 +6529,15 @@ async function commitAllCardBatches(allInputs) {
 
         if (savedCount > 0) {
             playStockAudioAlert(true);
+            playAppScannerBeep(true);
+            showCatalogToast(`⚡ تم ترحيل ${savedCount} تشغيلة إلى فاتورة الجرد بنجاح`);
             if (lastStoreDetails) {
                 renderCurrentStoreDetails(lastStoreDetails);
             }
         }
 
-        closeBatchEntryCard();
+        // إغلاق الكارت والتوجيه التلقائي والفوري للكاميرا اسكان مباشرة
+        closeBatchEntryCard(true);
         await loadStocktakeStores();
         await loadCurrentStoreItems();
     } finally {
@@ -6473,21 +6549,29 @@ async function handleBatchInputCommit(inputEl, allInputs, skipAdvance = false) {
     await commitAllCardBatches(allInputs || [inputEl]);
 }
 
-function closeBatchEntryCard() {
+function closeBatchEntryCard(reopenCamera = true) {
     const card = document.getElementById('stk-batch-entry-card');
     if (card) card.classList.add('hidden');
     currentActiveBatchCardData = null;
+
+    // استرجاع مؤشر البحث
+    const searchFilter = document.getElementById('stk-items-search-filter');
+    if (searchFilter) {
+        searchFilter.removeAttribute('tabindex');
+    }
+
     const scanInput = document.getElementById('stk-scan-input');
     if (scanInput) {
         scanInput.focus();
         scanInput.select();
     }
-    // إذا كانت الكاميرا مفعلة سابقاً: إعادة فتح كاميرا طمني تلقائياً لمواصلة سحب العلب
-    if (wasCameraActiveBeforeBatch) {
+
+    // التوجيه الفوري والتلقائي إلى الكاميرا اسكان بعد ترحيل الصنف
+    if (reopenCamera) {
         wasCameraActiveBeforeBatch = false;
         setTimeout(() => {
             openCameraModal('stocktake');
-        }, 150);
+        }, 120);
     }
 }
 

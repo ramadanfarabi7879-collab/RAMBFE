@@ -6,7 +6,7 @@
     <title>نظام إدارة بطاقات الأصناف والمسح بكود QR</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="style.css?v=20261105_arrow_step_v5">
+    <link rel="stylesheet" href="style.css?v=20261105_arrow_camera_v8">
     <!-- Google Fonts: Cairo -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1408,7 +1408,7 @@
                             </div>
 
                             <!-- جدول تشغيلات الصنف بنفس أعمدة وترتيب الفاتورة مضغوطة -->
-                            <div class="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
+                            <form id="stk-bec-batches-form" onsubmit="return false;" autocomplete="off" class="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
                                 <table class="w-full text-xs text-right border-collapse border border-slate-300 bg-white font-sans">
                                     <thead class="bg-amber-100/90 text-slate-800 font-bold text-[11px] border-b-2 border-amber-300 select-none">
                                         <tr class="divide-x divide-x-reverse divide-slate-300">
@@ -1426,14 +1426,14 @@
                                             <th class="border border-slate-300 p-1 text-center w-20 bg-amber-100">إجمالي التكلفة</th>
                                             <th class="border border-slate-300 p-1 text-center w-20 bg-amber-100">إجمالي البيع</th>
                                             <th class="border border-slate-300 p-1 text-center w-16 bg-amber-100">حالة الباتش</th>
-                                            <th class="border border-slate-300 p-1 text-center w-16 bg-amber-100">حفظ (Enter ↵)</th>
+                                            <th class="border border-slate-300 p-1 text-center w-20 bg-amber-100">ترحيل (Enter ↵)</th>
                                         </tr>
                                     </thead>
                                     <tbody id="stk-bec-batches-tbody" class="bg-white">
                                         <!-- تعبئة تشغيلات الصنف ديناميكياً -->
                                     </tbody>
                                 </table>
-                            </div>
+                            </form>
                         </div>
 
                         <!-- جدول بنود الأصناف المجرودة داخل هذا الاستور -->
@@ -2386,6 +2386,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261105_arrow_step_v5"></script>
+    <script src="app.js?v=20261105_arrow_camera_v8"></script>
 </body>
 </html>
