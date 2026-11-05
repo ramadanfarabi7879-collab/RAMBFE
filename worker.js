@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://switch-opinion-shortcuts-syracuse.trycloudflare.com";
+let activeTunnelUrl = "https://custody-ease-threatening-generating.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -156,7 +156,7 @@ export default {
 
         // إذا كان الطلب مسار API
         if (path.startsWith('/api/')) {
-            const pcTunnel = activeTunnelUrl || "https://switch-opinion-shortcuts-syracuse.trycloudflare.com";
+            const pcTunnel = activeTunnelUrl || "https://custody-ease-threatening-generating.trycloudflare.com";
 
             let rawBodyText = '';
             let body = {};
@@ -220,7 +220,8 @@ export default {
             if (path === '/api/tunnel/status') {
                 return jsonResponse({
                     is_connected: Boolean(activeTunnelUrl),
-                    tunnel_url: activeTunnelUrl
+                    tunnel_url: activeTunnelUrl,
+                    worker_version: "20261105_v14"
                 });
             }
 
