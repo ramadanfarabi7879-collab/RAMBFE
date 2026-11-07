@@ -1136,22 +1136,46 @@ def edit_stocktake_entry(entry_id: int, updates: Dict[str, Any], store_no: str =
     conn.close()
     return {"success": True, "message": "تم تعديل بيانات الصنف بنجاح", "store_details": get_store_stocktake_details(store_no)}
 
-def clear_inventory_records(store_no: str = 'ST-001') -> Dict[str, Any]:
-    """حذف رصيد المخزون الدفتري المرفوع بالكامل للتمكن من رفع ملف مخزون جديد"""
+def clear_inventory_records(store_no: str = 'ST-001', clear_all: bool = False) -> Dict[str, Any]:
+    """حذف رصيد المخزون الدفتري المرفوع بالكامل للتمكن من رفع ملف مخزون جديد مع تصفير الأرصدة وتحديث الجرد فوراً"""
     conn = get_connection()
-    if store_no != 'ALL':
-        store_no = resolve_valid_store_no(conn, store_no)
     c = conn.cursor()
-    if store_no == 'ALL':
+    
+    clean_store = str(store_no or '').strip()
+    if clear_all or clean_store.upper() == 'ALL':
         c.execute("DELETE FROM inventory_records")
+        c.execute("UPDATE stocktake_entries SET system_qty = 0")
+        c.execute("DELETE FROM stocktake_entries WHERE counted_qty = 0 OR counted_qty IS NULL")
+        msg = "تم حذف وتصفير رصيد المخزون السابق بالكامل لجميع الاستورات بنجاح."
+        target_store = 'ST-001'
     else:
-        c.execute("DELETE FROM inventory_records WHERE store_no = ?", (store_no,))
+        target_store = resolve_valid_store_no(conn, clean_store)
+        c.execute("SELECT COUNT(*) FROM inventory_records WHERE store_no = ?", (target_store,))
+        cnt = c.fetchone()[0]
+        
+        # إذا لم تكن هناك سجلات للاستور المحدد ولكن توجد سجلات مخزون عامة في النظام
+        if cnt == 0:
+            c.execute("SELECT COUNT(*) FROM inventory_records")
+            total_cnt = c.fetchone()[0]
+            if total_cnt > 0:
+                c.execute("DELETE FROM inventory_records")
+                c.execute("UPDATE stocktake_entries SET system_qty = 0")
+                c.execute("DELETE FROM stocktake_entries WHERE counted_qty = 0 OR counted_qty IS NULL")
+                msg = f"تم تصفير وحذف رصيد المخزون العام السابق ({total_cnt} صنف) بنجاح."
+            else:
+                msg = f"رصيد المخزون السابق فارغ بالفعل للاستور ({target_store})."
+        else:
+            c.execute("DELETE FROM inventory_records WHERE store_no = ?", (target_store,))
+            c.execute("UPDATE stocktake_entries SET system_qty = 0 WHERE store_no = ?", (target_store,))
+            c.execute("DELETE FROM stocktake_entries WHERE store_no = ? AND (counted_qty = 0 OR counted_qty IS NULL)", (target_store,))
+            msg = f"تم حذف رصيد المخزون السابق ({cnt} صنف) للاستور ({target_store}) بنجاح."
+
     conn.commit()
     conn.close()
     return {
         "success": True,
-        "message": f"تم حذف رصيد المخزون السابق بنجاح، يمكنك الآن رفع رصيد جديد.",
-        "store_details": get_store_stocktake_details(store_no if store_no != 'ALL' else 'ST-001')
+        "message": msg,
+        "store_details": get_store_stocktake_details(target_store)
     }
 
 def clear_store_stocktake(store_no: str) -> Dict[str, Any]:

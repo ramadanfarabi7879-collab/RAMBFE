@@ -1402,7 +1402,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             try:
                 data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
                 store_no = str(data.get('store_no') or 'ST-001').strip()
-                res = clear_inventory_records(store_no=store_no)
+                clear_all = bool(data.get('clear_all') or store_no.upper() == 'ALL')
+                res = clear_inventory_records(store_no=store_no, clear_all=clear_all)
+                if res.get("success"):
+                    broadcast_sync("inventory_cleared", {"store_no": store_no, "clear_all": clear_all})
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)

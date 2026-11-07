@@ -663,6 +663,69 @@ export default {
                 return jsonResponse({ success: true, message: 'تم تصفير بيانات الجرد بالكامل' });
             }
 
+            if (path === '/api/stock/clear-inventory') {
+                const storeNo = String(body.store_no || 'ST-001').trim();
+                const clearAll = Boolean(body.clear_all || storeNo.toUpperCase() === 'ALL');
+                if (clearAll) {
+                    memoryStocktakeItems.forEach(it => { it.system_qty = 0; });
+                    memoryStocktakeItems = memoryStocktakeItems.filter(it => (it.actual_qty || 0) > 0);
+                } else {
+                    memoryStocktakeItems.forEach(it => {
+                        if (it.store_no === storeNo) it.system_qty = 0;
+                    });
+                    memoryStocktakeItems = memoryStocktakeItems.filter(it => it.store_no !== storeNo || (it.actual_qty || 0) > 0);
+                }
+                broadcastEvent('inventory_cleared', { store_no: storeNo, clear_all: clearAll });
+                return jsonResponse({
+                    success: true,
+                    message: clearAll ? 'تم تصفير وحذف رصيد المخزون لجميع الاستورات بنجاح' : تم حذف رصيد المخزون للاستور () بنجاح,
+                    store_details: {
+                        store: { store_no: storeNo, store_name: 'الاستور النشط' },
+                        items: memoryStocktakeItems.filter(it => it.store_no === storeNo),
+                        stats: {
+                            store_no: storeNo,
+                            counted_products: 0,
+                            counted_lines: 0,
+                            counted_qty: 0,
+                            system_qty: 0,
+                            system_cost: 0,
+                            system_sale: 0,
+                            counted_cost: 0,
+                            counted_sale: 0,
+                            diff_cost: 0,
+                            diff_sale: 0
+                        }
+                    }
+                });
+            }
+
+            if (path === '/api/stock/clear') {
+                const storeNo = String(body.store_no || 'ST-001').trim();
+                memoryStocktakeItems = memoryStocktakeItems.filter(it => it.store_no !== storeNo);
+                broadcastEvent('stock_cleared', { store_no: storeNo });
+                return jsonResponse({
+                    success: true,
+                    message: تم تصفير جرد الاستور () بنجاح,
+                    store_details: {
+                        store: { store_no: storeNo, store_name: 'الاستور النشط' },
+                        items: [],
+                        stats: {
+                            store_no: storeNo,
+                            counted_products: 0,
+                            counted_lines: 0,
+                            counted_qty: 0,
+                            system_qty: 0,
+                            system_cost: 0,
+                            system_sale: 0,
+                            counted_cost: 0,
+                            counted_sale: 0,
+                            diff_cost: 0,
+                            diff_sale: 0
+                        }
+                    }
+                });
+            }
+
             if (path === '/api/stock/settle') {
                 const storeNo = body.store_no || 'ST-001';
                 const store = memoryStores.find(s => s.store_no === storeNo);

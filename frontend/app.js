@@ -5673,19 +5673,33 @@ function initStocktakeTab() {
 
     // 5.ب حذف وتصفير رصيد المخزون الدفتري المرفوع
     btnClearInventory?.addEventListener('click', async () => {
-        if (!confirm(`هل أنت متأكد من رغبتك في حذف وتصفير رصيد المخزون السابق بالكامل للاستور (${currentActiveStoreNo}) حتى تتمكن من رفع ملف مخزون جديد؟`)) {
+        const storeName = currentActiveStoreName || currentActiveStoreNo;
+        if (!confirm(`هل أنت متأكد من رغبتك في حذف وتصفيد رصيد المخزون السابق بالكامل للاستور (${storeName}) حتى تتمكن من رفع ملف مخزون جديد؟`)) {
             return;
         }
+
+        let clearAll = false;
+        if (confirm(`هل تريد أيضاً تصفير وحذف رصيد المخزون لجميع الاستورات بالكامل؟\n\nاضغط [موافق] لحذف المخزون لجميع الاستورات بالكامل\nاضغط [إلغاء] لحذف مخزون استور (${storeName}) فقط.`)) {
+            clearAll = true;
+        }
+
         try {
             const res = await fetch('/api/stock/clear-inventory', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ store_no: currentActiveStoreNo })
+                body: JSON.stringify({
+                    store_no: clearAll ? 'ALL' : currentActiveStoreNo,
+                    clear_all: clearAll
+                })
             });
             const data = await res.json();
             if (data.success) {
+                if (typeof showCatalogToast === 'function') {
+                    showCatalogToast(data.message || 'تم حذف رصيد المخزون بنجاح');
+                }
                 alert(data.message || 'تم حذف رصيد المخزون السابق بنجاح.');
                 await loadStocktakeStores();
+                await loadCurrentStoreItems();
                 if (data.store_details) {
                     renderCurrentStoreDetails(data.store_details);
                 }
@@ -5693,7 +5707,7 @@ function initStocktakeTab() {
                 alert('فشل: ' + (data.message || ''));
             }
         } catch (err) {
-            alert('خطأ: ' + err.message);
+            alert('خطأ أثناء حذف المخزون: ' + err.message);
         }
         scanInput?.focus();
     });

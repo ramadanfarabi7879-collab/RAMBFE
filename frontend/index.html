@@ -1081,14 +1081,14 @@
                             <span class="text-[10px] text-slate-400 font-mono">XLSX</span>
                         </button>
 
-                        <button type="button" id="btn-stk-populate-inventory"
-                                class="w-full px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-lg text-xs font-bold transition flex items-center justify-between"
-                                title="إدراج كامل أصناف وباتشات المخزون المرفوعة في جدول الجرد دفعة واحدة">
+                        <button type="button" id="btn-stk-clear-inventory"
+                                class="w-full px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold transition flex items-center justify-between shadow-sm"
+                                title="حذف وتصفير رصيد المخزون السابق بالكامل للتمكن من رفع ملف مخزون جديد">
                             <span class="flex items-center gap-1.5">
-                                <span>📋</span>
-                                <span>إدراج كامل المخزون في الجدول</span>
+                                <span>🗑️</span>
+                                <span>حذف رصيد المخزون</span>
                             </span>
-                            <span class="text-[10px] bg-sky-200/80 text-sky-950 px-1.5 py-0.5 rounded font-mono">كل الباتشات</span>
+                            <span class="text-[10px] text-rose-600 font-bold">تصفير الدفتري</span>
                         </button>
 
                         <button type="button" id="btn-stk-export-excel"
@@ -1127,57 +1127,6 @@
                             </span>
                             <span class="text-[10px] text-indigo-500 font-bold">ترحيل فردي</span>
                         </button>
-
-                        <!-- تبويب خيارات التصفير والحذف والإدارة (Collapsible Accordion Tab) -->
-                        <details class="group rounded-xl border border-slate-200 bg-slate-50/80 overflow-hidden text-xs transition mt-2">
-                            <summary class="p-2 font-bold text-slate-600 hover:text-slate-900 cursor-pointer flex items-center justify-between select-none bg-slate-100 hover:bg-slate-200/80 transition">
-                                <span class="flex items-center gap-1.5">
-                                    <span>⚙️</span>
-                                    <span>إدارة البيانات والتصفير والحذف</span>
-                                </span>
-                                <span class="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
-                            </summary>
-                            <div class="p-2 space-y-1.5 border-t border-slate-200 bg-white">
-                                <button type="button" id="btn-stk-clear"
-                                        class="w-full px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition flex items-center justify-between">
-                                    <span class="flex items-center gap-1.5">
-                                        <span>🗑️</span>
-                                        <span>تصفير جرد الاستور النشط</span>
-                                    </span>
-                                    <span class="text-[10px] text-rose-400">تصفير</span>
-                                </button>
-
-                                <button type="button" id="btn-stk-clear-inventory"
-                                        class="w-full px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold transition flex items-center justify-between"
-                                        title="حذف وتصفير رصيد المخزون السابق بالكامل للتمكن من رفع ملف مخزون جديد">
-                                    <span class="flex items-center gap-1.5">
-                                        <span>🗑️</span>
-                                        <span>حذف رصيد المخزون السابق</span>
-                                    </span>
-                                    <span class="text-[10px] text-rose-600 font-bold">تصفير الدفتري</span>
-                                </button>
-
-                                <button type="button" id="btn-stk-delete-active-store"
-                                        class="w-full px-2.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 rounded-lg text-xs font-bold transition flex items-center justify-between"
-                                        title="حذف هذا الاستور بالكامل بجميع بياناته وبنوده">
-                                    <span class="flex items-center gap-1.5">
-                                        <span>❌</span>
-                                        <span>حذف هذا الاستور نهائياً</span>
-                                    </span>
-                                    <span class="text-[10px] text-rose-600 font-bold">حذف</span>
-                                </button>
-
-                                <button type="button" id="btn-stk-reset-all"
-                                        class="w-full px-2.5 py-1 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-dashed border-slate-300 rounded-lg text-[11px] font-bold transition flex items-center justify-between"
-                                        title="تصفير ومسح جميع بيانات وتجارب الجرد للبدء من الصفر">
-                                    <span class="flex items-center gap-1.5">
-                                        <span>⚠️</span>
-                                        <span>مسح جميع تجارب الجرد</span>
-                                    </span>
-                                    <span class="text-[10px] text-slate-400">تصفير عام</span>
-                                </button>
-                            </div>
-                        </details>
                     </div>
                 </div>
 
