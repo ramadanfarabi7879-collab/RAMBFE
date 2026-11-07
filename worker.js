@@ -682,7 +682,7 @@ export default {
                 broadcastEvent('inventory_cleared', { store_no: storeNo, clear_all: clearAll });
                 return jsonResponse({
                     success: true,
-                    message: clearAll ? 'تم تصفير وحذف رصيد المخزون لجميع الاستورات بنجاح' : تم حذف رصيد المخزون للاستور () بنجاح,
+                    message: clearAll ? 'تم تصفير وحذف رصيد المخزون لجميع الاستورات بنجاح' : `تم حذف رصيد المخزون للاستور (${storeNo}) بنجاح`,
                     store_details: {
                         store: { store_no: storeNo, store_name: 'الاستور النشط' },
                         items: memoryStocktakeItems.filter(it => it.store_no === storeNo),
@@ -709,7 +709,7 @@ export default {
                 broadcastEvent('stock_cleared', { store_no: storeNo });
                 return jsonResponse({
                     success: true,
-                    message: تم تصفير جرد الاستور () بنجاح,
+                    message: `تم تصفير جرد الاستور (${storeNo}) بنجاح`,
                     store_details: {
                         store: { store_no: storeNo, store_name: 'الاستور النشط' },
                         items: [],
