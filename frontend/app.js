@@ -3391,6 +3391,24 @@ function showCatalogToast(msg, isWarning = false) {
     }, 2800);
 }
 
+let isGeneralizedSearch = localStorage.getItem('catalog_search_mode') === 'contains';
+
+function updateSearchModeUI() {
+    const btn = document.getElementById('btn-toggle-search-mode');
+    const dot = document.getElementById('search-mode-dot');
+    const input = document.getElementById('catalog-search-input');
+    if (!dot) return;
+    if (isGeneralizedSearch) {
+        dot.className = 'w-3 h-3 rounded-full bg-emerald-500 border border-emerald-600 ring-4 ring-emerald-100 shadow-sm animate-pulse';
+        if (btn) btn.title = 'وضع البحث المعمم مفعّل: يبحث في أي موضع بالاسم أو الكود (انقر للعودة للوضع الافتراضي)';
+        if (input) input.placeholder = 'اكتب أي جزء من اسم الصنف أو الكود (البحث المعمم مفعّل)...';
+    } else {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-300 border border-slate-400 hover:bg-slate-400';
+        if (btn) btn.title = 'وضع البحث الافتراضي: يبحث عن بداية الاسم أو الكود فقط (انقر لتفعيل البحث المعمم في أي موضع)';
+        if (input) input.placeholder = 'اكتب بداية اسم الصنف أو الكود (البحث الافتراضي)...';
+    }
+}
+
 function initCatalogAutocomplete() {
     const searchInput = document.getElementById('catalog-search-input');
     const dropdown = document.getElementById('catalog-autocomplete-dropdown');
@@ -3478,7 +3496,7 @@ async function fetchAndRenderAutocomplete(query) {
     if (!dropdown) return;
 
     try {
-        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&limit=25&offset=0`;
+        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=25&offset=0`;
         const res = await fetch(url);
         const data = await res.json();
         const items = data.items || [];
@@ -3835,6 +3853,24 @@ function initCatalogTab() {
     });
 
     document.getElementById('btn-open-create-product-modal')?.addEventListener('click', () => openCreateProductModal());
+
+    const chkTax = document.getElementById('prod-is-taxable');
+    const inpTax = document.getElementById('prod-tax-rate');
+    if (chkTax && inpTax && !chkTax.dataset.listenerAttached) {
+        chkTax.dataset.listenerAttached = 'true';
+        chkTax.addEventListener('change', () => {
+            if (chkTax.checked) {
+                const cur = parseFloat(inpTax.value || 0);
+                inpTax.value = cur > 0 ? cur : '15';
+            } else {
+                inpTax.value = '0';
+            }
+        });
+        inpTax.addEventListener('input', () => {
+            chkTax.checked = (parseFloat(inpTax.value || 0) > 0);
+        });
+    }
+
     document.getElementById('btn-export-catalog-excel')?.addEventListener('click', openCatalogExportModal);
     document.getElementById('btn-close-export-modal')?.addEventListener('click', closeCatalogExportModal);
     document.getElementById('btn-cancel-export-modal')?.addEventListener('click', closeCatalogExportModal);
@@ -4171,7 +4207,7 @@ async function downloadCatalogExcelWithScope(scope, codes = [], fields = []) {
 async function appendSearchQueryToResults(query) {
     if (!query) return;
     try {
-        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&limit=50&offset=0`;
+        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=50&offset=0`;
         const res = await fetch(url);
         const data = await res.json();
         const items = data.items || [];
@@ -4434,7 +4470,10 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
         const arName = it.name_ar || '';
         const salesPrice = parseFloat(it.selling_price || 0).toFixed(2);
         const unitPrice = parseFloat(it.unit_price || it.cost_price || 0).toFixed(2);
-        const taxRate = parseFloat(it.tax_rate || 0).toFixed(0);
+        const taxRate = parseFloat(it.tax_rate || 0);
+        const taxBadge = taxRate > 0 
+            ? `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold inline-flex items-center gap-0.5" title="خاضع لضريبة القيمة المضافة ${taxBadge}"><span>VAT</span> <span>${taxRate.toFixed(0)}%</span></span>`
+            : `<span class="px-1 py-0.5 bg-slate-100 text-slate-400 rounded text-[9.5px]" title="غير خاضع للضريبة (FALSE)">غير خاضع</span>`;
 
         tr.innerHTML = `
             <td class="excel-cell text-center p-0.5">
@@ -4450,7 +4489,7 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
             </td>
             <td class="excel-cell text-center font-mono font-bold text-emerald-700 text-[11px]">${salesPrice}</td>
             <td class="excel-cell text-center font-mono text-slate-600 text-[11px]">${unitPrice}</td>
-            <td class="excel-cell text-center font-mono text-slate-600 text-[11px]">${taxRate}%</td>
+            <td class="excel-cell text-center font-mono text-slate-600 text-[11px]">${taxBadge}</td>
             <td class="excel-cell text-center text-slate-600 text-[10.5px]">
                 <span class="truncate max-w-[65px] inline-block" title="${it.unit || 'علبة'}">${it.unit || 'علبة'}</span>
             </td>
@@ -4563,7 +4602,7 @@ async function loadCatalogProducts() {
     tbody.innerHTML = '<tr><td colspan="11" class="excel-cell py-6 text-center text-slate-400">جاري التحميل...</td></tr>';
 
     try {
-        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&limit=${catalogLimit}&offset=${catalogOffset}`;
+        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=${catalogLimit}&offset=${catalogOffset}`;
         const res = await fetch(url);
         const data = await res.json();
         const items = data.items || [];
@@ -4588,7 +4627,7 @@ async function clearProductCardInputs(clearCode = false) {
     if (document.getElementById('prod-scientific-name')) document.getElementById('prod-scientific-name').value = '';
     if (document.getElementById('prod-company')) document.getElementById('prod-company').value = '';
     document.getElementById('prod-category').value = '';
-    document.getElementById('prod-tax-rate').value = '0';
+    document.getElementById('prod-tax-rate').value = '0'; if (document.getElementById('prod-is-taxable')) document.getElementById('prod-is-taxable').checked = false;
     document.getElementById('prod-selling-price').value = '';
     if (document.getElementById('prod-wholesale-price')) document.getElementById('prod-wholesale-price').value = '';
     document.getElementById('prod-unit-price').value = '';
@@ -4631,7 +4670,7 @@ async function openCreateProductModal(prefillGtin = null, initialData = {}) {
     if (document.getElementById('prod-scientific-name')) document.getElementById('prod-scientific-name').value = initialData.scientific_name || '';
     if (document.getElementById('prod-company')) document.getElementById('prod-company').value = initialData.company || '';
     document.getElementById('prod-category').value = initialData.category || 'دواء';
-    document.getElementById('prod-tax-rate').value = initialData.tax_rate != null ? initialData.tax_rate : '0'; // البديهي 0 مع الإدخال اليدوي
+    const initTax = initialData.tax_rate != null ? initialData.tax_rate : '0'; document.getElementById('prod-tax-rate').value = initTax; if (document.getElementById('prod-is-taxable')) document.getElementById('prod-is-taxable').checked = (parseFloat(initTax || 0) > 0); // البديهي 0 مع الإدخال اليدوي
     document.getElementById('prod-selling-price').value = initialData.selling_price || '';
     if (document.getElementById('prod-wholesale-price')) document.getElementById('prod-wholesale-price').value = initialData.wholesale_price || '';
     document.getElementById('prod-unit-price').value = initialData.unit_price || '';
@@ -4680,7 +4719,7 @@ function openEditProductModal(p) {
     if (document.getElementById('prod-scientific-name')) document.getElementById('prod-scientific-name').value = p.scientific_name || '';
     if (document.getElementById('prod-company')) document.getElementById('prod-company').value = p.company || '';
     document.getElementById('prod-category').value = p.category || '';
-    document.getElementById('prod-tax-rate').value = p.tax_rate != null ? p.tax_rate : 0;
+    const pTax = p.tax_rate != null ? p.tax_rate : 0; document.getElementById('prod-tax-rate').value = pTax; if (document.getElementById('prod-is-taxable')) document.getElementById('prod-is-taxable').checked = (parseFloat(pTax || 0) > 0);
     document.getElementById('prod-selling-price').value = p.selling_price || '';
     if (document.getElementById('prod-wholesale-price')) document.getElementById('prod-wholesale-price').value = p.wholesale_price || '';
     document.getElementById('prod-unit-price').value = p.unit_price || p.cost_price || '';
@@ -4837,6 +4876,12 @@ function initImportTab() {
     document.getElementById('btn-back-to-mapping')?.addEventListener('click', () => {
         document.getElementById('import-step-preview')?.classList.add('hidden');
         document.getElementById('import-step-mapping')?.classList.remove('hidden');
+    if (data.suggested_mapping && data.suggested_mapping.tax_rate_col && document.getElementById('map-tax-rate')) {
+        setTimeout(() => {
+            const sel = document.getElementById('map-tax-rate');
+            if (sel) sel.value = data.suggested_mapping.tax_rate_col;
+        }, 50);
+    }
     });
     document.getElementById('btn-commit-import')?.addEventListener('click', executeImportCommit);
     document.getElementById('btn-report-new-import')?.addEventListener('click', resetImportWizard);
@@ -4954,7 +4999,7 @@ function autoSuggestMapping() {
     const sPriceCol = findBestHeader(['sales price', 'sale_price', 'selling_price', 'price', 'سعر البيع', 'سعر']);
     const uPriceCol = findBestHeader(['cost price', 'unit price', 'unit cost', 'purchase price', 'unit_price', 'unitprice', 'cost', 'سعر التكلفة', 'سعر الوحدة', 'التكلفة']);
     const wsCol = findBestHeader(['wholesale price', 'wholesale_price', 'wholesale', 'سعر الجملة', 'جملة']);
-    const taxCol = findBestHeader(['tax', 'vat', 'ضريبة', 'الضريبة']);
+    const taxCol = findBestHeader(['customer tax', 'customer_tax', 'customer taxes', 'customer_taxes', 'customertax', 'customertaxes', 'tax rate', 'vat', 'tax', 'taxes', 'ضريبة', 'الضريبة']);
     const unitCol = findBestHeader(['unit', 'وحدة']);
     const groupCol = codeCol || findBestHeader(['sequence', 'internal reference', 'code', 'default_code', 'كود الصنف', 'رمز الصنف']);
 
@@ -4967,8 +5012,8 @@ function autoSuggestMapping() {
     if (sPriceCol) document.getElementById('map-selling-price').value = sPriceCol;
     if (uPriceCol) document.getElementById('map-unit-price').value = uPriceCol;
     if (wsCol && document.getElementById('map-wholesale-price')) document.getElementById('map-wholesale-price').value = wsCol;
-    // خانة الضريبة تكون البديهي 0% وعند الإضافة تكون منول يدوياً
-    if (document.getElementById('map-tax-rate')) document.getElementById('map-tax-rate').value = '';
+    // ربط عمود الضريبة تلقائياً إذا كان موجوداً بالملف (مثل CUSTOMER TAX)
+    if (taxCol && document.getElementById('map-tax-rate')) document.getElementById('map-tax-rate').value = taxCol;
     if (unitCol) document.getElementById('map-unit').value = unitCol;
     if (groupCol) document.getElementById('map-grouping').value = groupCol;
 

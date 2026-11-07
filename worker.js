@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://mandate-secrets-drums-reasoning.trycloudflare.com";
+let activeTunnelUrl = "https://hitting-forums-fits-premium.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -364,17 +364,28 @@ export default {
             }
 
             if (path === '/api/catalog/products') {
-                const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+                const q = (url.searchParams.get('query') || url.searchParams.get('q') || '').trim().toLowerCase();
+                const mode = (url.searchParams.get('mode') || 'start').trim().toLowerCase();
+                const isContains = ['contains', 'generalized', 'all', 'true', '1'].includes(mode);
                 let prods = memoryProducts;
                 if (q) {
-                    prods = prods.filter(p =>
-                        (p.name && p.name.toLowerCase().includes(q)) ||
-                        (p.code && p.code.toLowerCase().includes(q)) ||
-                        (p.barcode && p.barcode.includes(q)) ||
-                        (p.gtin && p.gtin.includes(q))
-                    );
+                    if (isContains) {
+                        prods = prods.filter(p =>
+                            (p.name && p.name.toLowerCase().includes(q)) ||
+                            (p.code && p.code.toLowerCase().includes(q)) ||
+                            (p.barcode && p.barcode.includes(q)) ||
+                            (p.gtin && p.gtin.includes(q))
+                        );
+                    } else {
+                        prods = prods.filter(p =>
+                            (p.name && p.name.toLowerCase().startsWith(q)) ||
+                            (p.code && p.code.toLowerCase().startsWith(q)) ||
+                            (p.barcode && p.barcode.startsWith(q)) ||
+                            (p.gtin && p.gtin.startsWith(q))
+                        );
+                    }
                 }
-                return jsonResponse({ products: prods });
+                return jsonResponse({ products: prods, items: prods, total: prods.length });
             }
 
             if (path === '/api/catalog/next-code') {

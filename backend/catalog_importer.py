@@ -99,6 +99,47 @@ def read_spreadsheet_dataframe(file_path: str, nrows: Optional[int] = None) -> T
     df.fillna('', inplace=True)
     return df, sheet_names, header_row_idx
 
+def parse_tax_rate_cell(val: Any) -> Tuple[bool, float]:
+    """
+    تحليل وتفسير قيمة خانة الضريبة (مثل عمود CUSTOMER TAX أو غيره من ملفات Excel):
+    - يرجع (is_specified, tax_rate_value)
+    - إذا كانت القيمة VAT أو True أو خاضع للضريبة: (True, 15.0)
+    - إذا كانت القيمة FALSE أو 0 أو لا أو غير خاضع: (True, 0.0)
+    - إذا كانت قيمة رقمية (مثل 15 أو 14 أو 5 أو 0.15): (True, numeric_val)
+    - إذا كانت الخانة فارغة أو NaN: (False, 0.0)
+    """
+    if val is None:
+        return False, 0.0
+    s = str(val).strip()
+    if not s or s.lower() in ('nan', 'null', 'none', '<na>', ''):
+        return False, 0.0
+    s_low = s.lower()
+    
+    # 1. فحص عدم الخضوع للضريبة (FALSE)
+    if s_low in ('false', 'f', '0', '0.0', '0%', 'no', 'off', 'غير خاضع', 'معفى', 'معفي', 'بدون', 'exempt'):
+        return True, 0.0
+        
+    # 2. فحص الخضوع لضريبة القيمة المضافة (VAT / TRUE)
+    if s_low in ('vat', 'true', 't', 'yes', 'on', 'خاضع', 'ضريبة', 'خاضع للضريبة', 'خاضع للقيمة المضافة', 'قيمة مضافة'):
+        return True, 15.0
+        
+    # 3. فحص الأرقام الصريحة والنسب المئوية (مثل 15% أو 0.15 أو 14)
+    m = re.search(r'(\d+(?:\.\d+)?)', s.replace(',', ''))
+    if m:
+        try:
+            num = float(m.group(1))
+            if 0.0 < num <= 1.0:
+                return True, round(num * 100.0, 2)
+            return True, round(num, 2)
+        except Exception:
+            pass
+            
+    # 4. إذا كانت تحتوي على كلمة vat أو tax أو ضريبة
+    if 'vat' in s_low or 'tax' in s_low or 'ضريب' in s:
+        return True, 15.0
+        
+    return False, 0.0
+
 def suggest_columns_mapping(headers: List[str]) -> Dict[str, Any]:
     """
     نظام التعرف الذكي التلقائي على الأعمدة وفق أحدث معايير ملفات كرت الصنف والفواتير
@@ -121,7 +162,12 @@ def suggest_columns_mapping(headers: List[str]) -> Dict[str, Any]:
     selling_price_col = find_match(['sales price', 'sale_price', 'selling_price', 'price', 'سعر البيع', 'سعر'])
     unit_price_col = find_match(['cost price', 'unit price', 'unit cost', 'purchase price', 'unit_price', 'unitprice', 'cost', 'سعر التكلفة', 'سعر الوحدة', 'التكلفة'])
     wholesale_price_col = find_match(['wholesale price', 'wholesale_price', 'wholesale', 'سعر الجملة', 'جملة'])
-    tax_rate_col = find_match(['tax rate', 'tax', 'vat', 'ضريبة', 'الضريبة', 'نسبة الضريبة'])
+    tax_rate_col = find_match([
+        'customer tax', 'customer_tax', 'customer taxes', 'customer_taxes',
+        'customertax', 'customertaxes', 'tax customer',
+        'tax rate', 'tax_rate', 'نسبة الضريبة', 'الضريبة', 'ضريبة',
+        'vat', 'tax', 'taxes', 'خاضع للضريبة'
+    ])
     unit_col = find_match(['unit', 'وحدة'])
     unit_divisions_col = find_match(['unit_divisions', 'divisions', 'معامل التحويل', 'تقسيم الوحدات'])
 
@@ -286,7 +332,13 @@ def parse_and_validate_import_data(
         selling_price = to_float(row.get(selling_price_col, 0.0))
         unit_price = to_float(row.get(unit_price_col, 0.0))
         wholesale_price = to_float(row.get(wholesale_price_col, 0.0))
-        tax_rate = to_float(row.get(tax_rate_col, 0.0))
+        
+        # قراءة وتفسير الضريبة بذكاء (VAT / FALSE / نسبة مئوية)
+        has_tax_val = False
+        tax_rate = 0.0
+        if tax_rate_col and tax_rate_col in row:
+            has_tax_val, tax_rate = parse_tax_rate_cell(row.get(tax_rate_col))
+        
         category = clean_cell(row.get(category_col, ''))
         unit = clean_cell(row.get(unit_col, 'علبة')) or 'علبة'
         unit_divisions = clean_cell(row.get(unit_divisions_col, ''))
@@ -354,6 +406,10 @@ def parse_and_validate_import_data(
                 target["wholesale_price"] = wholesale_price
             if target["unit_price"] == 0.0 and unit_price > 0.0:
                 target["unit_price"] = unit_price
+            if target.get("tax_rate", 0.0) == 0.0 and tax_rate > 0.0:
+                target["tax_rate"] = tax_rate
+                if "tax_rate" not in target.get("mapped_fields", []):
+                    target.setdefault("mapped_fields", []).append("tax_rate")
             target["source_rows"].append(excel_row_num)
             continue
 
@@ -366,6 +422,10 @@ def parse_and_validate_import_data(
                     "reason": "اسم الصنف فارغ (لم يتم العثور على اسم عربي أو إنجليزي في هذا الصف)."
                 })
                 continue
+
+        row_mapped = list(mapped_fields)
+        if tax_rate_col and not has_tax_val and "tax_rate" in row_mapped:
+            row_mapped.remove("tax_rate")
 
         is_item_update = bool(clean_code and (clean_code in db_products))
         item_obj = {
@@ -385,7 +445,7 @@ def parse_and_validate_import_data(
             "unit_divisions": unit_divisions,
             "barcode_list": b_list,
             "gtin_list": g_list,
-            "mapped_fields": list(mapped_fields),
+            "mapped_fields": row_mapped,
             "source_rows": [excel_row_num],
             "is_update": is_item_update,
             "status_label": "تحديث صنف موجود" if is_item_update else "إضافة صنف جديد"
@@ -493,7 +553,11 @@ def preview_import_catalog(
                     diff["cost_price"] = {"label": "سعر التكلفة", "old": float(existing.get("cost_price") or 0.0), "new": float(it.get("unit_price") or 0.0)}
 
                 if "tax_rate" in it_mapped and abs(float(existing.get("tax_rate") or 0.0) - float(it.get("tax_rate") or 0.0)) > 0.001:
-                    diff["tax_rate"] = {"label": "الضريبة %", "old": float(existing.get("tax_rate") or 0.0), "new": float(it.get("tax_rate") or 0.0)}
+                    old_t = float(existing.get("tax_rate") or 0.0)
+                    new_t = float(it.get("tax_rate") or 0.0)
+                    old_lbl = f"{old_t:.0f}% (VAT)" if old_t > 0 else "غير خاضع (0%)"
+                    new_lbl = f"{new_t:.0f}% (VAT)" if new_t > 0 else "غير خاضع (0%)"
+                    diff["tax_rate"] = {"label": "الضريبة", "old": old_lbl, "new": new_lbl}
 
                 if "name_ar" in it_mapped and it.get("name_ar") and it.get("name_ar") != (existing.get("name_ar") or ""):
                     diff["name_ar"] = {"label": "الاسم بالعربي", "old": existing.get("name_ar") or "", "new": it.get("name_ar")}

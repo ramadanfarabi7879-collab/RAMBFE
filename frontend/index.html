@@ -510,11 +510,19 @@
             <!-- شريط البحث والتحكم في بطاقات الأصناف مع دعم تجميع نتائج البحث المتعددة -->
             <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
                 <div class="flex-1 min-w-[320px] flex items-center gap-2">
-                    <div class="relative flex-1">
+                    <div class="relative flex-1 flex items-center">
                         <input type="text" id="catalog-search-input" enterkeyhint="search" autocomplete="off"
-                               placeholder="اكتب اسم الصنف، الكود، الباركود أو GTIN للبحث والاقتراحات التلقائية..."
-                               class="w-full px-4 py-2.5 pr-10 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100">
+                               placeholder="اكتب بداية اسم الصنف أو الكود (البحث الافتراضي)..."
+                               class="w-full px-4 py-2.5 pr-10 pl-9 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100">
                         <span class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">🔍</span>
+                        
+                        <!-- مفتاح النقطة الصغيرة للتبديل بين البحث في البداية والبحث المعمم -->
+                        <button type="button" id="btn-toggle-search-mode"
+                                class="absolute left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center transition-all duration-200 focus:outline-none cursor-pointer hover:bg-slate-200/70"
+                                title="وضع البحث: البداية فقط (انقر لتفعيل البحث المعمم في أي موضع)">
+                            <span id="search-mode-dot" class="w-2.5 h-2.5 rounded-full bg-slate-300 border border-slate-400 transition-all duration-200"></span>
+                        </button>
+
                         <!-- قائمة الاقتراحات التلقائية المنسدلة والتحديد المتعدد (Multi-Select Autocomplete) -->
                         <div id="catalog-autocomplete-dropdown" class="hidden absolute top-full right-0 mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 w-full sm:min-w-[560px] md:min-w-[660px] max-w-2xl max-h-[460px] overflow-hidden flex flex-col text-xs">
                         </div>
@@ -616,7 +624,7 @@
                                 <th class="w-16 text-center">CATEGORY<br><span class="text-[9px] text-slate-500 font-normal">التصنيف</span></th>
                                 <th class="w-20 text-center font-mono">SALES PRICE<br><span class="text-[9px] text-slate-500 font-normal">سعر البيع</span></th>
                                 <th class="w-20 text-center font-mono">COST PRICE<br><span class="text-[9px] text-slate-500 font-normal">سعر التكلفة</span></th>
-                                <th class="w-14 text-center font-mono">TAX<br><span class="text-[9px] text-slate-500 font-normal">الضريبة</span></th>
+                                <th class="w-16 text-center font-mono">TAX (VAT)<br><span class="text-[9px] text-slate-500 font-normal">الضريبة</span></th>
                                 <th class="w-16 text-center">UNIT<br><span class="text-[9px] text-slate-500 font-normal">الوحدة</span></th>
                                 <th class="w-32 text-center font-mono">BARCODE<br><span class="text-[9px] text-slate-500 font-normal">الباركود</span></th>
                                 <th class="w-32 text-center font-mono excel-highlight-indigo">GTIN<br><span class="text-[9px] font-normal">بند التجارة العالمي</span></th>
@@ -1610,10 +1618,19 @@
                     <input type="text" id="prod-category" placeholder="دواء، مستلزم طبي، تجميل..."
                            class="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-indigo-600">
                 </div>
-                <div class="space-y-1">
-                    <label class="block text-xs font-bold text-slate-700">نسبة الضريبة (%) <span class="text-slate-400 font-normal">(البديهي 0 - إدخال يدوي)</span></label>
-                    <input type="number" step="0.01" id="prod-tax-rate" value="0" placeholder="0"
-                           class="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-indigo-600 font-mono">
+                <div class="space-y-1.5">
+                    <div class="flex items-center justify-between">
+                        <label class="block text-xs font-bold text-slate-700">الضريبة (%)</label>
+                        <label class="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                            <input type="checkbox" id="prod-is-taxable" class="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5">
+                            <span class="text-[11px] font-bold text-indigo-700">خاضع للضريبة (VAT)</span>
+                        </label>
+                    </div>
+                    <div class="relative">
+                        <input type="number" step="0.01" id="prod-tax-rate" value="0" placeholder="0"
+                               class="w-full text-xs p-2.5 pr-8 bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-indigo-600 font-mono">
+                        <span class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400 font-bold text-xs">%</span>
+                    </div>
                 </div>
             </div>
 
@@ -2413,6 +2430,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261107_v27_live"></script>
+    <script src="app.js?v=20261107_v28_tax_search"></script>
 </body>
 </html>

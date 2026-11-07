@@ -399,14 +399,15 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self.send_json({"code": get_next_product_code()})
             return
 
-        # 3. استعراض وبحث الأصناف
+        # 3. استعراض وبحث الأصناف (مع دعم وضع البداية الافتراضي أو البحث المعمم)
         if path == '/api/catalog/products':
-            q = params.get('query', [''])[0].strip()
+            q = params.get('query', [''])[0].strip() or params.get('q', [''])[0].strip()
+            mode = params.get('mode', ['start'])[0].strip().lower()
             limit_str = params.get('limit', ['50'])[0]
             offset_str = params.get('offset', ['0'])[0]
             limit = int(limit_str) if limit_str.isdigit() else 50
             offset = int(offset_str) if offset_str.isdigit() else 0
-            self.send_json(search_products(q, limit, offset))
+            self.send_json(search_products(q, limit, offset, match_mode=mode))
             return
 
         # 4. جلب صنف واحد بالكود
