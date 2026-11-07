@@ -917,7 +917,7 @@
                 const batchInp = row.querySelector('.mb-batch-row-batch');
                 const expiryInp = row.querySelector('.mb-batch-row-expiry');
 
-                let batchNo = batchInp ? batchInp.value.trim() : (qtyInp.dataset.batch || '');
+                let batchNo = (batchInp ? batchInp.value.trim() : (qtyInp.dataset.batch || '')).toUpperCase();
                 let expDate = expiryInp ? normalizeExpiryDate(expiryInp.value.trim()) : (qtyInp.dataset.expiry || '');
 
                 if (batchInp) batchInp.value = batchNo;
@@ -1117,7 +1117,7 @@
                     
                     const prodName = data.product_name || (data.product && data.product.name) || code;
                     const prodCode = data.product_code || (data.product && data.product.code) || code;
-                    const batch = data.batch_number || data.batch || '';
+                    const batch = String(data.batch_number || data.batch || '').toUpperCase();
                     const exp = data.expiry_date || data.expiry || '';
 
                     if (lblName) lblName.textContent = prodName;
@@ -1332,7 +1332,7 @@
                 const isFirst = (idx === 0);
 
                 const isEditable = Boolean(b.is_new_batch || b.requires_manual_entry || b.is_manual_batch || !b.batch_number || b.batch_number === '-' || !b.expiry_date || b.expiry_date === '-' || b.force_edit);
-                const defaultBatch = (b.batch_number && b.batch_number !== '-') ? b.batch_number : generateDefaultBatchNumber(idx);
+                const defaultBatch = String((b.batch_number && b.batch_number !== '-') ? b.batch_number : generateDefaultBatchNumber(idx)).toUpperCase();
                 const expiryVal = (b.expiry_date && b.expiry_date !== '-') ? b.expiry_date : '';
 
                 const batchBadge = isEditable
@@ -1357,7 +1357,7 @@
                     : `<div class="flex-1">
                          <label class="block text-[10px] text-slate-400 font-bold mb-1">رقم التشغيلة (Batch):</label>
                          <div class="py-1.5 px-2 rounded-lg bg-slate-900/60 border border-slate-800 text-indigo-300 font-mono font-bold text-xs text-center">
-                             ${b.batch_number || '-'}
+                             ${String(b.batch_number || '-').toUpperCase()}
                          </div>
                        </div>`;
 

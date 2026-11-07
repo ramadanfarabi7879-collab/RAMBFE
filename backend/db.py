@@ -293,6 +293,8 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);")
+    cursor.execute("UPDATE invoice_lines SET batch_number = UPPER(TRIM(batch_number)) WHERE batch_number IS NOT NULL AND batch_number != UPPER(TRIM(batch_number));")
+    cursor.execute("UPDATE scanned_serials SET batch_number = UPPER(TRIM(batch_number)) WHERE batch_number IS NOT NULL AND batch_number != UPPER(TRIM(batch_number));")
 
     conn.commit()
     conn.close()
@@ -1022,6 +1024,8 @@ def get_invoice_details(invoice_id: int) -> Dict[str, Any]:
             line["name_ar"] = line["product_name_ar"]
         if not line.get("name_en") and line.get("product_name"):
             line["name_en"] = line["product_name"]
+        if line.get("batch_number"):
+            line["batch_number"] = str(line["batch_number"]).strip().upper()
 
         line_id = line["id"]
         cursor.execute("""
@@ -1309,7 +1313,8 @@ def add_manual_item_to_invoice(
     if not product:
         return {"success": False, "code": "ITEM_NOT_FOUND", "message": f"لم يتم العثور على الصنف ({val})."}
     
-    clean_batch = str(batch or "").strip().upper() or "BATCH1"
+    from .qr_parser import decode_arabic_keyboard_layout
+    clean_batch = decode_arabic_keyboard_layout(str(batch or "").strip()).upper() or "BATCH1"
     from .qr_parser import parse_expiry_date
     clean_exp = parse_expiry_date(expiry) or expiry or "2027-12-31"
     clean_qty = max(1, int(quantity or 1))

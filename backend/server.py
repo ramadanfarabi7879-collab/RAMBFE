@@ -812,7 +812,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                     pdata = parsed.get("data", {})
                     gtin = pdata.get("gtin", "")
                     serial = pdata.get("serial", "")
-                    batch = pdata.get("batch", "")
+                    batch = str(pdata.get("batch", "") or "").strip().upper()
                     expiry = pdata.get("expiry", "")
                     prod_date = pdata.get("prod_date", "")
 
@@ -1147,7 +1147,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                     draft = get_or_create_draft_invoice()
                     inv_id = draft['id']
                 gtin = str(data.get('gtin', '')).strip()
-                batch = str(data.get('batch', '')).strip()
+                batch = str(data.get('batch', '')).strip().upper()
                 expiry = str(data.get('expiry', '')).strip()
                 qty = int(data.get('quantity', 1))
                 user_name = str(data.get('user_name', 'المسؤول')).strip()
@@ -1268,7 +1268,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                     "success": bool(res.get("success", False)),
                     "product_name": p_name,
                     "product_code": p_code,
-                    "batch": res.get("batch") or "",
+                    "batch": str(res.get("batch") or res.get("batch_number") or "").strip().upper(),
                     "message": res.get("message") or "",
                     "timestamp": time.time()
                 }
@@ -1307,7 +1307,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
                 store_no = str(data.get('store_no') or 'ST-001').strip()
                 prod_code = str(data.get('product_code') or '').strip()
-                batch_number = str(data.get('batch_number') or '').strip()
+                batch_number = str(data.get('batch_number') or '').strip().upper()
                 expiry_date = str(data.get('expiry_date') or '').strip()
                 counted_qty = float(data.get('counted_qty') or 0.0)
                 system_qty = float(data.get('system_qty') or 0.0)

@@ -94,8 +94,10 @@ def resolve_english_code(item: Dict[str, Any]) -> str:
     return raw.translate(ARABIC_DIGITS_MAP)
 
 def resolve_english_batch(item: Dict[str, Any]) -> str:
+    from .qr_parser import decode_arabic_keyboard_layout
     raw = str(item.get("batch_number") or item.get("batch") or "").strip()
     raw = raw.translate(ARABIC_DIGITS_MAP)
+    raw = decode_arabic_keyboard_layout(raw)
     if any(ch in ARABIC_KEYBOARD_MAP for ch in raw):
         raw = ''.join(ARABIC_KEYBOARD_MAP.get(ch, ch) for ch in raw)
     return raw.upper()

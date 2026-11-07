@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://gas-endorsed-transcripts-rna.trycloudflare.com";
+let activeTunnelUrl = "https://accommodations-julie-ltd-tell.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -110,7 +110,7 @@ function parseGs1Code(rawInput) {
         }
     }
 
-    return { isGs1, gtin: gtin || s, batch, serial, expiry, raw: s };
+    return { isGs1, gtin: gtin || s, batch: (batch || '').toUpperCase(), serial: (serial || '').toUpperCase(), expiry, raw: s };
 }
 
 function normalizeExpiryDate(str_val) {

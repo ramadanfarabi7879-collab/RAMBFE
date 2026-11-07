@@ -99,6 +99,9 @@ def init_stock_tables():
 
     # تحديث وتصحيح تلقائي لبنود الجرد السابقة لضمان ظهور الاسم الإنجليزي والباتش وتاريخ الصلاحية ورصيد المخزون والتكلفة
     try:
+        c.execute("UPDATE inventory_records SET batch_number = UPPER(TRIM(batch_number)) WHERE batch_number IS NOT NULL AND batch_number != UPPER(TRIM(batch_number))")
+        c.execute("UPDATE stocktake_entries SET batch_number = UPPER(TRIM(batch_number)) WHERE batch_number IS NOT NULL AND batch_number != UPPER(TRIM(batch_number))")
+        c.execute("UPDATE stocktake_scanned_serials SET batch_number = UPPER(TRIM(batch_number)) WHERE batch_number IS NOT NULL AND batch_number != UPPER(TRIM(batch_number))")
         c.execute("""
             UPDATE stocktake_entries
             SET 
@@ -472,7 +475,7 @@ def get_store_stocktake_details(store_no: str = 'ST-001', search_query: str = ''
                 inv_row = c.fetchone()
 
             if inv_row:
-                updated_b = it.get('batch_number') or inv_row['batch_number'] or ''
+                updated_b = str(it.get('batch_number') or inv_row['batch_number'] or '').strip().upper()
                 updated_exp = it.get('expiry_date') or inv_row['expiry_date'] or ''
                 updated_sq = it.get('system_qty') if (it.get('system_qty') and float(it['system_qty']) > 0) else float(inv_row['system_qty'] or 0.0)
                 it['batch_number'] = updated_b
@@ -483,6 +486,8 @@ def get_store_stocktake_details(store_no: str = 'ST-001', search_query: str = ''
                     SET batch_number = ?, expiry_date = ?, system_qty = ?
                     WHERE id = ?
                 """, (updated_b, updated_exp, updated_sq, it['id']))
+        if it.get('batch_number'):
+            it['batch_number'] = str(it['batch_number']).strip().upper()
 
     c.execute("""
         SELECT 
@@ -557,8 +562,8 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
     pdata = parsed.get("data", {}) if parsed.get("success") else {}
 
     gtin = pdata.get("gtin", "")
-    serial = pdata.get("serial", "")
-    batch = pdata.get("batch", "")
+    serial = str(pdata.get("serial", "") or "").strip().upper()
+    batch = str(pdata.get("batch", "") or "").strip().upper()
     expiry = pdata.get("expiry", "")
 
     if not gtin:
@@ -651,7 +656,7 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
 
         # 1. إدراج جميع تشغيلات وأرصدة المخزون المسجلة
         for ir in inv_records:
-            b_num = (ir.get('batch_number') or '').strip()
+            b_num = (ir.get('batch_number') or '').strip().upper()
             exp = (ir.get('expiry_date') or '').strip()
             key = (b_num, exp)
             if key not in batches_map:
@@ -677,7 +682,7 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
         st_entries = [dict(r) for r in c.fetchall()]
 
         for st in st_entries:
-            b_num = (st.get('batch_number') or '').strip()
+            b_num = (st.get('batch_number') or '').strip().upper()
             exp = (st.get('expiry_date') or '').strip()
             key = (b_num, exp)
             if key in batches_map:
@@ -756,11 +761,11 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
 
     if batch:
         # حالة 1: كود داتاماتريكس 2D يحتوي على باتش محدد صراحة
-        matched_inv = next((r for r in inv_records if (r.get('batch_number') or '').strip() == batch.strip()), None)
+        matched_inv = next((r for r in inv_records if (r.get('batch_number') or '').strip().upper() == batch.strip().upper()), None)
         
         c.execute("""
             SELECT * FROM stocktake_entries
-            WHERE product_code = ? AND store_no = ? AND batch_number = ?
+            WHERE product_code = ? AND store_no = ? AND UPPER(TRIM(batch_number)) = ?
             ORDER BY id DESC LIMIT 1
         """, (prod_code, store_no, batch))
         entry_row = c.fetchone()
@@ -801,11 +806,11 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
 
         # إدراج باقي باتشات هذا الصنف المسجلة في المخزون (إن وجدت) لكي تظهر للمستخدم فوراً برصيدها الدفتري
         for ir in inv_records:
-            b_k = (ir.get('batch_number') or '').strip()
-            if b_k and b_k != batch.strip():
+            b_k = (ir.get('batch_number') or '').strip().upper()
+            if b_k and b_k != batch.strip().upper():
                 c.execute("""
                     SELECT id FROM stocktake_entries
-                    WHERE product_code = ? AND store_no = ? AND batch_number = ?
+                    WHERE product_code = ? AND store_no = ? AND UPPER(TRIM(batch_number)) = ?
                 """, (prod_code, store_no, b_k))
                 if not c.fetchone():
                     c.execute("""
@@ -825,7 +830,7 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
             # 1. التأكد من إدراج جميع باتشات هذا الصنف المسجلة في المخزون في جدول الجرد
             existing_or_created = []
             for ir in inv_records:
-                b_num = (ir.get('batch_number') or '').strip()
+                b_num = (ir.get('batch_number') or '').strip().upper()
                 c.execute("""
                     SELECT id, counted_qty, system_qty, batch_number, expiry_date, cost_price, selling_price
                     FROM stocktake_entries
@@ -968,7 +973,8 @@ def save_stock_batch_count(
     prod_name = (prod.get("name_en") or prod.get("name") or "") if prod else ""
     item_type = prod.get("item_type") or "medicine" if prod else "medicine"
 
-    b_clean = str(batch_number or '').strip()
+    from .qr_parser import decode_arabic_keyboard_layout
+    b_clean = decode_arabic_keyboard_layout(str(batch_number or '').strip()).upper()
     if b_clean == '-':
         b_clean = ''
     exp_clean = str(expiry_date or '').strip()
@@ -1109,8 +1115,9 @@ def edit_stocktake_entry(entry_id: int, updates: Dict[str, Any], store_no: str =
         conn.close()
         return {"success": False, "message": "الصنف غير موجود بالجرد"}
 
+    from .qr_parser import decode_arabic_keyboard_layout
     counted_qty = float(updates.get("counted_qty", row["counted_qty"]))
-    batch = str(updates.get("batch_number", row["batch_number"] or '')).strip()
+    batch = decode_arabic_keyboard_layout(str(updates.get("batch_number", row["batch_number"] or '')).strip()).upper()
     expiry = str(updates.get("expiry_date", row["expiry_date"] or '')).strip()
     cost = float(updates.get("cost_price", row["cost_price"] or 0))
     sale = float(updates.get("selling_price", row["selling_price"] or 0))
@@ -1233,7 +1240,7 @@ def commit_stores_stocktake(store_nos: Optional[List[str]] = None) -> Dict[str, 
                 e['product_code'],
                 e['product_name'] or '',
                 e['barcode'] or e['gtin'] or '',
-                e['batch_number'] or '',
+                str(e['batch_number'] or '').strip().upper(),
                 e['expiry_date'] or '',
                 float(e['counted_qty'] or 0),
                 float(e['cost_price'] or 0),
@@ -1294,7 +1301,7 @@ def populate_store_from_inventory(store_no: str = 'ST-001') -> Dict[str, Any]:
     added = 0
     for r in records:
         p_code = r['product_code']
-        b_num = (r['batch_number'] or '').strip()
+        b_num = (r['batch_number'] or '').strip().upper()
         c.execute("""
             SELECT id FROM stocktake_entries
             WHERE product_code = ? AND store_no = ? AND (batch_number = ? OR (batch_number = '' AND ? = ''))
@@ -1399,7 +1406,7 @@ def upload_inventory_excel(file_path: str, store_no: str = 'ST-001', replace_exi
             continue
 
         name = str(r[col_idx["name"]] if col_idx["name"] >= 0 and r[col_idx["name"]] is not None else '').strip()
-        batch = str(r[col_idx["batch"]] if col_idx["batch"] >= 0 and r[col_idx["batch"]] is not None else '').strip()
+        batch = str(r[col_idx["batch"]] if col_idx["batch"] >= 0 and r[col_idx["batch"]] is not None else '').strip().upper()
         expiry = str(r[col_idx["expiry"]] if col_idx["expiry"] >= 0 and r[col_idx["expiry"]] is not None else '').strip()
 
         try:
@@ -1596,7 +1603,7 @@ def export_store_stocktake_to_excel(out_path: str, store_no: str = 'ST-001', she
 
         p_code = str(e.get("product_code") or "").strip()
         p_name = str(e.get("product_name") or "").strip()
-        p_batch = str(e.get("batch_number") or "").strip()
+        p_batch = str(e.get("batch_number") or "").strip().upper()
         p_exp = str(e.get("expiry_date") or "").strip()
 
         c_qty_raw = e.get("counted_qty") or 0
@@ -1704,7 +1711,7 @@ def export_store_stocktake_to_excel(out_path: str, store_no: str = 'ST-001', she
 
         vals = [
             idx, e.get("product_code"), e.get("product_name"), e.get("gtin") or e.get("barcode"),
-            e.get("batch_number"), e.get("expiry_date"), e.get("system_qty"), e.get("counted_qty"),
+            str(e.get("batch_number") or "").strip().upper(), e.get("expiry_date"), e.get("system_qty"), e.get("counted_qty"),
             diff, e.get("cost_price"), e.get("selling_price"), tot_c, tot_s, batch_st
         ]
 
@@ -1841,7 +1848,7 @@ def get_uncounted_store_items(store_no: str = 'ST-001', category: str = '') -> D
             "product_code": p_code,
             "product_name": clean_name,
             "barcode": r.get("barcode") or "",
-            "batch_number": r.get("batch_number") or "",
+            "batch_number": str(r.get("batch_number") or "").strip().upper(),
             "expiry_date": r.get("expiry_date") or "",
             "system_qty": sys_qty,
             "cost_price": cost,
@@ -1942,7 +1949,7 @@ def export_uncounted_items_to_excel(out_path: str, store_no: str = 'ST-001', she
 
         p_code = str(e.get("product_code") or "").strip()
         p_name = str(e.get("product_name") or "").strip()
-        p_batch = str(e.get("batch_number") or "").strip()
+        p_batch = str(e.get("batch_number") or "").strip().upper()
         p_exp = str(e.get("expiry_date") or "").strip()
         u_qty = e.get("system_qty") or 0
         cost_p = float(e.get("cost_price") or 0.0)

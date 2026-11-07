@@ -492,9 +492,9 @@ def _finalize(data: Dict[str, Any]) -> Dict[str, Any]:
     if data.get('gtin'):
         data['gtin'] = clean_alphanumeric(data['gtin'])
     if data.get('batch'):
-        data['batch'] = clean_alphanumeric(data['batch'])
+        data['batch'] = clean_alphanumeric(data['batch']).upper()
     if data.get('serial'):
-        data['serial'] = clean_alphanumeric(data['serial'])
+        data['serial'] = clean_alphanumeric(data['serial']).upper()
     if data.get('raw_expiry'):
         data['expiry'] = parse_expiry_date(data['raw_expiry'])
     if data.get('raw_prod_date'):

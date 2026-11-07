@@ -1248,7 +1248,7 @@ function parseGs1Client(rawInput) {
         isGs1: isGs1,
         gtin: gtin || '',
         serial: serial || '',
-        batch: batch || '',
+        batch: (batch || '').toUpperCase(),
         expiry: expiry || '',
         prodDate: prodDate || '',
         raw: s
@@ -1446,6 +1446,20 @@ function initScannerTab() {
         const el = document.getElementById('field-batch');
         if (el) el.value = '';
     });
+    ['field-batch', 'modal-edit-batch'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('input', () => {
+                const start = el.selectionStart;
+                const end = el.selectionEnd;
+                const up = decodeArabicKeyboard(el.value).toUpperCase();
+                if (el.value !== up) {
+                    el.value = up;
+                    try { el.setSelectionRange(start, end); } catch (_) {}
+                }
+            });
+        }
+    });
 
     // زر + إدخال اليدوي والسماح بإدخال الكميات يدوياً
     document.getElementById('btn-manual-insert')?.addEventListener('click', async () => {
@@ -1456,7 +1470,7 @@ function initScannerTab() {
             return;
         }
         const gtinVal = document.getElementById('field-gtin')?.value.trim();
-        const batchVal = document.getElementById('field-batch')?.value.trim();
+        const batchVal = decodeArabicKeyboard(document.getElementById('field-batch')?.value.trim() || '').toUpperCase();
         const expiryVal = document.getElementById('field-expiry')?.value.trim();
         if (gtinVal) {
             try {
@@ -3119,7 +3133,7 @@ function renderInvoice(inv) {
             <td class="excel-cell text-center font-mono font-bold text-emerald-700 text-[11px]">${salesPrice}</td>
             <td class="excel-cell text-center font-mono">
                 <span class="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10.5px] font-bold ${batchColor}">
-                    <span>${line.batch_number}</span>
+                    <span>${String(line.batch_number || '').toUpperCase()}</span>
                     ${hasMultipleBatches ? '<span class="text-[9px] bg-amber-500 text-white px-0.5 rounded leading-none" title="يوجد باتش آخر لنفس الصنف">⚠️</span>' : ''}
                 </span>
             </td>
@@ -3278,7 +3292,7 @@ async function executeScan(qrText) {
 
         // تحديث الحقول الظاهرة فورياً كما في صورة المستخدم
         const gtin = data.gtin || (data.parsed_qr && data.parsed_qr.gtin) || '';
-        const batch = data.batch || (data.parsed_qr && data.parsed_qr.batch) || '';
+        const batch = String(data.batch || (data.parsed_qr && data.parsed_qr.batch) || '').toUpperCase();
         const serial = data.serial || (data.parsed_qr && data.parsed_qr.serial) || '';
         const expiry = data.expiry || (data.parsed_qr && data.parsed_qr.expiry) || '';
         lastScannedGtin = gtin;
@@ -6945,7 +6959,7 @@ function initStocktakeTab() {
         if (!entryId) return;
 
         const qtyVal = parseFloat(document.getElementById('modal-edit-qty')?.value || 0);
-        const batchVal = document.getElementById('modal-edit-batch')?.value?.trim() || '';
+        const batchVal = decodeArabicKeyboard(document.getElementById('modal-edit-batch')?.value?.trim() || '').toUpperCase();
         const expiryVal = document.getElementById('modal-edit-expiry')?.value?.trim() || '';
         const costVal = parseFloat(document.getElementById('modal-edit-cost')?.value || 0);
         const saleVal = parseFloat(document.getElementById('modal-edit-sale')?.value || 0);
@@ -7023,7 +7037,7 @@ function openEditStockItemModal(entryId) {
     if (inputId) inputId.value = item.id;
     if (subTitle) subTitle.textContent = `${item.product_code} - ${item.product_name || ''}`;
     if (inputQty) inputQty.value = item.counted_qty;
-    if (inputBatch) inputBatch.value = item.batch_number || '';
+    if (inputBatch) inputBatch.value = String(item.batch_number || '').toUpperCase();
     if (inputExpiry) inputExpiry.value = item.expiry_date || '';
     if (inputCost) inputCost.value = item.cost_price || 0;
     if (inputSale) inputSale.value = item.selling_price || 0;
@@ -7667,7 +7681,7 @@ function renderBatchCardRows(data) {
 
         // الصنف يعتبر قابل للتعديل اليدوي إن كان جديداً أو بدون باتش مسجل أو بدون صلاحية
         const isEditable = Boolean(b.is_new_batch || b.requires_manual_entry || b.is_manual_batch || !b.batch_number || b.batch_number === '-' || !b.expiry_date || b.expiry_date === '-' || b.force_edit);
-        const defaultBatch = (b.batch_number && b.batch_number !== '-') ? b.batch_number : generateDefaultBatchNumber(idx);
+        const defaultBatch = String((b.batch_number && b.batch_number !== '-') ? b.batch_number : generateDefaultBatchNumber(idx)).toUpperCase();
         const expiryVal = (b.expiry_date && b.expiry_date !== '-') ? b.expiry_date : '';
 
         const batchBadge = (b.is_new_batch || isEditable || sysQty === 0)
@@ -7687,7 +7701,7 @@ function renderBatchCardRows(data) {
                         title="رقم التشغيلة (يتم إنشاؤه تلقائياً أو تعديله يدوياً)">
                </div>`
             : `<div class="flex items-center justify-center gap-1">
-                 <span class="px-2 py-0.5 rounded bg-indigo-100 border border-indigo-300 text-indigo-950 font-black font-mono text-xs shadow-sm" dir="ltr">${escapeHtml(b.batch_number || '-')}</span>
+                 <span class="px-2 py-0.5 rounded bg-indigo-100 border border-indigo-300 text-indigo-950 font-black font-mono text-xs shadow-sm" dir="ltr">${escapeHtml(String(b.batch_number || '-').toUpperCase())}</span>
                  <button type="button" class="stk-bec-btn-toggle-edit text-slate-400 hover:text-indigo-600 p-0.5 text-[10px]" data-index="${idx}" title="تعديل التشغيلة والصلاحية يدوياً">✏️</button>
                </div>`;
 
@@ -7746,7 +7760,7 @@ function renderBatchCardRows(data) {
                            data-index="${idx}"
                            data-product-code="${escapeHtml(prod.code || '')}"
                            data-entry-id="${b.entry_id || ''}"
-                           data-batch="${escapeHtml(b.batch_number || '')}"
+                           data-batch="${escapeHtml(String(b.batch_number || '').toUpperCase())}"
                            data-expiry="${escapeHtml(b.expiry_date || '')}"
                            data-system-qty="${sysQty}"
                            data-cost="${cost}"
@@ -7787,6 +7801,15 @@ function attachBatchCardRowEvents(data) {
     // 1. ربط حقول رقم التشغيلة
     tbody.querySelectorAll('.stk-bec-batch-input').forEach(batchInp => {
         const idx = parseInt(batchInp.dataset.index);
+        batchInp.addEventListener('input', () => {
+            const start = batchInp.selectionStart;
+            const end = batchInp.selectionEnd;
+            const up = decodeArabicKeyboard(batchInp.value).toUpperCase();
+            if (batchInp.value !== up) {
+                batchInp.value = up;
+                try { batchInp.setSelectionRange(start, end); } catch (_) {}
+            }
+        });
         const handleBatchStep = (e) => {
             const isEnter = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.code === 'Enter');
             const isTab = (e.key === 'Tab' || e.keyCode === 9 || e.which === 9) && !e.shiftKey;
@@ -8083,7 +8106,7 @@ async function commitAllCardBatches(allInputs) {
             const batchInput = rowEl?.querySelector('.stk-bec-batch-input');
             const expiryInput = rowEl?.querySelector('.stk-bec-expiry-input');
 
-            let batch = batchInput ? batchInput.value.trim() : (inputEl.dataset.batch || '');
+            let batch = decodeArabicKeyboard(batchInput ? batchInput.value.trim() : (inputEl.dataset.batch || '')).toUpperCase();
             let expiry = expiryInput ? normalizeExpiryDate(expiryInput.value.trim()) : (inputEl.dataset.expiry || '');
 
             if (batchInput) batchInput.value = batch;
@@ -8382,7 +8405,7 @@ function renderCurrentStoreDetails(storeData) {
                 </td>
                 <td class="border border-slate-300 p-1 font-mono text-[11px] text-slate-600 text-center" dir="ltr">${escapeHtml(item.gtin || item.barcode || '-')}</td>
                 <td class="border border-slate-300 p-1 text-center">
-                    ${item.batch_number ? `<span class="px-2 py-0.5 rounded bg-indigo-100 border border-indigo-300 text-indigo-950 font-black font-mono text-xs shadow-sm" dir="ltr">${escapeHtml(item.batch_number)}</span>` : '<span class="text-slate-400 font-mono">-</span>'}
+                    ${item.batch_number ? `<span class="px-2 py-0.5 rounded bg-indigo-100 border border-indigo-300 text-indigo-950 font-black font-mono text-xs shadow-sm" dir="ltr">${escapeHtml(String(item.batch_number).toUpperCase())}</span>` : '<span class="text-slate-400 font-mono">-</span>'}
                 </td>
                 <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-900 text-xs" dir="ltr">${escapeHtml(item.expiry_date || '-')}</td>
                 <td class="border border-slate-300 p-1 text-center bg-sky-50/40">
@@ -8966,7 +8989,7 @@ async function printStoreStocktakeView(reportTitle) {
                             <td style="font-family:monospace;font-weight:bold;">${it.product_code}</td>
                             <td class="name-cell">${it.product_name}</td>
                             <td style="font-family:monospace;font-size:9.5px;">${it.gtin || it.barcode || '-'}</td>
-                            <td style="font-family:monospace;font-weight:bold;">${it.batch_number || '-'}</td>
+                            <td style="font-family:monospace;font-weight:bold;">${String(it.batch_number || '-').toUpperCase()}</td>
                             <td style="font-family:monospace;">${it.expiry_date || '-'}</td>
                             <td style="font-family:monospace;">${it.system_qty}</td>
                             <td style="font-family:monospace;font-weight:bold;font-size:11.5px;background:#eef2ff;">${it.counted_qty}</td>
@@ -9073,7 +9096,7 @@ async function printUncountedItemsView(byCategory = false, overrideItems = null)
                     <td style="font-family:monospace;font-weight:bold;">${it.product_code}</td>
                     <td class="name-cell">${it.product_name}</td>
                     <td style="font-family:monospace;font-size:9.5px;">${it.barcode || '-'}</td>
-                    <td style="font-family:monospace;font-weight:bold;color:#b91c1c;">${it.batch_number || '-'}</td>
+                    <td style="font-family:monospace;font-weight:bold;color:#b91c1c;">${String(it.batch_number || '-').toUpperCase()}</td>
                     <td style="font-family:monospace;">${it.expiry_date || '-'}</td>
                     <td style="font-family:monospace;font-weight:bold;background:#fee2e2;color:#991b1b;">${it.system_qty}</td>
                     <td style="font-family:monospace;">${formatMoney(it.cost_price)}</td>
@@ -9114,7 +9137,7 @@ async function printUncountedItemsView(byCategory = false, overrideItems = null)
                             <td style="font-family:monospace;font-weight:bold;">${it.product_code}</td>
                             <td class="name-cell">${it.product_name}</td>
                             <td style="font-family:monospace;font-size:9.5px;">${it.barcode || '-'}</td>
-                            <td style="font-family:monospace;font-weight:bold;color:#b91c1c;">${it.batch_number || '-'}</td>
+                            <td style="font-family:monospace;font-weight:bold;color:#b91c1c;">${String(it.batch_number || '-').toUpperCase()}</td>
                             <td style="font-family:monospace;">${it.expiry_date || '-'}</td>
                             <td style="font-family:monospace;font-weight:bold;background:#fff1f2;color:#991b1b;">${it.system_qty}</td>
                             <td style="font-family:monospace;">${formatMoney(it.cost_price)}</td>
@@ -9358,7 +9381,7 @@ function renderFilteredUncountedItems() {
                     <span class="line-clamp-1 leading-relaxed">${escapeHtml(it.product_name || '')}</span>
                 </td>
                 <td class="border border-slate-300 p-1 font-mono text-[11px] text-slate-600 text-center" dir="ltr">${escapeHtml(it.barcode || '-')}</td>
-                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-rose-700 text-[11px]" dir="ltr">${escapeHtml(it.batch_number || '-')}</td>
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-rose-700 text-[11px]" dir="ltr">${escapeHtml(String(it.batch_number || '-').toUpperCase())}</td>
                 <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-800 text-[11px]" dir="ltr">${escapeHtml(it.expiry_date || '-')}</td>
                 <td class="border border-slate-300 p-1 text-center font-mono font-black text-rose-800 bg-rose-50/70">${it.system_qty}</td>
                 <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-800">${formatMoney(it.cost_price)}</td>

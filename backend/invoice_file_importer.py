@@ -123,21 +123,23 @@ def import_invoice_file_to_active_invoice(file_path: str, invoice_id: Optional[i
             if parsed.get("success"):
                 d = parsed["data"]
                 gtin_val = d.get("gtin") or ''
-                batch_val = d.get("batch") or ''
-                serial_val = d.get("serial") or ''
+                batch_val = str(d.get("batch") or '').strip().upper()
+                serial_val = str(d.get("serial") or '').strip().upper()
                 expiry_val = d.get("expiry") or ''
 
         if not gtin_val and gtin_col:
             gtin_val = clean_barcode_preserve_zeros(str(row.get(gtin_col, '')))
         if not batch_val and batch_col:
-            batch_val = str(row.get(batch_col, '')).strip()
+            batch_val = str(row.get(batch_col, '')).strip().upper()
         if not serial_val and serial_col:
-            serial_val = str(row.get(serial_col, '')).strip()
+            serial_val = str(row.get(serial_col, '')).strip().upper()
         if not expiry_val and expiry_col:
             expiry_val = normalize_date_str(str(row.get(expiry_col, '')))
 
         if not batch_val or batch_val.lower() == 'nan':
             batch_val = 'BATCH-01'
+        else:
+            batch_val = batch_val.upper()
         if serial_val.lower() == 'nan':
             serial_val = ''
         if not expiry_val or expiry_val.lower() == 'nan':
