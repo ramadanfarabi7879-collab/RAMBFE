@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://remedies-asking-purposes-tested.trycloudflare.com";
+let activeTunnelUrl = "https://mandate-secrets-drums-reasoning.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -247,10 +247,49 @@ export default {
             });
         }
 
-        // إذا كان الطلب مسار API
-        if (path.startsWith('/api/')) {
-            const pcTunnel = activeTunnelUrl || "https://lines-musician-pretty-toner.trycloudflare.com";
+        const pcTunnel = activeTunnelUrl;
 
+        // 1. إذا كان نفق الكمبيوتر متوفراً، مرر كافة الطلبات (صفحات الويب وملفات JS وطلبات الـ API) مباشرة لجهاز الكمبيوتر
+        if (pcTunnel && !path.startsWith('/api/tunnel/')) {
+            try {
+                let rawProxyBody = null;
+                if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+                    try {
+                        rawProxyBody = await request.arrayBuffer();
+                    } catch (_) {}
+                }
+                const targetUrl = new URL(path + url.search, pcTunnel);
+                const proxyHeaders = new Headers(request.headers);
+                proxyHeaders.set('Host', new URL(pcTunnel).host);
+                proxyHeaders.set('X-Forwarded-Host', url.host);
+
+                const proxyReq = new Request(targetUrl.toString(), {
+                    method: request.method,
+                    headers: proxyHeaders,
+                    body: ['GET', 'HEAD'].includes(request.method) ? undefined : rawProxyBody,
+                    duplex: 'half'
+                });
+
+                const resp = await fetch(proxyReq);
+                if (resp.status >= 200 && resp.status < 500) {
+                    const respHeaders = new Headers(resp.headers);
+                    respHeaders.set('Access-Control-Allow-Origin', '*');
+                    respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+                    respHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+                    respHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+                    return new Response(resp.body, {
+                        status: resp.status,
+                        statusText: resp.statusText,
+                        headers: respHeaders
+                    });
+                }
+            } catch (err) {
+                console.error('Proxy to PC tunnel error, falling back:', err);
+            }
+        }
+
+        // إذا كان الطلب مسار API وتوقف النفق
+        if (path.startsWith('/api/')) {
             let rawBodyBuffer = null;
             let body = {};
             if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -267,41 +306,6 @@ export default {
                     }
                 } catch (e) {
                     body = {};
-                }
-            }
-
-            // 1. إذا كان نفق الكمبيوتر متوفراً، مرر كافة طلبات الـ API مباشرة لقاعدة بيانات الكمبيوتر!
-            if (pcTunnel && !path.startsWith('/api/tunnel/')) {
-                try {
-                    const targetUrl = new URL(path + url.search, pcTunnel);
-                    const proxyHeaders = new Headers(request.headers);
-                    proxyHeaders.set('Host', new URL(pcTunnel).host);
-                    proxyHeaders.set('X-Forwarded-Host', url.host);
-
-                    const proxyReq = new Request(targetUrl.toString(), {
-                        method: request.method,
-                        headers: proxyHeaders,
-                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : rawBodyBuffer,
-                        duplex: 'half'
-                    });
-
-                    const resp = await fetch(proxyReq);
-                    if (resp.status >= 500 && resp.status <= 599) {
-                        console.warn('Proxy to tunnel returned status', resp.status, 'falling back to edge handler');
-                    } else {
-                        const respHeaders = new Headers(resp.headers);
-                        respHeaders.set('Access-Control-Allow-Origin', '*');
-                        respHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
-                        respHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-                        return new Response(resp.body, {
-                            status: resp.status,
-                            statusText: resp.statusText,
-                            headers: respHeaders
-                        });
-                    }
-                } catch (err) {
-                    console.error('Proxy to PC tunnel error, falling back to edge memory:', err);
                 }
             }
 
