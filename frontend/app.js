@@ -1107,12 +1107,66 @@ function initScannerTab() {
         }
     });
 
+    // مسميات الفروع المعتمدة لخانة LOCATION عند تصدير الإكسيل (WH001/Stock, expir/Stock, PH001..PH009/Stock)
+    const PRESET_BRANCH_LOCATIONS = [
+        'WH001/Stock',
+        'expir/Stock',
+        'PH001/Stock',
+        'PH002/Stock',
+        'PH003/Stock',
+        'PH004/Stock',
+        'PH005/Stock',
+        'PH006/Stock',
+        'PH007/Stock',
+        'PH008/Stock',
+        'PH009/Stock'
+    ];
+
+    const getSelectedExportLocation = () => {
+        const selEl = document.getElementById('select-export-location');
+        if (selEl && selEl.value !== undefined) {
+            const v = selEl.value;
+            if (v === '__SHEET_NAME__') {
+                return (document.getElementById('inline-sheet-name-input')?.value || '').trim();
+            }
+            return v;
+        }
+        const saved = localStorage.getItem('preferred_export_location');
+        return saved !== null ? saved : 'PH004/Stock';
+    };
+
+    const syncExportLocation = (val) => {
+        try {
+            localStorage.setItem('preferred_export_location', val);
+        } catch(e) {}
+        ['select-export-location', 'modal-select-export-location', 'select-stocktake-export-location'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el && el.value !== val) el.value = val;
+        });
+    };
+
+    const initLocationSelectors = () => {
+        const saved = localStorage.getItem('preferred_export_location') || 'PH004/Stock';
+        syncExportLocation(saved);
+        ['select-export-location', 'modal-select-export-location', 'select-stocktake-export-location'].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', (e) => {
+                syncExportLocation(e.target.value);
+            });
+        });
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initLocationSelectors);
+    } else {
+        setTimeout(initLocationSelectors, 0);
+    }
+
     const getActiveSheetNameAndLocation = () => {
         const sheetName = (document.getElementById('inline-sheet-name-input')?.value || '').trim();
-        const fillLoc = document.getElementById('chk-sheet-name-as-location')?.checked || false;
+        const locationVal = getSelectedExportLocation();
         return {
             sheetName,
-            locationVal: fillLoc ? sheetName : ''
+            locationVal
         };
     };
 
@@ -1244,10 +1298,10 @@ function initScannerTab() {
         if (modalInput) {
             modalInput.value = inlineVal || formatSheetTitle(currentSheetCat, currentSheetNum || '1', currentSheetOrder);
         }
-        const inlineLocChk = document.getElementById('chk-sheet-name-as-location');
-        const modalLocChk = document.getElementById('modal-chk-location-fill');
-        if (modalLocChk && inlineLocChk) {
-            modalLocChk.checked = inlineLocChk.checked;
+        const curLoc = getSelectedExportLocation();
+        const modalLocSel = document.getElementById('modal-select-export-location');
+        if (modalLocSel) {
+            modalLocSel.value = curLoc;
         }
         highlightModalSelections();
         renderModalSuggestionChips(currentSheetCat);
@@ -1269,19 +1323,21 @@ function initScannerTab() {
 
     document.getElementById('btn-confirm-pre-print')?.addEventListener('click', () => {
         const chosenTitle = (document.getElementById('modal-sheet-name-input')?.value || '').trim();
-        const fillLocation = document.getElementById('modal-chk-location-fill')?.checked || false;
+        const chosenLoc = document.getElementById('modal-select-export-location')?.value || '';
+        if (chosenLoc) {
+            syncExportLocation(chosenLoc);
+        }
         const initialMode = document.getElementById('modal-print-mode-select')?.value || 'custom';
 
         const inlineInput = document.getElementById('inline-sheet-name-input');
         if (inlineInput) inlineInput.value = chosenTitle;
-        const inlineLocChk = document.getElementById('chk-sheet-name-as-location');
-        if (inlineLocChk) inlineLocChk.checked = fillLocation;
 
         closePrePrintModal();
         if (pendingPrintInvoice) {
             window.printInvoiceSheet(pendingPrintInvoice, {
                 sheetTitle: chosenTitle,
-                fillLocation,
+                fillLocation: !!chosenLoc,
+                locationVal: chosenLoc === '__SHEET_NAME__' ? chosenTitle : chosenLoc,
                 initialMode
             });
         }
@@ -1294,13 +1350,15 @@ function initScannerTab() {
             return;
         }
         const sheetTitle = (options.sheetTitle !== undefined ? options.sheetTitle : (document.getElementById('inline-sheet-name-input')?.value || 'MEDICINE 1')).trim() || 'MEDICINE 1';
-        const fillLocation = options.fillLocation !== undefined ? options.fillLocation : (document.getElementById('chk-sheet-name-as-location')?.checked || false);
+        const initialLocVal = (options.locationVal !== undefined ? options.locationVal : getSelectedExportLocation());
+        const fillLocation = options.fillLocation !== undefined ? options.fillLocation : (!!initialLocVal);
         const startMode = options.initialMode || 'custom';
 
         const customCols = getCustomSelectedColumnSpecs();
         const invJson = JSON.stringify(inv).replace(/</g, '\\u003c');
         const customColsJson = JSON.stringify(customCols).replace(/</g, '\\u003c');
         const initialTitleJson = JSON.stringify(sheetTitle).replace(/</g, '\\u003c');
+        const initialLocJson = JSON.stringify(initialLocVal).replace(/</g, '\\u003c');
 
         const docTitle = sheetTitle || `Invoice_${inv.invoice_number || 'INV'}`;
 
@@ -1597,10 +1655,25 @@ function initScannerTab() {
                     <input type="checkbox" id="chk-print-serials" onchange="renderTable()">
                     <span>إظهار السيريالات</span>
                 </label>
-                <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;margin-right:6px;">
-                    <input type="checkbox" id="chk-fill-loc" ${fillLocation ? 'checked' : ''} onchange="renderTable()">
-                    <span>وضع الاسم في Location</span>
-                </label>
+                <div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;margin-right:6px;background:rgba(255,255,255,0.15);padding:2px 6px;border-radius:6px;">
+                    <span style="font-weight:bold;">📍 الفرع (Location):</span>
+                    <select id="print-sel-location" onchange="renderTable()" style="padding:2px 6px;border-radius:4px;font-family:monospace;font-weight:bold;font-size:11px;color:#0f172a;background:#fff;border:1px solid #94a3b8;cursor:pointer;">
+                        <option value="WH001/Stock">WH001/Stock</option>
+                        <option value="expir/Stock">expir/Stock</option>
+                        <option value="PH001/Stock">PH001/Stock</option>
+                        <option value="PH002/Stock">PH002/Stock</option>
+                        <option value="PH003/Stock">PH003/Stock</option>
+                        <option value="PH004/Stock">PH004/Stock</option>
+                        <option value="PH005/Stock">PH005/Stock</option>
+                        <option value="PH006/Stock">PH006/Stock</option>
+                        <option value="PH007/Stock">PH007/Stock</option>
+                        <option value="PH008/Stock">PH008/Stock</option>
+                        <option value="PH009/Stock">PH009/Stock</option>
+                        <option value="">(فارغ / بدون)</option>
+                        <option value="__SHEET_NAME__">تعبئة باسم الورقة</option>
+                    </select>
+                </div>
+                <input type="checkbox" id="chk-fill-loc" ${fillLocation ? 'checked' : ''} style="display:none;" onchange="renderTable()">
             </div>
             <div style="display:flex;align-items:center;gap:8px;">
                 <input type="file" id="custom-logo-input" accept="image/*" style="display:none;" onchange="handleLogoUpload(this)">
@@ -1837,7 +1910,17 @@ function initScannerTab() {
         function renderTable() {
             const cols = getColumnsForMode(currentMode);
             const showSerials = document.getElementById('chk-print-serials').checked;
-            const fillLoc = document.getElementById('chk-fill-loc').checked;
+            const fillLoc = document.getElementById('chk-fill-loc')?.checked || false;
+            const printLocSel = document.getElementById('print-sel-location');
+            const chosenLoc = printLocSel ? printLocSel.value : ${initialLocJson};
+            let resolvedLoc = '';
+            if (chosenLoc === '__SHEET_NAME__') {
+                resolvedLoc = currentTitle;
+            } else if (chosenLoc) {
+                resolvedLoc = chosenLoc;
+            } else if (fillLoc) {
+                resolvedLoc = currentTitle;
+            }
             const hasPrices = cols.some(c => c.field === 'sales_price' || c.field === 'unit_price');
             const totalColSpan = cols.length + (showSerials ? 2 : 1);
 
@@ -1885,7 +1968,7 @@ function initScannerTab() {
                     let val = '';
                     if (c.field === 'product_code') val = ln.product_code || '';
                     else if (c.field === 'name_en') val = ln.name_en || ln.product_name || ln.name_ar || '';
-                    else if (c.field === 'location') val = fillLoc ? currentTitle : '';
+                    else if (c.field === 'location') val = resolvedLoc;
                     else if (c.field === 'sales_price') val = parseFloat(ln.sales_price || 0).toFixed(2);
                     else if (c.field === 'unit_price') val = parseFloat(ln.unit_price || 0).toFixed(2);
                     else if (c.field === 'batch_number') val = ln.batch_number || '';
@@ -1914,6 +1997,11 @@ function initScannerTab() {
             tfoot.innerHTML = footHtml;
         }
 
+        const initialLocFromParent = ${initialLocJson};
+        const printLocEl = document.getElementById('print-sel-location');
+        if (printLocEl && initialLocFromParent) {
+            printLocEl.value = initialLocFromParent;
+        }
         setPrintMode(currentMode);
         window.onload = function() {
             setTimeout(function() { window.print(); }, 250);
@@ -5898,8 +5986,14 @@ function initStocktakeTab() {
     btnExport?.addEventListener('click', async () => {
         const title = currentActiveStoreName ? currentActiveStoreName : currentActiveStoreNo;
         const defaultName = `StockCount_${currentActiveStoreNo}_${title}.xlsx`;
-        const url = `/api/stock/export-excel?store_no=${encodeURIComponent(currentActiveStoreNo)}&title=${encodeURIComponent(title)}`;
-        showCatalogToast('📊 جاري سحب الإكسيل وحفظ الملف وفتحه في Excel تلقائياً...');
+        const stkLoc = document.getElementById('select-stocktake-export-location')?.value || getSelectedExportLocation();
+        const qs = new URLSearchParams({
+            store_no: currentActiveStoreNo,
+            title: title
+        });
+        if (stkLoc && stkLoc !== '__SHEET_NAME__') qs.set('location_val', stkLoc);
+        const url = `/api/stock/export-excel?${qs.toString()}`;
+        showCatalogToast(`📊 جاري سحب الإكسيل وحفظ الملف (الفرع: ${stkLoc || 'بدون'})...`);
         await window.downloadAndTriggerSave(url, defaultName);
         scanInput?.focus();
     });
@@ -7689,7 +7783,10 @@ async function quickExportStoreExcel(storeNo) {
     selectActiveStockStore(storeNo, '');
     const title = currentActiveStoreName ? currentActiveStoreName : storeNo;
     const defaultName = `StockCount_${storeNo}_${title}.xlsx`;
-    const url = `/api/stock/export-excel?store_no=${encodeURIComponent(storeNo)}&title=${encodeURIComponent(title)}`;
+    const stkLoc = document.getElementById('select-stocktake-export-location')?.value || getSelectedExportLocation();
+    const qs = new URLSearchParams({ store_no: storeNo, title: title });
+    if (stkLoc && stkLoc !== '__SHEET_NAME__') qs.set('location_val', stkLoc);
+    const url = `/api/stock/export-excel?${qs.toString()}`;
     showCatalogToast('📊 جاري سحب الإكسيل وحفظ الملف وفتحه في Excel تلقائياً...');
     await window.downloadAndTriggerSave(url, defaultName);
 }
