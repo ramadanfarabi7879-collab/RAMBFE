@@ -77,7 +77,7 @@ class TestCustomExportAndMultiBarcodes(unittest.TestCase):
         self.assertIn("06281001112224", gtins)
 
         # Verify search across scientific name and company
-        found_sci = db.search_products("Caffeine")
+        found_sci = db.search_products("Caffeine", match_mode="contains")
         self.assertTrue(any(p["code"] == self.test_code for p in found_sci["items"]))
 
         found_comp = db.search_products("GSK Pharma")

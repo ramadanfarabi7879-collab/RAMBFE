@@ -751,9 +751,8 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
         ]
         params = [q_pattern, q_pattern, norm_ar_pattern, norm_ar_pattern, norm_en_pattern, norm_en_pattern]
 
-        if is_contains:
-            where_clauses.extend(['p.scientific_name LIKE ?', 'p.company LIKE ?', 'p.category LIKE ?'])
-            params.extend([q_pattern, q_pattern, q_pattern])
+        where_clauses.extend(['p.scientific_name LIKE ?', 'p.company LIKE ?', 'p.category LIKE ?'])
+        params.extend([q_pattern, q_pattern, q_pattern])
 
         # البحث في كود الصنف بالنص الأصلي
         where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])

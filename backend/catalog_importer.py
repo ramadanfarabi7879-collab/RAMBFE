@@ -373,6 +373,15 @@ def parse_and_validate_import_data(
                 if c_val in db_barcodes:
                     clean_code = db_barcodes[c_val]
                     break
+        elif clean_code.isdigit() and clean_code not in db_products:
+            # مطابقة ذكية في حال أزال الإكسيل الأصفار البادئة (مثل 94688 مقابل 0000094688)
+            padded = clean_code.zfill(10)
+            if padded in db_products:
+                clean_code = padded
+            else:
+                stripped = clean_code.lstrip('0')
+                if stripped in db_products:
+                    clean_code = stripped
 
         # عمود التجميع الاختياري
         group_key = None
