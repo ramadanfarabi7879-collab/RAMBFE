@@ -708,11 +708,15 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
     البحث في الأصناف بالاسم أو الكود أو الباركود أو GTIN مع دعم:
     - وضع البداية الافتراضي (يبدأ بـ): يبحث عن الكلمة في بداية الاسم أو الكود فقط
     - وضع البحث المعمم (يحتوي على): يبحث عن الكلمة في أي مكان (البداية أو المنتصف أو النهاية)
+    - قاعدة المسطرة / الفصلة (Word Boundary): بمجرد كتابة الكلمة وأخذ مسافة بعدها (مثل "ADOL ") تعتبر الكلمة مكتملة
+      ولا يجوز مطابقة أصناف تبدأ بأحرف متصلة بها مثل ADOLIN، وتطابق فقط ما يبدأ بـ ADOL ككلمة مستقلة.
     - تطبيع اللغة وتخطيط لوحة المفاتيح
     """
     conn = get_connection()
     cursor = conn.cursor()
-    q = str(query or "").strip()
+    raw_q = str(query or "").lstrip()
+    has_trailing_space = raw_q.endswith(' ')
+    q = raw_q.strip()
     is_contains = str(match_mode or "").lower() in ("contains", "generalized", "all", "true", "1")
     
     if not q:
@@ -725,82 +729,162 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
         from .qr_parser import extract_clean_gtin
         from .qr_parser import decode_arabic_keyboard_layout
         
+        words = q.split()
         q_clean = clean_barcode_preserve_zeros(q)
         norm_ar = normalize_arabic(q)
         norm_en = normalize_english(q)
 
-        # تحديد نمط البحث (يبدأ بـ أو يحتوي على في أي موضع)
-        if is_contains:
-            q_pattern = f"%{q}%"
-            norm_ar_pattern = f"%{norm_ar}%" if norm_ar else q_pattern
-            norm_en_pattern = f"%{norm_en}%" if norm_en else q_pattern
-            clean_pattern = f"%{q_clean}%" if q_clean else ""
-        else:
-            q_pattern = f"{q}%"
-            norm_ar_pattern = f"{norm_ar}%" if norm_ar else q_pattern
-            norm_en_pattern = f"{norm_en}%" if norm_en else q_pattern
-            clean_pattern = f"{q_clean}%" if q_clean else ""
+        where_clauses = []
+        params = []
 
-        where_clauses = [
-            'p.name_ar LIKE ?',
-            'p.name LIKE ?',
-            'p.normalized_name_ar LIKE ?',
-            'p.normalized_name LIKE ?',
-            'p.name_en LIKE ?',
-            'p.normalized_name_en LIKE ?'
+        text_fields = [
+            'p.name_en', 'p.normalized_name_en',
+            'p.name_ar', 'p.normalized_name_ar',
+            'p.name', 'p.normalized_name',
+            'p.scientific_name', 'p.company', 'p.category'
         ]
-        params = [q_pattern, q_pattern, norm_ar_pattern, norm_ar_pattern, norm_en_pattern, norm_en_pattern]
 
-        where_clauses.extend(['p.scientific_name LIKE ?', 'p.company LIKE ?', 'p.category LIKE ?'])
-        params.extend([q_pattern, q_pattern, q_pattern])
+        if has_trailing_space or len(words) > 1:
+            # قاعدة المسطرة / الفصلة: الكلمة السابقة انتهت ولا يجوز إدخال أي حروف متصلة بها (مثل منع ADOLIN عند كتابة "ADOL ")
+            if len(words) == 1 and has_trailing_space:
+                tok = words[0]
+                search_tokens = [tok]
+                if norm_en and norm_en != tok: search_tokens.append(norm_en)
+                if norm_ar and norm_ar != tok: search_tokens.append(norm_ar)
 
-        # البحث في كود الصنف بالنص الأصلي
-        where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-        params.extend([q, q_pattern])
+                token_conditions = []
+                for t in set(search_tokens):
+                    for f in text_fields:
+                        if is_contains:
+                            token_conditions.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                            params.extend([t, f"{t} %", f"% {t} %", f"% {t}", f"{t}-%"])
+                        else:
+                            token_conditions.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                            params.extend([t, f"{t} %", f"{t}-%", f"{t}/%"])
 
-        # البحث في الأكواد المنظفة والباركودات
-        if q_clean and clean_pattern and q_clean != q:
-            where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-            params.extend([q_clean, clean_pattern])
+                token_conditions.append("(p.code = ? OR p.code LIKE ?)")
+                params.extend([tok, f"{tok} %"])
 
-        if q_clean and clean_pattern:
-            where_clauses.extend([
-                'p.barcode = ?', 'p.barcode LIKE ?',
-                'p.gtin = ?', 'p.gtin LIKE ?',
-                'pb.barcode = ?', 'pb.barcode LIKE ?'
-            ])
-            params.extend([
-                q_clean, clean_pattern,
-                q_clean, clean_pattern,
-                q_clean, clean_pattern
-            ])
-            if q_clean.isdigit():
-                padded_10 = q_clean.zfill(10)
-                if padded_10 != q_clean:
-                    where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-                    params.extend([padded_10, f"%{padded_10}%" if is_contains else f"{padded_10}%"])
-                if is_contains:
-                    stripped_zeros = q_clean.lstrip('0') or '0'
-                    if stripped_zeros != q_clean:
-                        where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-                        params.extend([stripped_zeros, f"%{stripped_zeros}%"])
+                if q_clean:
+                    token_conditions.append("(p.barcode = ? OR p.gtin = ? OR pb.barcode = ?)")
+                    params.extend([q_clean, q_clean, q_clean])
 
-        # معالجة ذكية إذا كُتب البحث الإنجليزي أو الباركود أثناء تفعيل الكيبورد العربي
-        decoded_q = decode_arabic_keyboard_layout(q).strip()
-        if decoded_q and decoded_q.lower() != q.lower():
-            dec_pattern = f"%{decoded_q}%" if is_contains else f"{decoded_q}%"
-            where_clauses.extend(['p.name_en LIKE ?', 'p.normalized_name_en LIKE ?'])
-            params.extend([dec_pattern, dec_pattern])
+                where_clauses.append(f"({' OR '.join(token_conditions)})")
+
+                # معالجة فك الكيبورد العربي مع المسطرة
+                raw_dec = decode_arabic_keyboard_layout(raw_q)
+                if raw_dec != raw_q:
+                    dec = raw_dec.strip()
+                    if dec:
+                        dec_conds = []
+                        for f in ['p.name_en', 'p.normalized_name_en', 'p.scientific_name']:
+                            if is_contains:
+                                dec_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                                params.extend([dec, f"{dec} %", f"% {dec} %", f"% {dec}"])
+                            else:
+                                dec_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ?)")
+                                params.extend([dec, f"{dec} %", f"{dec}-%"])
+                        if dec_conds:
+                            where_clauses.append(f"({' OR '.join(dec_conds)})")
+            else:
+                # كلمات متعددة مفصولة بمسافات (مثل "ADOL EXTRA" أو "ADOL 500")
+                w_first = words[0]
+                first_conds = []
+                for f in text_fields:
+                    if is_contains:
+                        first_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                        params.extend([w_first, f"{w_first} %", f"% {w_first} %", f"% {w_first}", f"{w_first}-%"])
+                    else:
+                        first_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                        params.extend([w_first, f"{w_first} %", f"{w_first}-%", f"{w_first}/%"])
+                first_conds.append("(p.code = ? OR p.code LIKE ?)")
+                params.extend([w_first, f"{w_first} %"])
+
+                where_clauses.append(f"({' OR '.join(first_conds)})")
+
+                # باقي الكلمات
+                for i, w in enumerate(words[1:]):
+                    is_last = (i == len(words) - 2)
+                    w_conds = []
+                    for f in text_fields:
+                        if is_last and has_trailing_space:
+                            w_conds.append(f"({f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} = ?)")
+                            params.extend([f"% {w} %", f"% {w}", f"{w} %", w])
+                        else:
+                            w_conds.append(f"{f} LIKE ?")
+                            params.append(f"%{w}%")
+                    where_clauses.append(f"({' OR '.join(w_conds)})")
+        else:
+            # الوضع بدون مسطرة وبكلمة واحدة: يبدأ بـ أو يحتوي على
             if is_contains:
-                where_clauses.append('p.scientific_name LIKE ?')
-                params.append(dec_pattern)
-            dec_clean = clean_barcode_preserve_zeros(decoded_q)
-            if dec_clean:
-                dec_clean_pat = f"%{dec_clean}%" if is_contains else f"{dec_clean}%"
-                where_clauses.extend(['p.code = ?', 'p.code LIKE ?', 'p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?', 'pb.barcode = ?', 'pb.barcode LIKE ?'])
-                params.extend([dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat])
+                q_pattern = f"%{q}%"
+                norm_ar_pattern = f"%{norm_ar}%" if norm_ar else q_pattern
+                norm_en_pattern = f"%{norm_en}%" if norm_en else q_pattern
+                clean_pattern = f"%{q_clean}%" if q_clean else ""
+            else:
+                q_pattern = f"{q}%"
+                norm_ar_pattern = f"{norm_ar}%" if norm_ar else q_pattern
+                norm_en_pattern = f"{norm_en}%" if norm_en else q_pattern
+                clean_pattern = f"{q_clean}%" if q_clean else ""
 
-        where_sql = " OR ".join(where_clauses)
+            where_clauses.extend([
+                'p.name_ar LIKE ?',
+                'p.name LIKE ?',
+                'p.normalized_name_ar LIKE ?',
+                'p.normalized_name LIKE ?',
+                'p.name_en LIKE ?',
+                'p.normalized_name_en LIKE ?',
+                'p.scientific_name LIKE ?',
+                'p.company LIKE ?',
+                'p.category LIKE ?'
+            ])
+            params.extend([q_pattern, q_pattern, norm_ar_pattern, norm_ar_pattern, norm_en_pattern, norm_en_pattern, q_pattern, q_pattern, q_pattern])
+
+            where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+            params.extend([q, q_pattern])
+
+            if q_clean and clean_pattern and q_clean != q:
+                where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+                params.extend([q_clean, clean_pattern])
+
+            if q_clean and clean_pattern:
+                where_clauses.extend([
+                    'p.barcode = ?', 'p.barcode LIKE ?',
+                    'p.gtin = ?', 'p.gtin LIKE ?',
+                    'pb.barcode = ?', 'pb.barcode LIKE ?'
+                ])
+                params.extend([
+                    q_clean, clean_pattern,
+                    q_clean, clean_pattern,
+                    q_clean, clean_pattern
+                ])
+                if q_clean.isdigit():
+                    padded_10 = q_clean.zfill(10)
+                    if padded_10 != q_clean:
+                        where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+                        params.extend([padded_10, f"%{padded_10}%" if is_contains else f"{padded_10}%"])
+                    if is_contains:
+                        stripped_zeros = q_clean.lstrip('0') or '0'
+                        if stripped_zeros != q_clean:
+                            where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+                            params.extend([stripped_zeros, f"%{stripped_zeros}%"])
+
+            # معالجة ذكية إذا كُتب البحث الإنجليزي أو الباركود أثناء تفعيل الكيبورد العربي
+            decoded_q = decode_arabic_keyboard_layout(q).strip()
+            if decoded_q and decoded_q.lower() != q.lower():
+                dec_pattern = f"%{decoded_q}%" if is_contains else f"{decoded_q}%"
+                where_clauses.extend(['p.name_en LIKE ?', 'p.normalized_name_en LIKE ?'])
+                params.extend([dec_pattern, dec_pattern])
+                if is_contains:
+                    where_clauses.append('p.scientific_name LIKE ?')
+                    params.append(dec_pattern)
+                dec_clean = clean_barcode_preserve_zeros(decoded_q)
+                if dec_clean:
+                    dec_clean_pat = f"%{dec_clean}%" if is_contains else f"{dec_clean}%"
+                    where_clauses.extend(['p.code = ?', 'p.code LIKE ?', 'p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?', 'pb.barcode = ?', 'pb.barcode LIKE ?'])
+                    params.extend([dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat])
+
+        where_sql = " AND ".join(where_clauses) if len(words) > 1 else " OR ".join(where_clauses)
 
         cursor.execute(f"""
             SELECT COUNT(DISTINCT p.id) FROM products p

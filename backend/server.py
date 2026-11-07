@@ -401,7 +401,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
         # 3. استعراض وبحث الأصناف (مع دعم وضع البداية الافتراضي أو البحث المعمم)
         if path == '/api/catalog/products':
-            q = params.get('query', [''])[0].strip() or params.get('q', [''])[0].strip()
+            q = (params.get('query', [''])[0] or params.get('q', [''])[0]).lstrip()
             mode = params.get('mode', ['start'])[0].strip().lower()
             limit_str = params.get('limit', ['50'])[0]
             offset_str = params.get('offset', ['0'])[0]
@@ -614,7 +614,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         if path == '/api/stock/store/details':
             try:
                 store_no = params.get('store_no', ['ST-001'])[0].strip() or 'ST-001'
-                q = params.get('query', [''])[0].strip() or params.get('q', [''])[0].strip()
+                q = (params.get('query', [''])[0] or params.get('q', [''])[0]).lstrip()
                 res = get_store_stocktake_details(store_no, q)
                 self.send_json(res)
             except Exception as e:

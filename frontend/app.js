@@ -3476,7 +3476,7 @@ function initCatalogAutocomplete() {
     // استماع للكتابة المباشرة لتحديث الاقتراحات التلقائية فوراً
     searchInput.addEventListener('input', () => {
         clearTimeout(catalogAutocompleteTimer);
-        const q = searchInput.value.trim();
+        const q = searchInput.value.replace(/^\s+/, '');
 
         if (!q) {
             dropdown.innerHTML = '';
@@ -3534,7 +3534,7 @@ function initCatalogAutocomplete() {
             updateAutocompleteHighlight();
         } else if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.key === 'Go' || e.key === 'Search' || e.key === 'Next') {
             e.preventDefault();
-            const q = searchInput.value.trim();
+            const q = searchInput.value.replace(/^\s+/, '');
             if (!q) return;
 
             // الحالة الثانية: إذا قام المستخدم بتحديد أصناف معينة (بالـ Checkbox)، يتم إدراج الأصناف المحددة فقط
@@ -4734,7 +4734,7 @@ async function loadCatalogProducts() {
         return;
     }
 
-    const query = document.getElementById('catalog-search-input')?.value.trim() || '';
+    const query = (document.getElementById('catalog-search-input')?.value || '').replace(/^\s+/, '');
     const tbody = document.getElementById('catalog-products-tbody');
     tbody.innerHTML = '<tr><td colspan="11" class="excel-cell py-6 text-center text-slate-400">جاري التحميل...</td></tr>';
 

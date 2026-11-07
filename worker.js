@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://hitting-forums-fits-premium.trycloudflare.com";
+let activeTunnelUrl = "https://frost-specification-university-boc.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -263,12 +263,15 @@ export default {
                 proxyHeaders.set('Host', new URL(pcTunnel).host);
                 proxyHeaders.set('X-Forwarded-Host', url.host);
 
-                const proxyReq = new Request(targetUrl.toString(), {
+                const reqInit = {
                     method: request.method,
-                    headers: proxyHeaders,
-                    body: ['GET', 'HEAD'].includes(request.method) ? undefined : rawProxyBody,
-                    duplex: 'half'
-                });
+                    headers: proxyHeaders
+                };
+                if (!['GET', 'HEAD'].includes(request.method) && rawProxyBody) {
+                    reqInit.body = rawProxyBody;
+                    reqInit.duplex = 'half';
+                }
+                const proxyReq = new Request(targetUrl.toString(), reqInit);
 
                 const resp = await fetch(proxyReq);
                 if (resp.status >= 200 && resp.status < 500) {
@@ -364,7 +367,7 @@ export default {
             }
 
             if (path === '/api/catalog/products') {
-                const q = (url.searchParams.get('query') || url.searchParams.get('q') || '').trim().toLowerCase();
+                const q = (url.searchParams.get('query') || url.searchParams.get('q') || '').replace(/^\s+/, '').toLowerCase();
                 const mode = (url.searchParams.get('mode') || 'start').trim().toLowerCase();
                 const isContains = ['contains', 'generalized', 'all', 'true', '1'].includes(mode);
                 let prods = memoryProducts;

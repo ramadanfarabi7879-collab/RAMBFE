@@ -77,6 +77,42 @@ class TestTaxAndSearchFeatures(unittest.TestCase):
         self.assertIn("888001", contains_codes)
         self.assertIn("888002", contains_codes)
 
+    def test_word_boundary_space_rule(self):
+        # Rule: "ADOL" matches both ADOL and ADOLIN
+        # But "ADOL " (with space) matches ONLY ADOL and excludes ADOLIN
+        p_adol = {
+            "code": "888101",
+            "name_en": "ADOL 500MG 24 TAB",
+            "name_ar": "ادول 500 مجم 24 قرص",
+            "tax_rate": 15.0
+        }
+        p_adolin = {
+            "code": "888102",
+            "name_en": "ADOLIN 0.1% GEL 30GM",
+            "name_ar": "ادولين جل",
+            "tax_rate": 15.0
+        }
+        save_or_update_product(p_adol)
+        save_or_update_product(p_adolin)
+
+        # 1. Without space: "ADOL" -> matches both
+        res_without_space = search_products("ADOL", limit=100, match_mode="start")
+        codes_no_space = [it["code"] for it in res_without_space.get("items", [])]
+        self.assertIn("888101", codes_no_space)
+        self.assertIn("888102", codes_no_space)
+
+        # 2. With space: "ADOL " -> matches ADOL, EXCLUDES ADOLIN!
+        res_with_space = search_products("ADOL ", limit=100, match_mode="start")
+        codes_with_space = [it["code"] for it in res_with_space.get("items", [])]
+        self.assertIn("888101", codes_with_space)
+        self.assertNotIn("888102", codes_with_space)
+
+        # 3. With space in contains mode: "ADOL " -> matches ADOL as distinct word, excludes ADOLIN
+        res_contains_space = search_products("ADOL ", limit=100, match_mode="contains")
+        codes_contains_space = [it["code"] for it in res_contains_space.get("items", [])]
+        self.assertIn("888101", codes_contains_space)
+        self.assertNotIn("888102", codes_contains_space)
+
     def test_search_code_start_vs_contains(self):
         p1 = {"code": "9468810", "name_en": "TEST PRODUCT CODE START", "tax_rate": 15.0}
         p2 = {"code": "00094688", "name_en": "TEST PRODUCT CODE CONTAINS", "tax_rate": 0.0}
