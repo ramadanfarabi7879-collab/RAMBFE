@@ -251,12 +251,20 @@ export default {
         if (path.startsWith('/api/')) {
             const pcTunnel = activeTunnelUrl || "https://lines-musician-pretty-toner.trycloudflare.com";
 
-            let rawBodyText = '';
+            let rawBodyBuffer = null;
             let body = {};
             if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
                 try {
-                    rawBodyText = await request.text();
-                    if (rawBodyText) body = JSON.parse(rawBodyText);
+                    rawBodyBuffer = await request.arrayBuffer();
+                    const contentType = request.headers.get('content-type') || '';
+                    if (rawBodyBuffer && rawBodyBuffer.byteLength > 0 && (contentType.includes('application/json') || (!contentType.includes('multipart/') && !contentType.includes('octet-stream')))) {
+                        try {
+                            const rawText = new TextDecoder('utf-8').decode(rawBodyBuffer);
+                            if (rawText && rawText.trim().startsWith('{')) {
+                                body = JSON.parse(rawText);
+                            }
+                        } catch (_) {}
+                    }
                 } catch (e) {
                     body = {};
                 }
@@ -273,7 +281,7 @@ export default {
                     const proxyReq = new Request(targetUrl.toString(), {
                         method: request.method,
                         headers: proxyHeaders,
-                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : rawBodyText,
+                        body: ['GET', 'HEAD'].includes(request.method) ? undefined : rawBodyBuffer,
                         duplex: 'half'
                     });
 

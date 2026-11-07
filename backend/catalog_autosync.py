@@ -151,7 +151,15 @@ def sync_now(force: bool = False) -> Dict[str, Any]:
         sig = _file_signature(path)
         state = _load_state()
         prev = state.get("signature") or {}
-        if not force and prev.get("path") == sig["path"] and prev.get("mtime") == sig["mtime"] and prev.get("size") == sig["size"]:
+
+        # فحص أمان ذكي: إذا كانت قاعدة البيانات خالية من الأصناف يتم الاستيراد فوراً بدون تخطي
+        try:
+            from backend.db import get_stats
+            has_no_products = (get_stats().get("products_count", 0) == 0)
+        except Exception:
+            has_no_products = False
+
+        if not force and not has_no_products and prev.get("path") == sig["path"] and prev.get("mtime") == sig["mtime"] and prev.get("size") == sig["size"]:
             return {"success": True, "skipped": True, "message": "ملف الأصناف لم يتغير منذ آخر مزامنة."}
 
         if not _is_file_stable(path):
