@@ -4472,7 +4472,7 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
         const unitPrice = parseFloat(it.unit_price || it.cost_price || 0).toFixed(2);
         const taxRate = parseFloat(it.tax_rate || 0);
         const taxBadge = taxRate > 0 
-            ? `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold inline-flex items-center gap-0.5" title="خاضع لضريبة القيمة المضافة ${taxBadge}"><span>VAT</span> <span>${taxRate.toFixed(0)}%</span></span>`
+            ? `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold inline-flex items-center gap-0.5" title="خاضع لضريبة القيمة المضافة ${taxRate.toFixed(0)}%"><span>VAT</span> <span>${taxRate.toFixed(0)}%</span></span>`
             : `<span class="px-1 py-0.5 bg-slate-100 text-slate-400 rounded text-[9.5px]" title="غير خاضع للضريبة (FALSE)">غير خاضع</span>`;
 
         tr.innerHTML = `
