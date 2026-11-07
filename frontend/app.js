@@ -1134,6 +1134,7 @@ function initScannerTab() {
         const saved = localStorage.getItem('preferred_export_location');
         return saved !== null ? saved : 'PH004/Stock';
     };
+    window.getSelectedExportLocation = getSelectedExportLocation;
 
     const syncExportLocation = (val) => {
         try {
@@ -5986,7 +5987,7 @@ function initStocktakeTab() {
     btnExport?.addEventListener('click', async () => {
         const title = currentActiveStoreName ? currentActiveStoreName : currentActiveStoreNo;
         const defaultName = `StockCount_${currentActiveStoreNo}_${title}.xlsx`;
-        const stkLoc = document.getElementById('select-stocktake-export-location')?.value || getSelectedExportLocation();
+        const stkLoc = document.getElementById('select-stocktake-export-location')?.value || (window.getSelectedExportLocation ? window.getSelectedExportLocation() : 'PH004/Stock');
         const qs = new URLSearchParams({
             store_no: currentActiveStoreNo,
             title: title
@@ -7783,7 +7784,7 @@ async function quickExportStoreExcel(storeNo) {
     selectActiveStockStore(storeNo, '');
     const title = currentActiveStoreName ? currentActiveStoreName : storeNo;
     const defaultName = `StockCount_${storeNo}_${title}.xlsx`;
-    const stkLoc = document.getElementById('select-stocktake-export-location')?.value || getSelectedExportLocation();
+    const stkLoc = document.getElementById('select-stocktake-export-location')?.value || (window.getSelectedExportLocation ? window.getSelectedExportLocation() : 'PH004/Stock');
     const qs = new URLSearchParams({ store_no: storeNo, title: title });
     if (stkLoc && stkLoc !== '__SHEET_NAME__') qs.set('location_val', stkLoc);
     const url = `/api/stock/export-excel?${qs.toString()}`;
