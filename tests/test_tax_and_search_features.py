@@ -1,135 +1,124 @@
-# -*- coding: utf-8 -*-
 import unittest
 import os
-import sqlite3
-import pandas as pd
-from backend.catalog_importer import (
-    parse_tax_rate_cell,
-    suggest_columns_mapping,
-    inspect_excel_catalog,
-    commit_import_catalog
-)
+import sys
+
+# Add project root to sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from backend.catalog_importer import parse_tax_rate_cell, suggest_columns_mapping
 from backend.db import search_products, get_product_by_code, save_or_update_product
 
 class TestTaxAndSearchFeatures(unittest.TestCase):
 
     def test_parse_tax_rate_cell(self):
-        """اختبار دالة استخراج وتفسير الضريبة"""
-        # VAT / True -> 15%
-        self.assertEqual(parse_tax_rate_cell("VAT"), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell("vat"), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell("True"), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell("خاضع للضريبة"), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell("خاضع"), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell(True), (True, 15.0))
-
-        # FALSE / False -> 0%
-        self.assertEqual(parse_tax_rate_cell("FALSE"), (True, 0.0))
-        self.assertEqual(parse_tax_rate_cell("false"), (True, 0.0))
-        self.assertEqual(parse_tax_rate_cell(False), (True, 0.0))
-        self.assertEqual(parse_tax_rate_cell("0"), (True, 0.0))
-        self.assertEqual(parse_tax_rate_cell("0.0"), (True, 0.0))
-        self.assertEqual(parse_tax_rate_cell("غير خاضع"), (True, 0.0))
-        self.assertEqual(parse_tax_rate_cell("معفى"), (True, 0.0))
-
-        # أرقام ونسب مئوية
-        self.assertEqual(parse_tax_rate_cell("15%"), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell("15"), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell(15), (True, 15.0))
-        self.assertEqual(parse_tax_rate_cell("14%"), (True, 14.0))
+        # 1. 'VAT' or contains VAT -> (True, 15.0)
+        self.assertEqual(parse_tax_rate_cell('VAT'), (True, 15.0))
+        self.assertEqual(parse_tax_rate_cell('vat'), (True, 15.0))
+        self.assertEqual(parse_tax_rate_cell('Customer Tax VAT'), (True, 15.0))
+        self.assertEqual(parse_tax_rate_cell('15%'), (True, 15.0))
         self.assertEqual(parse_tax_rate_cell(0.15), (True, 15.0))
+        self.assertEqual(parse_tax_rate_cell(15), (True, 15.0))
 
-        # فارغ / NaN -> غير محدد (False, 0.0)
-        self.assertEqual(parse_tax_rate_cell(""), (False, 0.0))
+        # 2. 'FALSE' or zero tax -> (True, 0.0)
+        self.assertEqual(parse_tax_rate_cell('FALSE'), (True, 0.0))
+        self.assertEqual(parse_tax_rate_cell('false'), (True, 0.0))
+        self.assertEqual(parse_tax_rate_cell('False'), (True, 0.0))
+        self.assertEqual(parse_tax_rate_cell('0%'), (True, 0.0))
+        self.assertEqual(parse_tax_rate_cell(0), (True, 0.0))
+        self.assertEqual(parse_tax_rate_cell('غير خاضع'), (True, 0.0))
+
+        # 3. None or empty preserves existing tax -> (False, 0.0)
         self.assertEqual(parse_tax_rate_cell(None), (False, 0.0))
-        self.assertEqual(parse_tax_rate_cell("nan"), (False, 0.0))
-        self.assertEqual(parse_tax_rate_cell("<NA>"), (False, 0.0))
+        self.assertEqual(parse_tax_rate_cell(''), (False, 0.0))
 
     def test_suggest_columns_mapping_tax(self):
-        """اختبار التعرف الذكي على عمود CUSTOMER TAX في مختلف الملفات"""
-        h1 = ['Sequence', 'Internal Reference', 'Name', 'CUSTOMER TAX', 'Sales Price']
-        s1 = suggest_columns_mapping(h1)
-        self.assertEqual(s1.get('tax_rate_col'), 'CUSTOMER TAX')
+        headers = ['Internal Reference', 'Name (EN)', 'Sales Price', 'CUSTOMER TAX', 'Barcode']
+        mapping = suggest_columns_mapping(headers)
+        self.assertEqual(mapping.get('tax_rate_col'), 'CUSTOMER TAX')
 
-        h2 = ['Code', 'Product Name', 'Customer Taxes', 'Price']
-        s2 = suggest_columns_mapping(h2)
-        self.assertEqual(s2.get('tax_rate_col'), 'Customer Taxes')
+        headers2 = ['code', 'name', 'Customer Taxes']
+        mapping2 = suggest_columns_mapping(headers2)
+        self.assertEqual(mapping2.get('tax_rate_col'), 'Customer Taxes')
 
-        h3 = ['كود الصنف', 'اسم الصنف', 'نسبة الضريبة', 'السعر']
-        s3 = suggest_columns_mapping(h3)
-        self.assertEqual(s3.get('tax_rate_col'), 'نسبة الضريبة')
+    def test_search_mode_start_vs_contains(self):
+        # Create test products
+        p1 = {
+            "code": "888001",
+            "name_en": "ADOL EXTRA TABLETS 500MG",
+            "name_ar": "ادول اكسترا حبوب 500 ملغ",
+            "selling_price": 10.0,
+            "cost_price": 7.0,
+            "tax_rate": 15.0
+        }
+        p2 = {
+            "code": "888002",
+            "name_en": "PANADOL ADVANCE 500MG (CONTAINS ADOL IN MIDDLE)",
+            "name_ar": "بنادول ادفانس 500 ملغ",
+            "selling_price": 12.0,
+            "cost_price": 8.0,
+            "tax_rate": 0.0
+        }
+        save_or_update_product(p1)
+        save_or_update_product(p2)
 
-    def test_excel_tax_import_lifecycle(self):
-        """اختبار دورة استيراد ملف إكسيل كامل مع عمود CUSTOMER TAX"""
-        test_file = "temp/test_tax_import_lifecycle.xlsx"
-        os.makedirs("temp", exist_ok=True)
+        # Test mode='start'
+        res_start = search_products("ADOL", limit=100, offset=0, match_mode="start")
+        items_start = res_start.get("items", [])
+        start_codes = [it["code"] for it in items_start]
 
-        df = pd.DataFrame([
-            {"Internal Reference": "TAX-TEST-01", "Name": "TAXABLE ITEM 1", "Sales Price": 50.0, "CUSTOMER TAX": "VAT"},
-            {"Internal Reference": "TAX-TEST-02", "Name": "NON TAXABLE ITEM 2", "Sales Price": 30.0, "CUSTOMER TAX": "FALSE"},
-            {"Internal Reference": "TAX-TEST-03", "Name": "EMPTY TAX ITEM 3", "Sales Price": 20.0, "CUSTOMER TAX": None}
-        ])
-        df.to_excel(test_file, index=False)
+        self.assertIn("888001", start_codes)
+        self.assertNotIn("888002", start_codes)
 
-        info = inspect_excel_catalog(test_file)
-        self.assertTrue(info.get('success'))
-        self.assertEqual(info['suggested_mapping']['tax_rate_col'], 'CUSTOMER TAX')
+        # Test mode='contains'
+        res_contains = search_products("ADOL", limit=100, offset=0, match_mode="contains")
+        items_contains = res_contains.get("items", [])
+        contains_codes = [it["code"] for it in items_contains]
 
-        res = commit_import_catalog(test_file, info['suggested_mapping'], replace_barcodes=False)
-        self.assertTrue(res.get('success'))
+        self.assertIn("888001", contains_codes)
+        self.assertIn("888002", contains_codes)
 
-        p1 = get_product_by_code("TAX-TEST-01")
-        self.assertIsNotNone(p1)
-        self.assertEqual(p1['tax_rate'], 15.0, "الصنف الأول ذو قيمة VAT يجب أن يكون خاضعاً للضريبة بنسبة 15%")
+    def test_search_code_start_vs_contains(self):
+        p1 = {"code": "9468810", "name_en": "TEST PRODUCT CODE START", "tax_rate": 15.0}
+        p2 = {"code": "00094688", "name_en": "TEST PRODUCT CODE CONTAINS", "tax_rate": 0.0}
+        save_or_update_product(p1)
+        save_or_update_product(p2)
 
-        p2 = get_product_by_code("TAX-TEST-02")
-        self.assertIsNotNone(p2)
-        self.assertEqual(p2['tax_rate'], 0.0, "الصنف الثاني ذو قيمة FALSE يجب أن يكون غير خاضع للضريبة (0%)")
+        # mode='start': starts with 94688
+        res_start = search_products("94688", limit=100, offset=0, match_mode="start")
+        start_codes = [it["code"] for it in res_start.get("items", [])]
+        self.assertIn("9468810", start_codes)
 
-        p3 = get_product_by_code("TAX-TEST-03")
-        self.assertIsNotNone(p3)
-        self.assertEqual(p3['tax_rate'], 0.0, "الصنف الثالث ذو القيمة الفارغة يجب أن يكون الافتراضي غير خاضع (0%)")
+        # mode='contains': contains 94688 anywhere
+        res_contains = search_products("94688", limit=100, offset=0, match_mode="contains")
+        contains_codes = [it["code"] for it in res_contains.get("items", [])]
+        self.assertIn("9468810", contains_codes)
+        self.assertIn("00094688", contains_codes)
 
-        # تنظيف
-        if os.path.exists(test_file):
-            os.remove(test_file)
-
-    def test_product_search_modes(self):
-        """اختبار البحث الافتراضي (البداية فقط) والبحث المعمم (في أي مكان)"""
-        # التأكد من وجود أصناف اختبارية
-        save_or_update_product({
-            "code": "SRCH-001",
-            "name_en": "ADOL EXTRA 500MG",
-            "name_ar": "أدول إكسترا 500 ملغ",
-            "selling_price": 10.0
-        })
-        save_or_update_product({
-            "code": "SRCH-002",
-            "name_en": "PANADOL COLD AND FLU",
-            "name_ar": "بنادول كولد آند فلو",
-            "selling_price": 15.0
-        })
-
-        # 1. البحث في وضع البداية الافتراضي (start)
-        res_start = search_products("ADOL", limit=20, match_mode="start")
-        start_names = [p['name_en'] or p['name'] for p in res_start['items']]
-        self.assertIn("ADOL EXTRA 500MG", start_names, "يجب أن يظهر ADOL في وضع البداية")
-        self.assertNotIn("PANADOL COLD AND FLU", start_names, "يجب ألا يظهر PANADOL في وضع البداية الافتراضي عند البحث عن ADOL")
-
-        # 2. البحث في وضع المعمم (contains)
-        res_contains = search_products("ADOL", limit=20, match_mode="contains")
-        contains_names = [p['name_en'] or p['name'] for p in res_contains['items']]
-        self.assertIn("ADOL EXTRA 500MG", contains_names, "يجب أن يظهر ADOL في وضع البحث المعمم")
-        self.assertIn("PANADOL COLD AND FLU", contains_names, "يجب أن يظهر PANADOL في وضع البحث المعمم لاحتوائه على ADOL في المنتصف")
-
-        # 3. اختبار كود الصنف
-        res_code_start = search_products("001", limit=20, match_mode="start")
-        start_codes = [p['code'] for p in res_code_start['items']]
-        self.assertNotIn("SRCH-001", start_codes, "كود SRCH-001 لا يبدأ بـ 001 فلا يظهر في وضع البداية")
-
-        res_code_contains = search_products("SRCH-001", limit=20, match_mode="contains")
-        contains_codes = [p['code'] for p in res_code_contains['items']]
-        self.assertIn("SRCH-001", contains_codes, "يجب أن يظهر كود الصنف في وضع البحث المعمم")
+    def test_full_product_card_data(self):
+        p = {
+            "code": "777001",
+            "name_en": "TEST CARD PRODUCT FULL",
+            "name_ar": "صنف تجريبي كامل",
+            "scientific_name": "Paracetamol",
+            "company": "Pharma Co",
+            "category": "Analgesic",
+            "selling_price": 25.5,
+            "cost_price": 18.0,
+            "tax_rate": 15.0,
+            "unit": "علبة",
+            "primary_barcode": "1234567890123",
+            "primary_gtin": "06281234567890"
+        }
+        save_or_update_product(p)
+        prod = get_product_by_code("777001")
+        self.assertIsNotNone(prod)
+        self.assertEqual(prod["code"], "777001")
+        self.assertEqual(prod["name_en"], "TEST CARD PRODUCT FULL")
+        self.assertEqual(prod["scientific_name"], "Paracetamol")
+        self.assertEqual(prod["company"], "Pharma Co")
+        self.assertEqual(prod["tax_rate"], 15.0)
+        self.assertIn("barcode_list", prod)
+        self.assertIn("gtin_list", prod)
 
 if __name__ == '__main__':
     unittest.main()

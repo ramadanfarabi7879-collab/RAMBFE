@@ -3395,23 +3395,86 @@ let isGeneralizedSearch = localStorage.getItem('catalog_search_mode') === 'conta
 
 function updateSearchModeUI() {
     const btn = document.getElementById('btn-toggle-search-mode');
-    const dot = document.getElementById('search-mode-dot');
+    const icon = document.getElementById('search-mode-icon');
+    const text = document.getElementById('search-mode-text');
+    const sw = document.getElementById('search-mode-switch');
+    const knob = document.getElementById('search-mode-knob');
     const input = document.getElementById('catalog-search-input');
-    if (!dot) return;
+
     if (isGeneralizedSearch) {
-        dot.className = 'w-3 h-3 rounded-full bg-emerald-500 border border-emerald-600 ring-4 ring-emerald-100 shadow-sm animate-pulse';
-        if (btn) btn.title = 'وضع البحث المعمم مفعّل: يبحث في أي موضع بالاسم أو الكود (انقر للعودة للوضع الافتراضي)';
-        if (input) input.placeholder = 'اكتب أي جزء من اسم الصنف أو الكود (البحث المعمم مفعّل)...';
+        if (btn) {
+            btn.className = 'px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 flex items-center gap-2 select-none shrink-0 shadow-md cursor-pointer border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 ring-2 ring-emerald-300/50 active:scale-95';
+            btn.title = '💡 وضع الكشاف مشتغل (بحث معمم شامل في أي موضع بالاسم والكود). انقر لإطفاء الكشاف والعودة للبحث في البداية فقط';
+        }
+        if (icon) {
+            icon.textContent = '💡';
+            icon.className = 'text-base transition-transform duration-200 scale-110 drop-shadow';
+        }
+        if (text) {
+            text.textContent = 'بحث معمم (شامل)';
+        }
+        if (sw) {
+            sw.className = 'w-8 h-4 bg-emerald-800 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+        }
+        if (knob) {
+            knob.className = 'w-3 h-3 bg-white rounded-full shadow-md transition-transform duration-200 -translate-x-4';
+        }
+        if (input) {
+            input.placeholder = '💡 اكتب أي جزء من اسم الصنف أو الكود (بحث معمم شامل)...';
+        }
     } else {
-        dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-300 border border-slate-400 hover:bg-slate-400';
-        if (btn) btn.title = 'وضع البحث الافتراضي: يبحث عن بداية الاسم أو الكود فقط (انقر لتفعيل البحث المعمم في أي موضع)';
-        if (input) input.placeholder = 'اكتب بداية اسم الصنف أو الكود (البحث الافتراضي)...';
+        if (btn) {
+            btn.className = 'px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 flex items-center gap-2 select-none shrink-0 shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95';
+            btn.title = '🔦 وضع الكشاف مطفأ (بحث بالبداية فقط). انقر لتشغيل الكشاف وتعميم البحث في كل أجزاء الاسم والكود';
+        }
+        if (icon) {
+            icon.textContent = '🔦';
+            icon.className = 'text-base transition-transform duration-200 scale-100';
+        }
+        if (text) {
+            text.textContent = 'بحث بالبداية';
+        }
+        if (sw) {
+            sw.className = 'w-8 h-4 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+        }
+        if (knob) {
+            knob.className = 'w-3 h-3 bg-white rounded-full shadow-sm transition-transform duration-200 translate-x-0';
+        }
+        if (input) {
+            input.placeholder = '🔦 اكتب بداية اسم الصنف أو الكود (البحث الافتراضي)...';
+        }
     }
 }
 
 function initCatalogAutocomplete() {
     const searchInput = document.getElementById('catalog-search-input');
     const dropdown = document.getElementById('catalog-autocomplete-dropdown');
+    const btnToggleMode = document.getElementById('btn-toggle-search-mode');
+
+    // تفعيل وتحديث واجهة مفتاح الكشاف للبحث المعمم
+    updateSearchModeUI();
+    if (btnToggleMode && !btnToggleMode._boundListener) {
+        btnToggleMode._boundListener = true;
+        btnToggleMode.addEventListener('click', () => {
+            isGeneralizedSearch = !isGeneralizedSearch;
+            localStorage.setItem('catalog_search_mode', isGeneralizedSearch ? 'contains' : 'start');
+            updateSearchModeUI();
+            if (isGeneralizedSearch) {
+                showCatalogToast('💡 تم تشغيل الكشاف والبحث المعمم (يبحث في أي موضع من الاسم والكود)');
+            } else {
+                showCatalogToast('🔦 تم إطفاء الكشاف والعودة للوضع الافتراضي (يبحث في بداية الاسم والكود فقط)');
+            }
+            const q = searchInput ? searchInput.value.trim() : '';
+            if (q) {
+                fetchAndRenderAutocomplete(q);
+                if (!isAccumulatedSearchMode) {
+                    catalogOffset = 0;
+                    loadCatalogProducts();
+                }
+            }
+        });
+    }
+
     if (!searchInput || !dropdown) return;
 
     // استماع للكتابة المباشرة لتحديث الاقتراحات التلقائية فوراً
@@ -3435,10 +3498,10 @@ function initCatalogAutocomplete() {
 
         catalogAutocompleteTimer = setTimeout(async () => {
             await fetchAndRenderAutocomplete(q);
-        }, 150);
+        }, 120);
     });
 
-    // التنقل بلوحة المفاتيح: السهم لأسفل/لأعلى، Enter، Escape
+    // التنقل بلوحة المفاتيح: السهم لأسفل/لأعلى، PageDown/PageUp، Home/End، Enter، Escape
     searchInput.addEventListener('keydown', (e) => {
         const isDropdownOpen = !dropdown.classList.contains('hidden') && currentAutocompleteResults.length > 0;
 
@@ -3454,6 +3517,26 @@ function initCatalogAutocomplete() {
                 activeAutocompleteIndex = (activeAutocompleteIndex - 1 + currentAutocompleteResults.length) % currentAutocompleteResults.length;
                 updateAutocompleteHighlight();
             }
+        } else if (e.key === 'PageDown') {
+            if (isDropdownOpen) {
+                e.preventDefault();
+                activeAutocompleteIndex = Math.min(currentAutocompleteResults.length - 1, (activeAutocompleteIndex < 0 ? 0 : activeAutocompleteIndex) + 8);
+                updateAutocompleteHighlight();
+            }
+        } else if (e.key === 'PageUp') {
+            if (isDropdownOpen) {
+                e.preventDefault();
+                activeAutocompleteIndex = Math.max(0, (activeAutocompleteIndex < 0 ? 0 : activeAutocompleteIndex) - 8);
+                updateAutocompleteHighlight();
+            }
+        } else if (e.key === 'Home' && isDropdownOpen && (e.ctrlKey || e.altKey)) {
+            e.preventDefault();
+            activeAutocompleteIndex = 0;
+            updateAutocompleteHighlight();
+        } else if (e.key === 'End' && isDropdownOpen && (e.ctrlKey || e.altKey)) {
+            e.preventDefault();
+            activeAutocompleteIndex = currentAutocompleteResults.length - 1;
+            updateAutocompleteHighlight();
         } else if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.key === 'Go' || e.key === 'Search' || e.key === 'Next') {
             e.preventDefault();
             if (isDropdownOpen) {
@@ -3484,7 +3567,7 @@ function initCatalogAutocomplete() {
 
     // إغلاق القائمة عند النقر خارجها
     document.addEventListener('click', (e) => {
-        if (!dropdown.contains(e.target) && e.target !== searchInput) {
+        if (!dropdown.contains(e.target) && e.target !== searchInput && e.target !== btnToggleMode && !btnToggleMode?.contains(e.target)) {
             dropdown.classList.add('hidden');
             activeAutocompleteIndex = -1;
         }
@@ -3496,10 +3579,12 @@ async function fetchAndRenderAutocomplete(query) {
     if (!dropdown) return;
 
     try {
-        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=25&offset=0`;
+        // جلب كافة الأصناف المطابقة للبحث بدون تقييد بـ 25 صنفاً لعرض كل الأصناف والتمرير الكامل
+        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=2000&offset=0`;
         const res = await fetch(url);
         const data = await res.json();
         const items = data.items || [];
+        const total = data.total || items.length;
         
         currentAutocompleteResults = items;
         activeAutocompleteIndex = -1;
@@ -3507,38 +3592,43 @@ async function fetchAndRenderAutocomplete(query) {
 
         if (items.length === 0) {
             dropdown.innerHTML = `
-                <div class="p-4 text-center text-slate-400 font-medium">
-                    <div class="text-xl mb-1">🔍</div>
-                    <div>لم يتم العثور على أي صنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(query)}</span>"</div>
+                <div class="p-6 text-center text-slate-400 font-medium">
+                    <div class="text-2xl mb-1">${isGeneralizedSearch ? '💡' : '🔦'}</div>
+                    <div class="text-sm">لم يتم العثور على أي صنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(query)}</span>"</div>
+                    <div class="text-[11px] text-slate-400 mt-1">
+                        ${!isGeneralizedSearch ? '💡 نصيحة: انقر على زر الكشاف لتفعيل البحث المعمم في أي موضع داخل الاسم والكود' : 'جرب جزءاً آخر من الاسم أو الكود أو الباركود'}
+                    </div>
                 </div>
             `;
             dropdown.classList.remove('hidden');
             return;
         }
 
-        // بناء واجهة الاقتراحات والتحديد المتعدد (Multi-Select Autocomplete)
-        // شريط علوي مثبت يحتوي على: زر تحديد الكل، زر إضافة الأصناف المحددة، وعداد
+        // شريط علوي مثبت: إجمالي النتائج، تحديد الكل، وإضافة الأصناف
         let topBarHtml = `
-            <div class="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 p-2.5 px-3 flex items-center justify-between gap-3 shadow-xs">
+            <div class="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 p-2.5 px-3 flex items-center justify-between gap-3 shadow-xs">
                 <div class="flex items-center gap-2">
                     <label class="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-slate-700 select-none">
                         <input type="checkbox" id="chk-auto-select-all" class="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
                         <span>تحديد الكل</span>
                     </label>
-                    <span class="text-[10px] text-slate-400 font-medium">(${items.length} صنف)</span>
+                    <span class="text-[10.5px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full font-bold font-mono">
+                        عرض ${items.length} صنف مطابق
+                    </span>
+                    <span class="text-[10px] text-slate-400 hidden sm:inline">(يمكن التمرير بالماوس أو الأسهم)</span>
                 </div>
                 <div class="flex items-center gap-2">
                     <span id="auto-selected-badge" class="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md text-[10.5px] font-mono font-bold">0 محدد</span>
                     <button type="button" id="btn-auto-add-selected-top" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
                         <span>➕</span>
-                        <span id="auto-btn-text-top">إضافة الأصناف المحددة</span>
+                        <span id="auto-btn-text-top">إضافة المحدد</span>
                     </button>
                 </div>
             </div>
         `;
 
-        // قائمة الأصناف القابلة للتمرير
-        let itemsListHtml = `<div id="autocomplete-items-container" class="divide-y divide-slate-100 overflow-y-auto max-h-[320px]">`;
+        // قائمة الأصناف القابلة للتمرير الكامل حتى ارتفاع الشاشة مع دعم الماوس ولوحة المفاتيح
+        let itemsListHtml = `<div id="autocomplete-items-container" class="divide-y divide-slate-100 overflow-y-auto max-h-[calc(85vh-110px)] scroll-smooth">`;
 
         items.forEach((it, idx) => {
             const isAlreadyAdded = accumulatedSearchResults.has(it.code);
@@ -3550,27 +3640,33 @@ async function fetchAndRenderAutocomplete(query) {
             const codeIdentifier = gList[0] ? `GTIN: ${gList[0]}` : (bList[0] ? `باركود: ${bList[0]}` : '');
 
             itemsListHtml += `
-                <div class="p-2.5 px-3 flex items-center justify-between gap-3 transition select-none autocomplete-item hover:bg-slate-50 cursor-pointer ${isAlreadyAdded ? 'bg-slate-50/60 opacity-80' : ''}" data-index="${idx}" data-code="${escapeHtml(it.code)}">
+                <div class="p-2.5 px-3 flex items-center justify-between gap-2.5 transition select-none autocomplete-item hover:bg-slate-50 cursor-pointer ${isAlreadyAdded ? 'bg-slate-50/60 opacity-80' : ''}" data-index="${idx}" data-code="${escapeHtml(it.code)}">
                     <div class="flex items-center gap-2.5 min-w-0 flex-1">
                         <input type="checkbox" class="chk-auto-item w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0" data-code="${escapeHtml(it.code)}" ${isAlreadyAdded ? 'disabled' : ''}>
-                        <span class="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 shrink-0">${escapeHtml(it.code)}</span>
+                        <span class="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 shrink-0 select-all">${escapeHtml(it.code)}</span>
                         <div class="min-w-0 flex-1">
-                            <div class="font-bold text-slate-900 truncate text-xs">${escapeHtml(engName)}</div>
+                            <div class="font-bold text-slate-900 truncate text-xs leading-tight">${escapeHtml(engName)}</div>
                             <div class="flex items-center gap-2 text-[10.5px] text-slate-500 mt-0.5 flex-wrap">
-                                ${arName ? `<span class="truncate max-w-[180px] font-medium text-slate-600">${escapeHtml(arName)}</span>` : ''}
+                                ${arName ? `<span class="truncate max-w-[190px] font-medium text-slate-600">${escapeHtml(arName)}</span>` : ''}
                                 ${codeIdentifier ? `<span class="font-mono text-indigo-600 font-medium">${escapeHtml(codeIdentifier)}</span>` : ''}
                                 ${it.category ? `<span class="px-1.5 py-0.2 bg-slate-100 rounded text-[9.5px] text-slate-600">${escapeHtml(it.category)}</span>` : ''}
                             </div>
                         </div>
                     </div>
-                    <div class="flex items-center gap-2.5 shrink-0">
+                    <div class="flex items-center gap-2 shrink-0">
                         <span class="font-mono font-bold text-emerald-700 text-xs">${price} ر.س</span>
+                        
+                        <!-- زر عرض كرت الصنف بالكامل مباشرة من نتائج البحث -->
+                        <button type="button" class="btn-auto-view-card px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg text-[11px] font-bold transition flex items-center gap-1 shadow-2xs" data-code="${escapeHtml(it.code)}" title="استعراض وتعديل كرت الصنف بالكامل">
+                            <span>👁️</span><span>عرض الكرت</span>
+                        </button>
+
                         ${isAlreadyAdded ? `
-                            <span class="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold flex items-center gap-1">
-                                <span>✓</span><span>مضاف مسبقاً</span>
+                            <span class="px-2 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                                <span>✓</span><span>مضاف</span>
                             </span>
                         ` : `
-                            <button type="button" class="btn-quick-add-single px-2 py-1 bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-700 rounded-lg text-[11px] font-bold transition flex items-center gap-1 shadow-2xs" data-code="${escapeHtml(it.code)}" title="إضافة هذا الصنف مباشرة">
+                            <button type="button" class="btn-quick-add-single px-2.5 py-1 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 rounded-lg text-[11px] font-bold transition flex items-center gap-1 shadow-2xs" data-code="${escapeHtml(it.code)}" title="إضافة هذا الصنف مباشرة إلى القائمة">
                                 <span>➕</span><span>إضافة</span>
                             </button>
                         `}
@@ -3583,10 +3679,10 @@ async function fetchAndRenderAutocomplete(query) {
 
         // شريط سفلي مثبت
         let bottomBarHtml = `
-            <div class="sticky bottom-0 z-10 bg-slate-50 border-t border-slate-200 p-2.5 px-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
+            <div class="sticky bottom-0 z-20 bg-slate-50 border-t border-slate-200 p-2.5 px-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
                 <span class="flex items-center gap-1">
                     <span>💡</span>
-                    <span>حدد الأصناف ثم اضغط إضافة أو <b>Enter</b></span>
+                    <span>حدد الأصناف ثم اضغط إضافة أو <b>Enter</b>، أو انقر <b>👁️ عرض الكرت</b> لفحص تفاصيل الصنف</span>
                 </span>
                 <button type="button" id="btn-auto-add-selected-bottom" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
                     <span>➕</span>
@@ -3598,7 +3694,7 @@ async function fetchAndRenderAutocomplete(query) {
         dropdown.innerHTML = topBarHtml + itemsListHtml + bottomBarHtml;
         dropdown.classList.remove('hidden');
 
-        // ربط أحداث التحديد المتعدد
+        // ربط أحداث التحديد المتعدد وزر عرض كرت الصنف
         setupAutocompleteEvents(items);
 
     } catch (e) {
@@ -3693,6 +3789,15 @@ function setupAutocompleteEvents(items) {
                 }
                 updateUI();
             }
+        });
+    });
+
+    // زر عرض كرت الصنف بالكامل مباشرة من الاقتراحات
+    dropdown.querySelectorAll('.btn-auto-view-card').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const code = btn.getAttribute('data-code');
+            await openEditProductModalByCode(code);
         });
     });
 
@@ -4207,7 +4312,7 @@ async function downloadCatalogExcelWithScope(scope, codes = [], fields = []) {
 async function appendSearchQueryToResults(query) {
     if (!query) return;
     try {
-        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=50&offset=0`;
+        const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=2000&offset=0`;
         const res = await fetch(url);
         const data = await res.json();
         const items = data.items || [];
@@ -4428,7 +4533,7 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
     tbody.innerHTML = '';
     items.forEach(it => {
         const tr = document.createElement('tr');
-        tr.className = 'hover:bg-sky-50/70 transition text-center font-medium';
+        tr.className = 'hover:bg-sky-50/70 transition text-center font-medium select-none';
 
         const isChecked = selectedCatalogCodes.has(it.code);
         const bList = it.barcode_list || [];
@@ -4479,8 +4584,8 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
             <td class="excel-cell text-center p-0.5">
                 <input type="checkbox" class="chk-select-product cursor-pointer rounded border-slate-300 w-3.5 h-3.5" data-code="${it.code}" ${isChecked ? 'checked' : ''}>
             </td>
-            <td class="excel-cell text-center font-mono font-bold text-indigo-700 bg-indigo-50/40 text-[11px]">${it.code}</td>
-            <td class="excel-cell text-left px-2 max-w-[240px]" title="${engName} ${arName ? `(${arName})` : ''}">
+            <td class="excel-cell text-center font-mono font-bold text-indigo-700 bg-indigo-50/40 text-[11px] cursor-pointer hover:underline hover:bg-indigo-100 transition cell-click-view-card" data-code="${it.code}" title="انقر لعرض وتعديل كرت الصنف بالكامل">${it.code}</td>
+            <td class="excel-cell text-left px-2 max-w-[240px] cursor-pointer hover:bg-slate-100 transition cell-click-view-card" data-code="${it.code}" title="${engName} ${arName ? `(${arName})` : ''} - انقر لعرض كرت الصنف كامل">
                 <div class="font-bold text-slate-900 leading-tight truncate select-all text-[11px]">${engName}</div>
                 ${arName ? `<div class="text-[9.5px] text-slate-400 font-normal leading-none mt-0.5 truncate select-all">${arName}</div>` : ''}
             </td>
@@ -4497,19 +4602,48 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
             <td class="excel-cell text-center px-1">${gHtml}</td>
             <td class="excel-cell text-center">
                 <div class="inline-flex items-center justify-center gap-1">
+                    <!-- زر عرض كرت الصنف بالكامل -->
+                    <button class="btn-view-product px-2 py-0.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded text-[10.5px] font-bold inline-flex items-center gap-1 shadow-2xs transition" data-code="${it.code}" title="عرض وتعديل كرت الصنف كامل">
+                        <span>👁️</span><span>الكرت</span>
+                    </button>
                     ${isAccumulated ? `
-                        <button class="btn-remove-from-accumulated text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-0.5 text-xs leading-none rounded" data-code="${it.code}" title="استبعاد من القائمة المجمعة">❌</button>
+                        <button class="btn-remove-from-accumulated text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-1 text-xs leading-none rounded" data-code="${it.code}" title="استبعاد من القائمة المجمعة">❌</button>
                     ` : ''}
-                    <button class="btn-edit-product text-indigo-600 hover:text-indigo-900 p-0.5 text-xs leading-none" data-code="${it.code}" title="تعديل كرت الصنف">✏️</button>
-                    <button class="btn-del-product text-rose-500 hover:text-rose-700 p-0.5 text-xs leading-none" data-code="${it.code}" title="حذف الصنف">🗑️</button>
+                    <button class="btn-edit-product text-indigo-600 hover:text-indigo-900 p-1 text-xs leading-none" data-code="${it.code}" title="تعديل سريع لكرت الصنف">✏️</button>
+                    <button class="btn-del-product text-rose-500 hover:text-rose-700 p-1 text-xs leading-none" data-code="${it.code}" title="حذف الصنف">🗑️</button>
                 </div>
             </td>
         `;
+
+        // النقر المزدوج على السطر لفتح كرت الصنف كاملاً
+        tr.addEventListener('dblclick', async (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+            await openEditProductModalByCode(it.code);
+        });
+
         tbody.appendChild(tr);
     });
 
+    // ربط النقر على خلايا الكود والاسم لفتح كرت الصنف كاملاً
+    tbody.querySelectorAll('.cell-click-view-card').forEach(cell => {
+        cell.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const code = cell.getAttribute('data-code');
+            await openEditProductModalByCode(code);
+        });
+    });
+
+    // ربط زر عرض كرت الصنف بالكامل
+    tbody.querySelectorAll('.btn-view-product').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const code = btn.getAttribute('data-code');
+            await openEditProductModalByCode(code);
+        });
+    });
+
     // ربط زر استبعاد الصنف من النتائج المجمعة
-    document.querySelectorAll('.btn-remove-from-accumulated').forEach(btn => {
+    tbody.querySelectorAll('.btn-remove-from-accumulated').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const code = btn.getAttribute('data-code');
@@ -4528,7 +4662,7 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
     });
 
     // ربط مربعات تحديد الأصناف
-    document.querySelectorAll('.chk-select-product').forEach(chk => {
+    tbody.querySelectorAll('.chk-select-product').forEach(chk => {
         chk.addEventListener('change', () => {
             const code = chk.getAttribute('data-code');
             if (chk.checked) {
@@ -4541,7 +4675,7 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
     });
 
     // ربط أزرار استعراض باقي الباركودات و GTIN
-    document.querySelectorAll('.btn-expand-codes').forEach(btn => {
+    tbody.querySelectorAll('.btn-expand-codes').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const code = btn.getAttribute('data-code');
@@ -4551,15 +4685,17 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
     });
 
     // ربط أزرار التعديل والحذف
-    document.querySelectorAll('.btn-edit-product').forEach(btn => {
-        btn.addEventListener('click', async () => {
+    tbody.querySelectorAll('.btn-edit-product').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
             const code = btn.getAttribute('data-code');
             await openEditProductModalByCode(code);
         });
     });
 
-    document.querySelectorAll('.btn-del-product').forEach(btn => {
-        btn.addEventListener('click', async () => {
+    tbody.querySelectorAll('.btn-del-product').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
             const code = btn.getAttribute('data-code');
             if (confirm(`هل أنت متأكد من حذف بطاقة الصنف [${code}]؟`)) {
                 try {

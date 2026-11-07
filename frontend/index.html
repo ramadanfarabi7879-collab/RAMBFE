@@ -509,24 +509,28 @@
 
             <!-- شريط البحث والتحكم في بطاقات الأصناف مع دعم تجميع نتائج البحث المتعددة -->
             <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
-                <div class="flex-1 min-w-[320px] flex items-center gap-2">
+                <div class="flex-1 min-w-[340px] flex items-center gap-2.5">
                     <div class="relative flex-1 flex items-center">
                         <input type="text" id="catalog-search-input" enterkeyhint="search" autocomplete="off"
                                placeholder="اكتب بداية اسم الصنف أو الكود (البحث الافتراضي)..."
-                               class="w-full px-4 py-2.5 pr-10 pl-9 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100">
+                               class="w-full px-4 py-2.5 pr-10 pl-4 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100 font-medium transition">
                         <span class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-slate-400">🔍</span>
-                        
-                        <!-- مفتاح النقطة الصغيرة للتبديل بين البحث في البداية والبحث المعمم -->
-                        <button type="button" id="btn-toggle-search-mode"
-                                class="absolute left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center transition-all duration-200 focus:outline-none cursor-pointer hover:bg-slate-200/70"
-                                title="وضع البحث: البداية فقط (انقر لتفعيل البحث المعمم في أي موضع)">
-                            <span id="search-mode-dot" class="w-2.5 h-2.5 rounded-full bg-slate-300 border border-slate-400 transition-all duration-200"></span>
-                        </button>
 
                         <!-- قائمة الاقتراحات التلقائية المنسدلة والتحديد المتعدد (Multi-Select Autocomplete) -->
-                        <div id="catalog-autocomplete-dropdown" class="hidden absolute top-full right-0 mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 w-full sm:min-w-[560px] md:min-w-[660px] max-w-2xl max-h-[460px] overflow-hidden flex flex-col text-xs">
+                        <div id="catalog-autocomplete-dropdown" class="hidden absolute top-full right-0 mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 w-full sm:min-w-[720px] md:min-w-[850px] max-w-4xl max-h-[85vh] overflow-hidden flex flex-col text-xs">
                         </div>
                     </div>
+
+                    <!-- تبويب ومفتاح الكشاف للتحكم في نمط البحث (حديث وتفاعلي قابل للفتح والإغلاق) -->
+                    <button type="button" id="btn-toggle-search-mode"
+                            class="px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 flex items-center gap-2 select-none shrink-0 shadow-xs cursor-pointer border bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 active:scale-95"
+                            title="وضع البحث الحالي: يبدأ بالكلمة فقط (انقر لتشغيل الكشاف والبحث المعمم)">
+                        <span id="search-mode-icon" class="text-base transition-transform duration-200">🔦</span>
+                        <span id="search-mode-text" class="text-[11px] font-bold tracking-tight">بحث بالبداية</span>
+                        <span id="search-mode-switch" class="w-8 h-4 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none">
+                            <span id="search-mode-knob" class="w-3 h-3 bg-white rounded-full shadow-sm transition-transform duration-200 translate-x-0"></span>
+                        </span>
+                    </button>
                     <button type="button" id="btn-search-append" class="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0" title="إضافة نتائج البحث إلى القائمة المعروضة دون حذف الأصناف السابقة">
                         <span>➕</span>
                         <span>إضافة للنتائج</span>
@@ -628,7 +632,7 @@
                                 <th class="w-16 text-center">UNIT<br><span class="text-[9px] text-slate-500 font-normal">الوحدة</span></th>
                                 <th class="w-32 text-center font-mono">BARCODE<br><span class="text-[9px] text-slate-500 font-normal">الباركود</span></th>
                                 <th class="w-32 text-center font-mono excel-highlight-indigo">GTIN<br><span class="text-[9px] font-normal">بند التجارة العالمي</span></th>
-                                <th class="w-14 text-center">إجراءات</th>
+                                <th class="w-28 text-center">إجراءات</th>
                             </tr>
                         </thead>
                         <tbody id="catalog-products-tbody">
@@ -2430,6 +2434,6 @@
     </nav>
 
     <!-- ملف الجافاسكريبت الرئيسي -->
-    <script src="app.js?v=20261107_v29_taxbadge_fix"></script>
+    <script src="app.js?v=20261107_v31_flashlight_fullcard"></script>
 </body>
 </html>
