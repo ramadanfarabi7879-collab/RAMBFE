@@ -13,6 +13,7 @@
     <!-- Google Fonts Cairo -->
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
     <!-- Html5-QRCode -->
+    <script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/dist/iife/polyfill.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
     <style>
@@ -1709,7 +1710,8 @@
         async function applyMobileFocusAndNativeLoop(videoElem) {
             if (!videoElem) return;
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-            if (isIOS) return;
+            // على آيفون وباقي الأجهزة: نعتمد على BarcodeDetector (المدعوم بـ WASM polyfill أو العتاد)
+            if (!('BarcodeDetector' in window)) return;
             try {
                 if (videoElem.srcObject) {
                     const [track] = videoElem.srcObject.getVideoTracks();
@@ -1739,6 +1741,16 @@
                         isMobileNativeScanning = true;
                         const loop = async () => {
                             if (!isMobileNativeScanning || !videoElem || videoElem.paused || videoElem.ended) return;
+                            const nowTs = performance.now();
+                            if ((nowTs - (videoElem._lastMobileScanAt || 0)) < (isIOS ? 80 : 0)) {
+                                if ('requestVideoFrameCallback' in videoElem) {
+                                    videoElem.requestVideoFrameCallback(loop);
+                                } else {
+                                    mobileNativeAnimFrame = requestAnimationFrame(loop);
+                                }
+                                return;
+                            }
+                            videoElem._lastMobileScanAt = nowTs;
                             try {
                                 if (videoElem.readyState >= 2) {
                                     const codes = await detector.detect(videoElem);
@@ -1817,15 +1829,16 @@
                     formatsToSupport: formatsToSupport,
                     verbose: false,
                     experimentalFeatures: {
-                        useBarCodeDetectorIfSupported: !isIOS
+                        useBarCodeDetectorIfSupported: true
                     }
                 });
             } catch(e) {
                 html5QrCode = new Html5Qrcode("mobile-camera-viewport", { verbose: false });
             }
 
-            const cameraConstraints = {
-                facingMode: { ideal: (currentFacingMode === 'user' ? 'user' : 'environment') },
+            const cameraConstraints = { facingMode: (currentFacingMode === 'user' ? 'user' : 'environment') };
+            const videoConstraints = {
+                facingMode: (currentFacingMode === 'user' ? 'user' : 'environment'),
                 width: { ideal: 1280 },
                 height: { ideal: 720 }
             };

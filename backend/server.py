@@ -75,8 +75,13 @@ except (ImportError, ValueError):
         clear_store_stocktake, settle_store_stocktake, commit_stores_stocktake, populate_store_from_inventory, save_stock_batch_count,
         upload_inventory_excel, export_store_stocktake_to_excel,
         clear_inventory_records, bulk_delete_stock_entries, edit_stocktake_entry,
-        reset_all_stocktake_test_data
+        reset_all_stocktake_test_data, get_uncounted_store_items, export_uncounted_items_to_excel
     )
+
+try:
+    from .catalog_autosync import start_autosync, sync_now as catalog_sync_now, get_status as catalog_sync_status
+except (ImportError, ValueError):
+    from backend.catalog_autosync import start_autosync, sync_now as catalog_sync_now, get_status as catalog_sync_status
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -382,6 +387,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 since = 0.0
             events = [e for e in SYNC_EVENTS_QUEUE if e.get('timestamp', 0) > since]
             self.send_json({"events": events, "timestamp": time.time()})
+            return
+
+        # 1.هـ حالة الربط التلقائي لملف الأصناف product.template.xlsx
+        if path == '/api/catalog/auto-sync/status':
+            self.send_json(catalog_sync_status())
             return
 
         # 2. توليد الكود الداخلي الرقمي التالي للصنف
@@ -727,6 +737,18 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
         body_bytes = self.read_full_body()
         content_type = self.headers.get('Content-Type', '')
+
+        # 0. مزامنة ملف الأصناف المرتبط (product.template.xlsx) يدوياً الآن
+        if path == '/api/catalog/auto-sync/run':
+            try:
+                data = json.loads(body_bytes.decode('utf-8') or '{}') if body_bytes else {}
+            except Exception:
+                data = {}
+            force = bool(data.get('force', True))
+            res = catalog_sync_now(force=force)
+            res["status"] = catalog_sync_status()
+            self.send_json(res)
+            return
 
         # 1. حفظ أو تعديل بطاقة صنف
         if path == '/api/catalog/save':
@@ -1481,6 +1503,12 @@ def run_server(port=8000, auto_open_browser=True):
     print(f"  نظام إدارة بطاقات الأصناف والمسح بكود QR وتصدير الإكسيل")
     print(f"  يعمل الآن على الرابط: http://127.0.0.1:{port}")
     print(f"===========================================================")
+
+    # الربط التلقائي لملف الأصناف: يستورد product.template.xlsx عند الإقلاع وكلما تغيّر
+    try:
+        start_autosync(on_synced=lambda res: broadcast_sync('catalog_updated', res))
+    except Exception as e:
+        print(f"[!] تعذر تشغيل الربط التلقائي لملف الأصناف: {e}")
 
     if auto_open_browser:
         def open_browser_later():

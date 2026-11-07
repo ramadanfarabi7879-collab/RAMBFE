@@ -44,3 +44,6 @@ temp/cloudflare_url.txt
 # OS metadata
 .DS_Store
 Thumbs.db
+
+data/
+product.template*.xlsx

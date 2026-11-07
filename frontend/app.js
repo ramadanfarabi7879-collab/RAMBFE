@@ -3027,8 +3027,8 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
         }
     } catch(e) {}
 
-    // على أجهزة iOS Safari: نعتمد حصراً على محرك Html5Qrcode WASM/JS المستقر لتفادي مشاكل WebKit BarcodeDetector مع DataMatrix
-    if (isIOS) {
+    // تفعيل BarcodeDetector لجميع الأجهزة بما فيها آيفون عبر polyfill WASM المتطور
+    if (!('BarcodeDetector' in window)) {
         return;
     }
 
@@ -3053,7 +3053,10 @@ async function applyContinuousFocusAndNativeLoop(videoElem) {
                         }
                         return;
                     }
-                    if (!isProcessingFrame && videoElem.readyState >= 2) {
+                    const nowTs = performance.now();
+                    const minGap = isIOS ? 80 : 0;
+                    if (!isProcessingFrame && videoElem.readyState >= 2 && (nowTs - (videoElem._lastAppScanAt || 0)) >= minGap) {
+                        videoElem._lastAppScanAt = nowTs;
                         isProcessingFrame = true;
                         try {
                             const barcodes = await detector.detect(videoElem);
@@ -3108,7 +3111,7 @@ function initHtml5ScannerInstance() {
             verbose: false,
             experimentalFeatures: {
                 // إيقاف BarcodeDetector التجريبي على آيفون لضمان قراءة الداتاماتريكس بمحرك ZXing الأصلي
-                useBarCodeDetectorIfSupported: !isIOS
+                useBarCodeDetectorIfSupported: true
             }
         });
     } catch(e) {
@@ -3120,8 +3123,9 @@ function initHtml5ScannerInstance() {
     if (!html5QrScannerInstance) return;
 
     // قيود الكاميرا عالية الدقة وفائقة السرعة
-    const cameraConstraints = {
-        facingMode: { ideal: (cameraFacingMode === 'user' ? 'user' : 'environment') },
+    const cameraConstraints = { facingMode: (cameraFacingMode === 'user' ? 'user' : 'environment') };
+    const videoConstraints = {
+        facingMode: (cameraFacingMode === 'user' ? 'user' : 'environment'),
         width: { min: 720, ideal: 1280, max: 1920 },
         height: { min: 720, ideal: 1080, max: 1920 }
     };

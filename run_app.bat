@@ -63,6 +63,13 @@ echo   اترك هذه النافذة مفتوحة أثناء استخدامك �
 echo ===========================================================
 echo.
 
+:: التأكد من وجود كل المكتبات المطلوبة وتثبيت الناقص تلقائياً (يمنع توقف البرنامج فور تشغيله)
+%PY_CMD% -c "import pandas, openpyxl, pdfplumber, pypdf, rapidfuzz" > nul 2>&1
+if %errorlevel% neq 0 (
+    echo [*] Installing missing Python libraries from requirements.txt ...
+    %PY_CMD% -m pip install -r requirements.txt
+)
+
 %PY_CMD% scripts\start_cloudflare_tunnel.py 8000
 
 if %errorlevel% neq 0 (
