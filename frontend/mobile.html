@@ -1934,11 +1934,18 @@
             if (!btn) return;
             if (isMobileGeneralizedSearch) {
                 btn.className = 'px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 shrink-0 bg-emerald-600 text-white border border-emerald-500 shadow-md ring-1 ring-emerald-400/50 active:scale-95';
-                btn.title = '💡 وضع الكشاف مشتغل (بحث معمم شامل في أي موضع)';
+                btn.title = 'بحث معمم';
                 if (icon) icon.textContent = '💡';
                 if (text) text.textContent = 'معمم';
-                if (inp) inp.placeholder = '💡 اكتب أي جزء من اسم الصنف أو الكود...';
+                if (inp) inp.placeholder = 'ابحث باسم الصنف أو الكود...';
             } else {
+                btn.className = 'px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 shrink-0 bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 shadow-sm';
+                btn.title = 'بحث بالبداية';
+                if (icon) icon.textContent = '🔦';
+                if (text) text.textContent = 'بداية';
+                if (inp) inp.placeholder = 'ابحث باسم الصنف أو الكود...';
+            }
+        } else {
                 btn.className = 'px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 shrink-0 bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 shadow-sm';
                 btn.title = '🔦 وضع الكشاف مطفأ (بحث بالبداية فقط)';
                 if (icon) icon.textContent = '🔦';

@@ -3403,45 +3403,45 @@ function updateSearchModeUI() {
 
     if (isGeneralizedSearch) {
         if (btn) {
-            btn.className = 'px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 flex items-center gap-2 select-none shrink-0 shadow-md cursor-pointer border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 ring-2 ring-emerald-300/50 active:scale-95';
-            btn.title = '💡 وضع الكشاف مشتغل (بحث معمم شامل في أي موضع بالاسم والكود). انقر لإطفاء الكشاف والعودة للبحث في البداية فقط';
+            btn.className = 'absolute left-1.5 top-1/2 -translate-y-1/2 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 active:scale-95';
+            btn.title = 'بحث معمم';
         }
         if (icon) {
             icon.textContent = '💡';
-            icon.className = 'text-base transition-transform duration-200 scale-110 drop-shadow';
+            icon.className = 'text-xs transition-transform duration-200';
         }
         if (text) {
-            text.textContent = 'بحث معمم (شامل)';
+            text.textContent = 'معمم';
         }
         if (sw) {
-            sw.className = 'w-8 h-4 bg-emerald-800 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+            sw.className = 'w-6 h-3 bg-emerald-800 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
         }
         if (knob) {
-            knob.className = 'w-3 h-3 bg-white rounded-full shadow-md transition-transform duration-200 -translate-x-4';
+            knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 -translate-x-3';
         }
         if (input) {
-            input.placeholder = '💡 اكتب أي جزء من اسم الصنف أو الكود (بحث معمم شامل)...';
+            input.placeholder = 'ابحث باسم الصنف أو الكود (اضغط Enter للإدراج المباشر في الجدول)...';
         }
     } else {
         if (btn) {
-            btn.className = 'px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 flex items-center gap-2 select-none shrink-0 shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95';
-            btn.title = '🔦 وضع الكشاف مطفأ (بحث بالبداية فقط). انقر لتشغيل الكشاف وتعميم البحث في كل أجزاء الاسم والكود';
+            btn.className = 'absolute left-1.5 top-1/2 -translate-y-1/2 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95';
+            btn.title = 'بحث بالبداية';
         }
         if (icon) {
             icon.textContent = '🔦';
-            icon.className = 'text-base transition-transform duration-200 scale-100';
+            icon.className = 'text-xs transition-transform duration-200';
         }
         if (text) {
-            text.textContent = 'بحث بالبداية';
+            text.textContent = 'بداية';
         }
         if (sw) {
-            sw.className = 'w-8 h-4 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+            sw.className = 'w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
         }
         if (knob) {
-            knob.className = 'w-3 h-3 bg-white rounded-full shadow-sm transition-transform duration-200 translate-x-0';
+            knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0';
         }
         if (input) {
-            input.placeholder = '🔦 اكتب بداية اسم الصنف أو الكود (البحث الافتراضي)...';
+            input.placeholder = 'ابحث باسم الصنف أو الكود (اضغط Enter للإدراج المباشر في الجدول)...';
         }
     }
 }
@@ -3451,19 +3451,15 @@ function initCatalogAutocomplete() {
     const dropdown = document.getElementById('catalog-autocomplete-dropdown');
     const btnToggleMode = document.getElementById('btn-toggle-search-mode');
 
-    // تفعيل وتحديث واجهة مفتاح الكشاف للبحث المعمم
+    // تفعيل وتحديث واجهة مفتاح نمط البحث في أقصى يسار الخانة
     updateSearchModeUI();
     if (btnToggleMode && !btnToggleMode._boundListener) {
         btnToggleMode._boundListener = true;
-        btnToggleMode.addEventListener('click', () => {
+        btnToggleMode.addEventListener('click', (e) => {
+            e.stopPropagation();
             isGeneralizedSearch = !isGeneralizedSearch;
             localStorage.setItem('catalog_search_mode', isGeneralizedSearch ? 'contains' : 'start');
             updateSearchModeUI();
-            if (isGeneralizedSearch) {
-                showCatalogToast('💡 تم تشغيل الكشاف والبحث المعمم (يبحث في أي موضع من الاسم والكود)');
-            } else {
-                showCatalogToast('🔦 تم إطفاء الكشاف والعودة للوضع الافتراضي (يبحث في بداية الاسم والكود فقط)');
-            }
             const q = searchInput ? searchInput.value.trim() : '';
             if (q) {
                 fetchAndRenderAutocomplete(q);
@@ -3488,7 +3484,6 @@ function initCatalogAutocomplete() {
             activeAutocompleteIndex = -1;
             currentAutocompleteResults = [];
             selectedAutocompleteCodes.clear();
-            // إذا لم نكن في وضع التجميع، نعيد تحميل الدليل العادي
             if (!isAccumulatedSearchMode) {
                 catalogOffset = 0;
                 loadCatalogProducts();
@@ -3501,7 +3496,7 @@ function initCatalogAutocomplete() {
         }, 120);
     });
 
-    // التنقل بلوحة المفاتيح: السهم لأسفل/لأعلى، PageDown/PageUp، Home/End، Enter، Escape
+    // التنقل بلوحة المفاتيح والضغط على Enter للإدراج المباشر
     searchInput.addEventListener('keydown', (e) => {
         const isDropdownOpen = !dropdown.classList.contains('hidden') && currentAutocompleteResults.length > 0;
 
@@ -3539,22 +3534,18 @@ function initCatalogAutocomplete() {
             updateAutocompleteHighlight();
         } else if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 || e.key === 'Go' || e.key === 'Search' || e.key === 'Next') {
             e.preventDefault();
-            if (isDropdownOpen) {
-                if (selectedAutocompleteCodes.size > 0) {
-                    addSelectedAutocompleteItems();
-                } else if (activeAutocompleteIndex >= 0 && activeAutocompleteIndex < currentAutocompleteResults.length) {
-                    const activeItem = currentAutocompleteResults[activeAutocompleteIndex];
-                    if (activeItem) {
-                        addSingleItemToAccumulated(activeItem);
-                    }
-                } else if (currentAutocompleteResults.length === 1) {
-                    addSingleItemToAccumulated(currentAutocompleteResults[0]);
+            const q = searchInput.value.trim();
+            if (!q) return;
+
+            // الحالة الثانية: إذا قام المستخدم بتحديد أصناف معينة (بالـ Checkbox)، يتم إدراج الأصناف المحددة فقط
+            if (selectedAutocompleteCodes.size > 0) {
+                addSelectedAutocompleteItems();
+            } 
+            // الحالة الأولى: عدم تحديد صنف معين -> يتم إدراج كافة الأصناف المطابقة للبحث فوراً في الجدول
+            else {
+                if (currentAutocompleteResults && currentAutocompleteResults.length > 0) {
+                    addAllAutocompleteResultsToTable(currentAutocompleteResults, q);
                 } else {
-                    addSelectedAutocompleteItems();
-                }
-            } else {
-                const q = searchInput.value.trim();
-                if (q) {
                     appendSearchQueryToResults(q);
                 }
             }
@@ -3593,11 +3584,8 @@ async function fetchAndRenderAutocomplete(query) {
         if (items.length === 0) {
             dropdown.innerHTML = `
                 <div class="p-6 text-center text-slate-400 font-medium">
-                    <div class="text-2xl mb-1">${isGeneralizedSearch ? '💡' : '🔦'}</div>
-                    <div class="text-sm">لم يتم العثور على أي صنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(query)}</span>"</div>
-                    <div class="text-[11px] text-slate-400 mt-1">
-                        ${!isGeneralizedSearch ? '💡 نصيحة: انقر على زر الكشاف لتفعيل البحث المعمم في أي موضع داخل الاسم والكود' : 'جرب جزءاً آخر من الاسم أو الكود أو الباركود'}
-                    </div>
+                    <div class="text-xl mb-1">🔍</div>
+                    <div class="text-xs">لم يتم العثور على أي صنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(query)}</span>"</div>
                 </div>
             `;
             dropdown.classList.remove('hidden');
@@ -3681,8 +3669,8 @@ async function fetchAndRenderAutocomplete(query) {
         let bottomBarHtml = `
             <div class="sticky bottom-0 z-20 bg-slate-50 border-t border-slate-200 p-2.5 px-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
                 <span class="flex items-center gap-1">
-                    <span>💡</span>
-                    <span>حدد الأصناف ثم اضغط إضافة أو <b>Enter</b>، أو انقر <b>👁️ عرض الكرت</b> لفحص تفاصيل الصنف</span>
+                    <span>⚡</span>
+                    <span>اضغط <b>Enter</b> لإدراج كافة النتائج في الجدول مباشرة، أو حدد أصنافاً واضغط <b>Enter</b> لإدراجها فقط</span>
                 </span>
                 <button type="button" id="btn-auto-add-selected-bottom" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
                     <span>➕</span>
@@ -4309,6 +4297,50 @@ async function downloadCatalogExcelWithScope(scope, codes = [], fields = []) {
 }
 
 // دالة تجميع نتائج البحث المتعددة دون حذف النتائج السابقة
+function addAllAutocompleteResultsToTable(items, query = '') {
+    const searchInput = document.getElementById('catalog-search-input');
+    const dropdown = document.getElementById('catalog-autocomplete-dropdown');
+
+    if (!items || items.length === 0) {
+        if (query) {
+            appendSearchQueryToResults(query);
+        }
+        return;
+    }
+
+    let addedCount = 0;
+    let dupCount = 0;
+    items.forEach(it => {
+        if (!accumulatedSearchResults.has(it.code)) {
+            accumulatedSearchResults.set(it.code, it);
+            addedCount++;
+        } else {
+            dupCount++;
+        }
+    });
+
+    isAccumulatedSearchMode = true;
+    const allItems = Array.from(accumulatedSearchResults.values());
+    currentLoadedCatalogItems = allItems;
+    renderCatalogItemsTable(allItems, allItems.length, true);
+
+    // إفراغ خانة البحث وإغلاق القائمة وإعادة التركيز للبحث عن الصنف التالي مباشرة
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus();
+    }
+    if (dropdown) dropdown.classList.add('hidden');
+    selectedAutocompleteCodes.clear();
+    activeAutocompleteIndex = -1;
+    currentAutocompleteResults = [];
+
+    if (addedCount > 0) {
+        showCatalogToast(`✓ تم إدراج ${addedCount} صنف ${query ? `مطابق لـ "${query}"` : ''} في الجدول (الإجمالي: ${accumulatedSearchResults.size})`);
+    } else {
+        showCatalogToast(`الأصناف المطابقة موجودة بالفعل في الجدول`, true);
+    }
+}
+
 async function appendSearchQueryToResults(query) {
     if (!query) return;
     try {
@@ -4317,42 +4349,11 @@ async function appendSearchQueryToResults(query) {
         const data = await res.json();
         const items = data.items || [];
         if (items.length === 0) {
-            showCatalogToast(`لم يتم العثور على أي صنف يطابق البحث: "${query}"`, true);
+            showCatalogToast(`لم يتم العثور على أي صنف يطابق: "${query}"`, true);
             return;
         }
 
-        let newCount = 0;
-        let dupCount = 0;
-        items.forEach(it => {
-            if (!accumulatedSearchResults.has(it.code)) {
-                accumulatedSearchResults.set(it.code, it);
-                newCount++;
-            } else {
-                dupCount++;
-            }
-        });
-
-        isAccumulatedSearchMode = true;
-        const allItems = Array.from(accumulatedSearchResults.values());
-        currentLoadedCatalogItems = allItems;
-        renderCatalogItemsTable(allItems, allItems.length, true);
-
-        // تجهيز خانة البحث للصنف التالي ومسحها وإعادة التركيز عليها فوراً
-        const searchInput = document.getElementById('catalog-search-input');
-        if (searchInput) {
-            searchInput.value = '';
-            searchInput.focus();
-        }
-        const dropdown = document.getElementById('catalog-autocomplete-dropdown');
-        if (dropdown) dropdown.classList.add('hidden');
-        activeAutocompleteIndex = -1;
-        currentAutocompleteResults = [];
-
-        if (newCount > 0) {
-            showCatalogToast(`✓ تمت إضافة ${newCount} صنف جديد إلى القائمة المجمعة (الإجمالي: ${accumulatedSearchResults.size})`);
-        } else if (dupCount > 0) {
-            showCatalogToast(`الأصناف المطابقة موجودة بالفعل في القائمة المجمعة`, true);
-        }
+        addAllAutocompleteResultsToTable(items, query);
     } catch (e) {
         showCatalogToast('حدث خطأ أثناء البحث: ' + e.message, true);
     }
