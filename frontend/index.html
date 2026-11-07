@@ -543,6 +543,10 @@
                         <span>📥</span>
                         <span>استيراد وتحديث من Excel</span>
                     </button>
+                    <button id="btn-clear-all-catalog" class="px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-bold border border-rose-200 transition flex items-center gap-1.5" title="مسح وتفريغ كروت الأصناف بالكامل من النظام">
+                        <span>🗑️</span>
+                        <span>مسح الدليل بالكامل</span>
+                    </button>
                 </div>
             </div>
 
@@ -587,6 +591,10 @@
                     <button id="btn-export-selected-direct" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow">
                         <span>📤</span>
                         <span>تصدير الأصناف المحددة إلى Excel</span>
+                    </button>
+                    <button id="btn-delete-selected-catalog" class="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow" title="حذف جميع كروت الأصناف المحددة نهائياً من النظام">
+                        <span>🗑️</span>
+                        <span id="btn-delete-selected-text">حذف الأصناف المحددة</span>
                     </button>
                     <button id="btn-clear-catalog-selection" class="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold">
                         إلغاء التحديد ✕
@@ -1552,10 +1560,60 @@
         <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-5 max-h-[92vh] overflow-y-auto">
             <div class="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div>
-                    <h3 class="text-base font-bold text-slate-800" id="modal-product-title">بطاقة الصنف</h3>
+                    <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <span>🗂️</span>
+                        <span id="modal-product-title">بطاقة الصنف</span>
+                    </h3>
                     <p class="text-xs text-slate-500">إدخال وتعديل بيانات بطاقة الصنف وربط الباركودات و GTINs</p>
                 </div>
-                <button id="btn-close-product-modal" class="text-slate-400 hover:text-slate-700 text-lg">✕</button>
+                <div class="flex items-center gap-2">
+                    <!-- قائمة وأيقونة مسح وتفريغ كرت الصنف (كامل أو جزئي) -->
+                    <div class="relative inline-block text-right">
+                        <button type="button" id="btn-card-clear-menu" class="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm" title="مسح وتفريغ كرت الصنف كاملاً أو بعض الخانات">
+                            <span>🧹</span>
+                            <span>مسح الخانات</span>
+                            <span class="text-[9px]">▼</span>
+                        </button>
+                        <div id="card-clear-dropdown" class="hidden absolute left-0 mt-1.5 w-64 bg-white rounded-xl shadow-2xl border border-slate-200 p-1.5 z-50 space-y-1 text-xs animate-fadeIn">
+                            <button type="button" id="btn-clear-entire-card" class="w-full text-right px-3 py-2 text-rose-700 hover:bg-rose-50 rounded-lg font-bold flex items-center gap-2 transition">
+                                <span>🧹</span>
+                                <div class="leading-tight">
+                                    <div>مسح كرت الصنف كاملاً</div>
+                                    <span class="text-[10px] text-slate-400 font-normal">تفريغ كافة الحقول والباركودات للبدء من جديد</span>
+                                </div>
+                            </button>
+                            <button type="button" id="btn-clear-barcodes-only" class="w-full text-right px-3 py-2 text-slate-700 hover:bg-slate-100 rounded-lg font-semibold flex items-center gap-2 transition">
+                                <span>🏷️</span>
+                                <div class="leading-tight">
+                                    <div>مسح الباركودات و GTIN فقط</div>
+                                    <span class="text-[10px] text-slate-400 font-normal">تفريغ خانات الباركود مع إبقاء الاسم والأسعار</span>
+                                </div>
+                            </button>
+                            <button type="button" id="btn-clear-prices-only" class="w-full text-right px-3 py-2 text-slate-700 hover:bg-slate-100 rounded-lg font-semibold flex items-center gap-2 transition">
+                                <span>💰</span>
+                                <div class="leading-tight">
+                                    <div>مسح الأسعار والضريبة فقط</div>
+                                    <span class="text-[10px] text-slate-400 font-normal">تصفير سعر البيع والتكلفة والجملة</span>
+                                </div>
+                            </button>
+                            <button type="button" id="btn-clear-names-only" class="w-full text-right px-3 py-2 text-slate-700 hover:bg-slate-100 rounded-lg font-semibold flex items-center gap-2 transition">
+                                <span>📝</span>
+                                <div class="leading-tight">
+                                    <div>مسح الأسماء والتصنيف فقط</div>
+                                    <span class="text-[10px] text-slate-400 font-normal">تفريغ الاسم العربي والإنجليزي والمصنع</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- زر وأيقونة حذف كرت الصنف نهائياً من قاعدة البيانات -->
+                    <button type="button" id="btn-modal-delete-product" class="hidden px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm" title="حذف كرت هذا الصنف نهائياً من قاعدة البيانات">
+                        <span>🗑️</span>
+                        <span>حذف الصنف</span>
+                    </button>
+
+                    <button id="btn-close-product-modal" class="text-slate-400 hover:text-slate-700 text-lg px-1.5 py-0.5 rounded-lg hover:bg-slate-100 transition">✕</button>
+                </div>
             </div>
 
             <!-- كود الصنف الداخلي (مطابق لملف Excel أو مولد تلقائياً) -->
@@ -1770,13 +1828,19 @@
                 </div>
             </div>
 
-            <!-- أزرار الحفظ -->
-            <div class="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <button id="btn-cancel-product-modal" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200">إلغاء</button>
-                <button id="btn-save-product-card" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow">
-                    <span>💾</span>
-                    <span>حفظ بطاقة الصنف</span>
+            <!-- أزرار الحفظ والحذف -->
+            <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+                <button type="button" id="btn-footer-delete-product" class="hidden px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <span>🗑️</span>
+                    <span>حذف كرت الصنف نهائياً</span>
                 </button>
+                <div class="flex items-center gap-3 mr-auto">
+                    <button id="btn-cancel-product-modal" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200">إلغاء</button>
+                    <button id="btn-save-product-card" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow">
+                        <span>💾</span>
+                        <span>حفظ بطاقة الصنف</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

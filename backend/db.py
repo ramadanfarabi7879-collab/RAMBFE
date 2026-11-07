@@ -686,6 +686,23 @@ def delete_product(code: str) -> bool:
         log_audit_event("product", clean_code, "delete", old_product, None, "حذف بطاقة الصنف")
     return True
 
+def bulk_delete_products(codes: List[str]) -> int:
+    """حذف مجموعة محددة من كروت الأصناف دفعة واحدة بسرعة فائقة"""
+    clean_codes = [clean_numeric_code(c) for c in codes if clean_numeric_code(c)]
+    if not clean_codes:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    placeholders = ",".join(["?"] * len(clean_codes))
+    cursor.execute(f"DELETE FROM products WHERE code IN ({placeholders})", tuple(clean_codes))
+    deleted_count = cursor.rowcount
+    cursor.execute(f"DELETE FROM product_barcodes WHERE product_code IN ({placeholders})", tuple(clean_codes))
+    cursor.execute(f"DELETE FROM product_aliases WHERE product_code IN ({placeholders})", tuple(clean_codes))
+    conn.commit()
+    conn.close()
+    log_audit_event("product", "bulk", "bulk_delete", None, {"count": deleted_count}, f"حذف مجمع لـ {deleted_count} صنف")
+    return deleted_count
+
 def search_products(query: str = "", limit: int = 50, offset: int = 0) -> Dict[str, Any]:
     """البحث في الأصناف بالاسم أو الكود أو الباركود أو GTIN أو الاسم العلمي مع دعم ذكي لتطبيع اللغة وتخطيط لوحة المفاتيح"""
     conn = get_connection()

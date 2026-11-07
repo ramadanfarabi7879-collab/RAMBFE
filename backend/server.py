@@ -24,7 +24,7 @@ except:
 try:
     from .db import (
         init_db, get_stats, get_next_product_code,
-        save_or_update_product, delete_product, search_products,
+        save_or_update_product, delete_product, bulk_delete_products, search_products,
         get_product_by_code, find_product_by_gtin_or_barcode,
         get_or_create_draft_invoice, create_new_invoice, get_invoice_details,
         scan_qr_to_invoice, delete_scanned_serial, delete_invoice_line,
@@ -52,7 +52,7 @@ try:
 except (ImportError, ValueError):
     from backend.db import (
         init_db, get_stats, get_next_product_code,
-        save_or_update_product, delete_product, search_products,
+        save_or_update_product, delete_product, bulk_delete_products, search_products,
         get_product_by_code, find_product_by_gtin_or_barcode,
         get_or_create_draft_invoice, create_new_invoice, get_invoice_details,
         scan_qr_to_invoice, delete_scanned_serial, delete_invoice_line,
@@ -760,13 +760,27 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 self.send_json({"success": False, "message": str(e)}, 400)
             return
 
-        # 2. حذف بطاقة صنف
+        # 2. حذف بطاقة صنف أو حذف متعدد أو تفريغ الكتالوج
         if path == '/api/catalog/delete':
             try:
-                data = json.loads(body_bytes.decode('utf-8'))
+                data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
                 code = data.get('code')
+                codes = data.get('codes')
+                clear_all = data.get('clear_all', False)
+                if clear_all:
+                    clear_catalog()
+                    broadcast_sync('catalog_cleared', {})
+                    self.send_json({"success": True, "message": "تم تفريغ دليل الأصناف بالكامل بنجاح"})
+                    return
+                if codes and isinstance(codes, list):
+                    cnt = bulk_delete_products(codes)
+                    broadcast_sync('catalog_bulk_deleted', {"codes": codes, "count": cnt})
+                    self.send_json({"success": True, "deleted_count": cnt, "message": f"تم حذف {cnt} صنف بنجاح"})
+                    return
                 ok = delete_product(code)
-                self.send_json({"success": ok, "message": "تم حذف الصنف بنجاح" if ok else "فشل الحذف"})
+                if ok:
+                    broadcast_sync('catalog_deleted', {"code": code})
+                self.send_json({"success": ok, "message": "تم حذف بطاقة الصنف بنجاح" if ok else "فشل الحذف"})
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
             return

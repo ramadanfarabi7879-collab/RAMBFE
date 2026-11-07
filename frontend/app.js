@@ -4575,7 +4575,38 @@ async function loadCatalogProducts() {
     }
 }
 
-async function openCreateProductModal(prefillGtin = null, initialData = {}) {
+async function clearProductCardInputs(clearCode = false) {
+    if (clearCode) {
+        activeEditingProductCode = null;
+        document.getElementById('prod-code-input').value = '';
+        document.getElementById('btn-modal-delete-product')?.classList.add('hidden');
+        document.getElementById('btn-footer-delete-product')?.classList.add('hidden');
+    }
+    document.getElementById('prod-name-ar').value = '';
+    document.getElementById('prod-name-en').value = '';
+    if (document.getElementById('prod-scientific-name')) document.getElementById('prod-scientific-name').value = '';
+    if (document.getElementById('prod-company')) document.getElementById('prod-company').value = '';
+    document.getElementById('prod-category').value = '';
+    document.getElementById('prod-tax-rate').value = '0';
+    document.getElementById('prod-selling-price').value = '';
+    if (document.getElementById('prod-wholesale-price')) document.getElementById('prod-wholesale-price').value = '';
+    document.getElementById('prod-unit-price').value = '';
+    document.getElementById('prod-unit').value = 'علبة';
+    document.getElementById('prod-unit-divisions').value = '';
+    
+    const pBar = document.getElementById('prod-primary-barcode');
+    const pGtin = document.getElementById('prod-primary-gtin');
+    if (pBar) pBar.value = '';
+    if (pGtin) pGtin.value = '';
+
+    const eb = document.getElementById('extra-barcodes-container');
+    const eg = document.getElementById('extra-gtins-container');
+    if (eb) eb.innerHTML = '';
+    if (eg) eg.innerHTML = '';
+    cancelGs1Inspector();
+}
+
+function openCreateProductModal(prefillGtin = null, initialData = {}) {
     if (typeof prefillGtin !== 'string') prefillGtin = null;
     if (!initialData || typeof initialData !== 'object' || initialData instanceof Event) initialData = {};
     cancelGs1Inspector();
@@ -4637,6 +4668,9 @@ async function openEditProductModalByCode(code) {
 }
 
 function openEditProductModal(p) {
+    activeEditingProductCode = p.code;
+    document.getElementById('btn-modal-delete-product')?.classList.remove('hidden');
+    document.getElementById('btn-footer-delete-product')?.classList.remove('hidden');
     cancelGs1Inspector();
     document.getElementById('modal-product-title').textContent = `تعديل بطاقة الصنف [${p.code}]`;
     document.getElementById('prod-code-input').value = p.code;
@@ -8338,3 +8372,187 @@ document.getElementById('btn-uncounted-modal-excel')?.addEventListener('click', 
 window.openUncountedItemsModal = openUncountedItemsModal;
 window.closeUncountedItemsModal = closeUncountedItemsModal;
 window.printUncountedItemsView = printUncountedItemsView;
+
+    // =========================================================================
+    // وظائف مسح وحذف كرت الصنف (كامل أو بعض كرت الصنف)
+    // =========================================================================
+    let activeEditingProductCode = null;
+
+    // فتح وإغلاق القائمة المنسدلة لمسح خانات كرت الصنف
+    const btnClearMenu = document.getElementById('btn-card-clear-menu');
+    const clearDropdown = document.getElementById('card-clear-dropdown');
+
+    btnClearMenu?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearDropdown?.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!clearDropdown?.contains(e.target) && e.target !== btnClearMenu) {
+            clearDropdown?.classList.add('hidden');
+        }
+    });
+
+    // 1. مسح كرت الصنف كاملاً (تفريغ جميع الحقول والباركودات)
+    document.getElementById('btn-clear-entire-card')?.addEventListener('click', () => {
+        clearDropdown?.classList.add('hidden');
+        if (confirm('هل تريد مسح وتفريغ كامل خانات كرت الصنف؟')) {
+            clearProductCardInputs(true);
+            showCatalogToast('تم مسح كامل خانات كرت الصنف');
+        }
+    });
+
+    // 2. مسح الباركودات و GTIN فقط
+    document.getElementById('btn-clear-barcodes-only')?.addEventListener('click', () => {
+        clearDropdown?.classList.add('hidden');
+        const pBar = document.getElementById('prod-primary-barcode');
+        const pGtin = document.getElementById('prod-primary-gtin');
+        const eb = document.getElementById('extra-barcodes-container');
+        const eg = document.getElementById('extra-gtins-container');
+        if (pBar) pBar.value = '';
+        if (pGtin) pGtin.value = '';
+        if (eb) eb.innerHTML = '';
+        if (eg) eg.innerHTML = '';
+        cancelGs1Inspector();
+        showCatalogToast('تم مسح جميع الباركودات و GTIN من كرت الصنف');
+    });
+
+    // 3. مسح وتصفير الأسعار فقط
+    document.getElementById('btn-clear-prices-only')?.addEventListener('click', () => {
+        clearDropdown?.classList.add('hidden');
+        const sp = document.getElementById('prod-selling-price');
+        const up = document.getElementById('prod-unit-price');
+        const wp = document.getElementById('prod-wholesale-price');
+        const tx = document.getElementById('prod-tax-rate');
+        if (sp) sp.value = '';
+        if (up) up.value = '';
+        if (wp) wp.value = '';
+        if (tx) tx.value = '0';
+        showCatalogToast('تم تصفير خانات الأسعار والضريبة');
+    });
+
+    // 4. مسح بيانات الأسماء والتصنيف فقط
+    document.getElementById('btn-clear-names-only')?.addEventListener('click', () => {
+        clearDropdown?.classList.add('hidden');
+        const na = document.getElementById('prod-name-ar');
+        const ne = document.getElementById('prod-name-en');
+        const sc = document.getElementById('prod-scientific-name');
+        const co = document.getElementById('prod-company');
+        const ca = document.getElementById('prod-category');
+        if (na) na.value = '';
+        if (ne) ne.value = '';
+        if (sc) sc.value = '';
+        if (co) co.value = '';
+        if (ca) ca.value = '';
+        showCatalogToast('تم مسح الأسماء والتصنيف');
+    });
+
+    // حذف كرت الصنف المفتوح حالياً نهائياً من قاعدة البيانات
+    const executeDeleteCurrentProductCard = async () => {
+        const code = activeEditingProductCode || document.getElementById('prod-code-input')?.value.trim();
+        if (!code) {
+            alert('لا يوجد كود صنف محدد للحذف.');
+            return;
+        }
+        const name = document.getElementById('prod-name-en')?.value || document.getElementById('prod-name-ar')?.value || code;
+        if (!confirm(`هل أنت متأكد من حذف كرت الصنف [${code}] (${name}) نهائياً من قاعدة البيانات؟\nلن يمكن التراجع عن هذا الإجراء.`)) {
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/catalog/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code })
+            });
+            const data = await res.json();
+            if (data.success) {
+                closeProductModal();
+                selectedCatalogCodes.delete(code);
+                if (isAccumulatedSearchMode) {
+                    accumulatedSearchResults.delete(code);
+                    renderCatalogItemsTable(Array.from(accumulatedSearchResults.values()), accumulatedSearchResults.size, true);
+                } else {
+                    loadCatalogProducts();
+                }
+                refreshSystemStats();
+                showCatalogToast(`تم حذف كرت الصنف [${code}] بنجاح 🗑️`);
+            } else {
+                alert(data.message || 'فشل حذف الصنف.');
+            }
+        } catch (e) {
+            alert('حدث خطأ أثناء الحذف: ' + e.message);
+        }
+    };
+
+    document.getElementById('btn-modal-delete-product')?.addEventListener('click', executeDeleteCurrentProductCard);
+    document.getElementById('btn-footer-delete-product')?.addEventListener('click', executeDeleteCurrentProductCard);
+
+    // حذف مجموعة الأصناف المحددة من شريط التحديد catalog-selection-bar
+    document.getElementById('btn-delete-selected-catalog')?.addEventListener('click', async () => {
+        const count = selectedCatalogCodes.size;
+        if (count === 0) {
+            alert('لم يتم تحديد أي أصناف لحذفها.');
+            return;
+        }
+        if (!confirm(`تحذير: هل أنت متأكد من حذف (${count}) كرت صنف محدد نهائياً من قاعدة البيانات؟`)) {
+            return;
+        }
+
+        try {
+            const codes = Array.from(selectedCatalogCodes);
+            const res = await fetch('/api/catalog/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ codes })
+            });
+            const data = await res.json();
+            if (data.success) {
+                selectedCatalogCodes.clear();
+                if (isAccumulatedSearchMode) {
+                    codes.forEach(c => accumulatedSearchResults.delete(c));
+                    renderCatalogItemsTable(Array.from(accumulatedSearchResults.values()), accumulatedSearchResults.size, true);
+                } else {
+                    loadCatalogProducts();
+                }
+                refreshSystemStats();
+                updateCatalogSelectionUI();
+                showCatalogToast(`تم حذف (${data.deleted_count || count}) صنف بنجاح 🗑️`);
+            } else {
+                alert(data.message || 'فشل حذف الأصناف المحددة.');
+            }
+        } catch (e) {
+            alert('حدث خطأ أثناء حذف الأصناف: ' + e.message);
+        }
+    });
+
+    // مسح دليل الأصناف بالكامل
+    document.getElementById('btn-clear-all-catalog')?.addEventListener('click', async () => {
+        const confirmWord = prompt('⚠️ تحذير شديد: أنت على وشك مسح جميع كروت الأصناف في الدليل بالكامل!\n\nللتأكيد، اكتب كلمة "حذف" في المربع أدناه:');
+        if (confirmWord !== 'حذف') {
+            if (confirmWord !== null) alert('تم إلغاء العملية، الكلمة المدخلة غير صحيحة.');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/catalog/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clear_all: true })
+            });
+            const data = await res.json();
+            if (data.success) {
+                selectedCatalogCodes.clear();
+                accumulatedSearchResults.clear();
+                loadCatalogProducts();
+                refreshSystemStats();
+                updateCatalogSelectionUI();
+                alert('تم تفريغ دليل الأصناف بالكامل بنجاح.');
+            } else {
+                alert(data.message || 'فشل مسح دليل الأصناف.');
+            }
+        } catch (e) {
+            alert('حدث خطأ أثناء مسح الدليل: ' + e.message);
+        }
+    });
+    
