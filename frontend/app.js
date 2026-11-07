@@ -16,6 +16,7 @@ let catalogOffset = 0;
 const catalogLimit = 25;
 let catalogSearchDebounce = null;
 let html5QrScannerInstance = null;
+let activeEditingProductCode = null;
 
 // حالة استيراد ملف الإكسيل
 let uploadedImportFileId = null;
@@ -4606,7 +4607,7 @@ async function clearProductCardInputs(clearCode = false) {
     cancelGs1Inspector();
 }
 
-function openCreateProductModal(prefillGtin = null, initialData = {}) {
+async function openCreateProductModal(prefillGtin = null, initialData = {}) {
     if (typeof prefillGtin !== 'string') prefillGtin = null;
     if (!initialData || typeof initialData !== 'object' || initialData instanceof Event) initialData = {};
     cancelGs1Inspector();
@@ -8376,7 +8377,7 @@ window.printUncountedItemsView = printUncountedItemsView;
     // =========================================================================
     // وظائف مسح وحذف كرت الصنف (كامل أو بعض كرت الصنف)
     // =========================================================================
-    let activeEditingProductCode = null;
+    // activeEditingProductCode معرف في بداية الملف
 
     // فتح وإغلاق القائمة المنسدلة لمسح خانات كرت الصنف
     const btnClearMenu = document.getElementById('btn-card-clear-menu');

@@ -31,7 +31,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://fantastic-laid-key-rapid.trycloudflare.com";
+let activeTunnelUrl = "https://remedies-asking-purposes-tested.trycloudflare.com";
 
 function getStoreDetails(storeNo) {
     const items = memoryStocktakeItems.filter(it => it.store_no === storeNo);
@@ -783,9 +783,9 @@ export default {
 
         // توجيه المسار /mobile لصفحة index.html
         if (path === '/mobile' || path === '/mobile.html') {
-            const indexReq = new Request(new URL('/', request.url), request);
+            const mobileReq = new Request(new URL('/mobile.html', request.url), request);
             if (env.ASSETS) {
-                return env.ASSETS.fetch(indexReq);
+                return env.ASSETS.fetch(mobileReq);
             }
         }
 
