@@ -38,11 +38,35 @@ def disable_windows_quick_edit():
         pass
 
 
+def prevent_windows_sleep():
+    """
+    منع نظام ويندوز من إيقاف تشغيل النظام أو قطع الشبكة عند ترك الجهاز بدون استخدام لعدة ساعات.
+    يضمن بقاء السيرفر ونفق Cloudflare متصلين 24/7 بدون توقف.
+    """
+    if os.name != 'nt':
+        return
+    try:
+        import ctypes
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        ES_AWAYMODE_REQUIRED = 0x00000040
+        res = ctypes.windll.kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        )
+        if not res:
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+            )
+    except Exception:
+        pass
+
+
 from backend.server import run_server
 from backend.tunnel_manager import start_tunnel_in_background
 
 if __name__ == '__main__':
     disable_windows_quick_edit()
+    prevent_windows_sleep()
 
     port = int(os.environ.get("PORT", 8000))
     if len(sys.argv) > 1 and sys.argv[1].isdigit():

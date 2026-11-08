@@ -15,13 +15,14 @@ TEMP_DIR = BASE_DIR / "temp"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 CF_URL_FILE = TEMP_DIR / "cloudflare_url.txt"
 CF_LOG_FILE = TEMP_DIR / "cloudflared.log"
+WORKER_JS_FILE = BASE_DIR / "worker.js"
 
 # رابط سيرفر Cloudflare Worker الذي يمرر طلبات الموبايل إلى نفق الكمبيوتر
 WORKER_REGISTER_URL = os.environ.get(
     "RAMBFE_WORKER_REGISTER_URL",
     "https://rambfe.quran-halaqat.workers.dev/api/tunnel/register"
 )
-HEARTBEAT_SECONDS = 30
+HEARTBEAT_SECONDS = 20
 URL_REGEX = re.compile(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com')
 
 _cf_process = None
@@ -29,6 +30,7 @@ _active_tunnel_url = ""
 _stop_event = threading.Event()
 _started = False
 _start_lock = threading.Lock()
+_git_sync_lock = threading.Lock()
 
 
 def find_cloudflared() -> str:
@@ -66,6 +68,22 @@ def _remove_url_file() -> None:
         pass
 
 
+def _kill_orphan_cloudflared() -> None:
+    """إنهاء أي عمليات cloudflared.exe عالقة من جلسات سابقة لمنع تعارض الأنفاق."""
+    if os.name == "nt":
+        try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "cloudflared.exe"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                creationflags=creationflags
+            )
+        except Exception:
+            pass
+
+
 def _cleanup():
     global _cf_process
     _stop_event.set()
@@ -94,7 +112,10 @@ def register_with_worker(tunnel_url: str) -> bool:
         req = urllib.request.Request(
             WORKER_REGISTER_URL,
             data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "RAMBFE-Bridge/2.0"}
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RAMBFE-Bridge/3.0"
+            }
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status == 200
@@ -102,13 +123,86 @@ def register_with_worker(tunnel_url: str) -> bool:
         return False
 
 
-def _drain_output(proc: subprocess.Popen, url_found: threading.Event) -> None:
+def _check_tunnel_health(tunnel_url: str) -> bool:
+    """فحص فعلي للتأكد من أن رابط النفق يعمل ويرد من السيرفر المحلي بدون خطأ 530/502."""
+    if not tunnel_url:
+        return False
+    try:
+        req = urllib.request.Request(
+            f"{tunnel_url.rstrip('/')}/api/stats",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RAMBFE-HealthCheck/3.0",
+                "Accept": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            return isinstance(data, dict) and "products_count" in data
+    except Exception:
+        return False
+
+
+def _sync_tunnel_to_github_async(tunnel_url: str) -> None:
+    """تحديث activeTunnelUrl داخل worker.js ورفعه إلى GitHub في الخلفية لضمان ثبات الرابط حتى بعد إعادة تشغيل Worker."""
+    if not tunnel_url:
+        return
+
+    def _worker():
+        with _git_sync_lock:
+            try:
+                if not WORKER_JS_FILE.exists():
+                    return
+                content = WORKER_JS_FILE.read_text(encoding="utf-8")
+                new_content, count = re.subn(
+                    r'let\s+activeTunnelUrl\s*=\s*"[^"]*";',
+                    f'let activeTunnelUrl = "{tunnel_url}";',
+                    content,
+                    count=1
+                )
+                if count > 0 and new_content != content:
+                    WORKER_JS_FILE.write_text(new_content, encoding="utf-8")
+                    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+                    subprocess.run(
+                        ["git", "add", "worker.js"],
+                        cwd=str(BASE_DIR),
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=15,
+                        creationflags=creationflags
+                    )
+                    subprocess.run(
+                        ["git", "commit", "-m", f"chore(tunnel): auto-update active Cloudflare tunnel URL"],
+                        cwd=str(BASE_DIR),
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=15,
+                        creationflags=creationflags
+                    )
+                    subprocess.run(
+                        ["git", "push", "origin", "main"],
+                        cwd=str(BASE_DIR),
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=30,
+                        creationflags=creationflags
+                    )
+            except Exception:
+                pass
+
+    threading.Thread(target=_worker, name="tunnel-git-sync", daemon=True).start()
+
+
+def _drain_output(proc: subprocess.Popen, url_found: threading.Event, tunnel_dead: threading.Event) -> None:
     """
-    قراءة مخرجات cloudflared باستمرار طوال عمر العملية.
-    مهم جداً: إذا توقفنا عن القراءة يمتلئ الـ pipe وتتجمد عملية cloudflared
-    فيتوقف النفق ويظهر البرنامج كأنه "وقف" على الموبايل.
+    قراءة مخرجات cloudflared باستمرار طوال عمر العملية، واكتشاف انتهاء صلاحية النفق فوراً.
+    مهم جداً: عندما تنتهي صلاحية نفق trycloudflare بعد عدة ساعات، يطبع cloudflared:
+    'Unauthorized: Tunnel not found' دون أن يغلق العملية!
+    لذلك نرصد هذه الرسائل هنا ونعلن وفاة النفق فوراً ليتم إنشاء نفق جديد تلقائياً خلال ثوانٍ.
     """
     global _active_tunnel_url
+    consecutive_retries = 0
     try:
         with open(CF_LOG_FILE, "a", encoding="utf-8", errors="replace") as log:
             for line in iter(proc.stdout.readline, ""):
@@ -119,6 +213,7 @@ def _drain_output(proc: subprocess.Popen, url_found: threading.Event) -> None:
                     log.flush()
                 except Exception:
                     pass
+
                 if not url_found.is_set():
                     m = URL_REGEX.search(line)
                     if m:
@@ -128,8 +223,25 @@ def _drain_output(proc: subprocess.Popen, url_found: threading.Event) -> None:
                         except Exception:
                             pass
                         url_found.set()
+
+                # رصد الأخطاء القاتلة التي تعني أن النفق مات من جهة سيرفرات Cloudflare
+                lower_line = line.lower()
+                if (
+                    "unauthorized: tunnel not found" in lower_line
+                    or "tunnel not found" in lower_line
+                    or "register tunnel error from server side" in lower_line
+                ):
+                    tunnel_dead.set()
+                elif "retrying connection" in lower_line or "serve tunnel error" in lower_line:
+                    consecutive_retries += 1
+                    if consecutive_retries >= 4:
+                        tunnel_dead.set()
+                elif "registered tunnel connection" in lower_line:
+                    consecutive_retries = 0
     except Exception:
         pass
+    finally:
+        tunnel_dead.set()
 
 
 def _rotate_log() -> None:
@@ -145,7 +257,7 @@ def _rotate_log() -> None:
 
 def _print_banner(url: str) -> None:
     _safe_print("\n" + "=" * 68)
-    _safe_print(" 🚀 تم تفعيل نفق Cloudflare الحقيقي بنجاح للمزامنة اللحظية!")
+    _safe_print(" 🚀 تم تفعيل نفق Cloudflare الحقيقي بنجاح للمزامنة اللحظية (24/7)!")
     _safe_print(f" 🌍 رابط الموبايل عبر النفق:      {url}")
     _safe_print(f" 📱 أو افتح كشف الجرد السريع:     {url}/mobile")
     _safe_print(" ☁️ رابط Cloudflare الثابت:        https://rambfe.quran-halaqat.workers.dev")
@@ -153,20 +265,30 @@ def _print_banner(url: str) -> None:
 
 
 def _tunnel_worker(port: int):
-    """تشغيل النفق ومراقبته وإعادة تشغيله تلقائياً إذا توقف لأي سبب."""
+    """تشغيل النفق ومراقبته صحياً وإعادة إنشائه تلقائياً فور انتهاء صلاحيته أو انقطاعه."""
     global _cf_process, _active_tunnel_url
     cf_exe = find_cloudflared()
     if not cf_exe:
         _safe_print("[!] لم يتم العثور على أداة cloudflared.exe - سيعمل البرنامج محلياً فقط.")
         return
 
-    backoff = 5
+    backoff = 3
     while not _stop_event.is_set():
         _remove_url_file()
         _active_tunnel_url = ""
         _rotate_log()
+        _kill_orphan_cloudflared()
 
-        cmd = [cf_exe, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"]
+        # استخدام بروتوكول http2 بدلاً من QUIC لمنع انقطاع النفق بعد فترات الخمول الطويلة على ويندوز
+        cmd = [
+            cf_exe,
+            "tunnel",
+            "--no-autoupdate",
+            "--protocol",
+            "http2",
+            "--url",
+            f"http://127.0.0.1:{port}"
+        ]
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -184,42 +306,79 @@ def _tunnel_worker(port: int):
         except Exception as e:
             _safe_print(f"[!] تعذر تشغيل Cloudflare Tunnel: {e}")
             _stop_event.wait(backoff)
-            backoff = min(backoff * 2, 120)
+            backoff = min(backoff * 2, 60)
             continue
 
         url_found = threading.Event()
-        threading.Thread(target=_drain_output, args=(_cf_process, url_found), daemon=True).start()
+        tunnel_dead = threading.Event()
+        threading.Thread(
+            target=_drain_output,
+            args=(_cf_process, url_found, tunnel_dead),
+            daemon=True
+        ).start()
 
         if url_found.wait(timeout=45) and _active_tunnel_url:
-            backoff = 5
+            backoff = 3
             _print_banner(_active_tunnel_url)
             if register_with_worker(_active_tunnel_url):
                 _safe_print(" [*] تم ربط النفق بسيرفر Cloudflare بنجاح.")
             else:
                 _safe_print(" [!] تعذر ربط النفق بسيرفر Cloudflare الآن، ستتم إعادة المحاولة تلقائياً.")
+            _sync_tunnel_to_github_async(_active_tunnel_url)
         else:
             _safe_print("[!] لم يظهر رابط النفق خلال 45 ثانية، جاري إعادة المحاولة...")
+            tunnel_dead.set()
 
-        # المراقبة المستمرة + نبضات التسجيل الدورية في Worker
+        # المراقبة المستمرة + نبضات التسجيل الدورية + فحص صلاحية النفق الفعلي
         last_beat = time.time()
-        while not _stop_event.is_set() and _cf_process and _cf_process.poll() is None:
+        failed_health_checks = 0
+        grace_period_until = time.time() + 25  # مهلة أولية لتسجيل النفق في DNS الخاص بـ Cloudflare
+
+        while (
+            not _stop_event.is_set()
+            and not tunnel_dead.is_set()
+            and _cf_process
+            and _cf_process.poll() is None
+        ):
             _stop_event.wait(2)
-            if _active_tunnel_url and time.time() - last_beat >= HEARTBEAT_SECONDS:
-                last_beat = time.time()
+            if tunnel_dead.is_set():
+                _safe_print("[!] تم رصد انتهاء صلاحية نفق Cloudflare من السجل، جاري تجديد النفق فوراً...")
+                break
+
+            now = time.time()
+            if _active_tunnel_url and now - last_beat >= HEARTBEAT_SECONDS:
+                last_beat = now
                 register_with_worker(_active_tunnel_url)
+
+                if now >= grace_period_until:
+                    if _check_tunnel_health(_active_tunnel_url):
+                        failed_health_checks = 0
+                    else:
+                        failed_health_checks += 1
+                        _safe_print(
+                            f"[!] تحذير فحص النفق ({failed_health_checks}/3): النفق لا يستجيب، جاري التحقق..."
+                        )
+                        if failed_health_checks >= 3:
+                            _safe_print("[!] النفق الحالي لم يعد يستجيب، جاري إنشاء نفق جديد تلقائياً...")
+                            break
 
         if _stop_event.is_set():
             break
 
-        # النفق توقف: إعادة تشغيل تلقائية
+        # النفق توقف أو انتهت صلاحيته: إنهاء العملية القديمة وإعادة التشغيل فوراً
         try:
             if _cf_process and _cf_process.poll() is None:
                 _cf_process.terminate()
+                try:
+                    _cf_process.wait(timeout=3)
+                except Exception:
+                    _cf_process.kill()
         except Exception:
             pass
-        _safe_print(f"[!] توقف نفق Cloudflare، ستتم إعادة تشغيله خلال {backoff} ثانية...")
+        _kill_orphan_cloudflared()
+        _safe_print(f"[!] جاري تجديد نفق Cloudflare تلقائياً خلال {backoff} ثوانٍ...")
         _stop_event.wait(backoff)
-        backoff = min(backoff * 2, 120)
+        backoff = min(backoff * 2, 30)
 
 
 def start_tunnel_in_background(port: int = 8000):

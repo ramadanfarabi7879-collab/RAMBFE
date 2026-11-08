@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-تشغيل البرنامج مع نفق Cloudflare للربط المباشر مع الموبايل، مع مراقبة وإعادة تشغيل تلقائية.
+تشغيل البرنامج مع نفق Cloudflare للربط المباشر مع الموبايل، مع مراقبة وإعادة تشغيل تلقائية 24/7.
 Starts the app (server + Cloudflare tunnel) and automatically restarts it if it crashes.
 
 - السيرفر والنفق يُداران من run.py (نفق واحد فقط يقرأ مخرجاته باستمرار ويعيد التشغيل تلقائياً).
@@ -21,6 +21,42 @@ TEMP_DIR = BASE_DIR / "temp"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def disable_windows_quick_edit():
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            ENABLE_QUICK_EDIT_MODE = 0x0040
+            ENABLE_EXTENDED_FLAGS = 0x0080
+            new_mode = (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS
+            kernel32.SetConsoleMode(handle, new_mode)
+    except Exception:
+        pass
+
+
+def prevent_windows_sleep():
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        ES_AWAYMODE_REQUIRED = 0x00000040
+        res = ctypes.windll.kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        )
+        if not res:
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+            )
+    except Exception:
+        pass
+
+
 def is_port_open(port=8000) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
@@ -28,6 +64,8 @@ def is_port_open(port=8000) -> bool:
 
 
 def main():
+    disable_windows_quick_edit()
+    prevent_windows_sleep()
     try:
         if hasattr(sys.stdout, 'reconfigure'):
             sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -41,7 +79,7 @@ def main():
         port = int(sys.argv[1])
 
     print("=" * 65, flush=True)
-    print(" 🚀 جاري إطلاق نظام الجرد الذكي ونفق Cloudflare للمزامنة اللحظية", flush=True)
+    print(" 🚀 جاري إطلاق نظام الجرد الذكي ونفق Cloudflare للمزامنة اللحظية (24/7)", flush=True)
     print("=" * 65, flush=True)
 
     if is_port_open(port):

@@ -890,7 +890,9 @@ function switchTab(tabId) {
 async function refreshSystemStats() {
     try {
         const res = await fetch('/api/stats');
+        if (!res.ok) return;
         const data = await res.json();
+        if (data.offline_reconnecting) return;
         document.getElementById('header-products-count').textContent = (data.products_count || 0).toLocaleString();
         document.getElementById('header-products-badge').textContent = (data.products_count || 0).toLocaleString();
         document.getElementById('header-barcodes-count').textContent = (data.barcodes_count || 0).toLocaleString();
@@ -5573,19 +5575,32 @@ async function loadCatalogProducts() {
 
     const query = (document.getElementById('catalog-search-input')?.value || '').replace(/^\s+/, '');
     const tbody = document.getElementById('catalog-products-tbody');
-    tbody.innerHTML = '<tr><td colspan="11" class="excel-cell py-6 text-center text-slate-400">جاري التحميل...</td></tr>';
+    if (!currentLoadedCatalogItems || currentLoadedCatalogItems.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="excel-cell py-6 text-center text-slate-400">جاري التحميل...</td></tr>';
+    }
 
     try {
         const url = `/api/catalog/products?query=${encodeURIComponent(query)}&mode=${isGeneralizedSearch ? "contains" : "start"}&limit=${catalogLimit}&offset=${catalogOffset}`;
         const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error('جاري تجديد الاتصال بالسيرفر...');
+        }
         const data = await res.json();
+        if (data.offline_reconnecting) {
+            throw new Error(data.message || 'جاري تجديد الاتصال بالسيرفر...');
+        }
         const items = data.items || [];
         const total = data.total || 0;
 
         currentLoadedCatalogItems = items;
         renderCatalogItemsTable(items, total, false);
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="11" class="excel-cell py-6 text-center text-rose-500">حدث خطأ: ${e.message}</td></tr>`;
+        if (!currentLoadedCatalogItems || currentLoadedCatalogItems.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="11" class="excel-cell py-6 text-center text-amber-600 font-bold">⏳ جاري تجديد الاتصال التلقائي بالسيرفر... سيتم التحديث خلال ثوانٍ</td></tr>`;
+        }
+        setTimeout(() => {
+            if (currentTab === 'catalog') loadCatalogProducts();
+        }, 3500);
     }
 }
 
