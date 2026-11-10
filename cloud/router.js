@@ -4,6 +4,7 @@ import * as S from './stock.js';
 import * as X from './extra.js';
 import { exportData } from './exporter.js';
 import * as CI from './catalog_import.js';
+import * as II from './invoice_import.js';
 import { getProductByCode } from './products.js';
 import { extractCleanGtin } from './qr.js';
 import { searchProducts, all, first, run, allIn } from './products.js';
@@ -64,7 +65,8 @@ export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/
     '/api/catalog/save', '/api/catalog/delete', '/api/catalog/parse-gs1', '/api/catalog/parse-gtin', '/api/invoice/new', '/api/invoice/scan', '/api/invoice/delete-serial',
     '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process',
     '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish', '/api/export/data',
-    '/api/catalog/import/lookup', '/api/catalog/import/commit', '/api/catalog/import/finish']);
+    '/api/catalog/import/lookup', '/api/catalog/import/commit', '/api/catalog/import/finish',
+    '/api/invoice/import/rows', '/api/invoice/import/finish']);
 
 export function isCloudRoute(method, path) {
     if (path.startsWith('/api/_admin/')) return true;
@@ -288,6 +290,14 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 ]);
                 await broadcast(env, ctx, 'profiles_changed', { id, deleted: true }, id);
                 return json({ success: true, message: `تم حذف ${prof.name} وكل بياناتها` });
+            }
+            case '/api/invoice/import/rows':
+                return json(await II.importInvoiceRows(db, data.invoice_id, Array.isArray(data.columns) ? data.columns : [], Array.isArray(data.rows) ? data.rows : [],
+                    intOr0(data.idx_offset), String(data.user_name || 'المسؤول')));
+            case '/api/invoice/import/finish': {
+                const r = await II.finishInvoiceImport(db, data.invoice_id, intOr0(data.imported_count), intOr0(data.skipped_count));
+                await bcast('invoice_updated', { invoice_id: intOr0(data.invoice_id) });
+                return json(r);
             }
             case '/api/catalog/import/lookup':
                 return json(await CI.importLookup(db, data.codes || [], data.barcodes || []));

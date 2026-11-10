@@ -328,7 +328,7 @@
     async function inspect(XLSX, file) {
         const name = file.name || 'catalog.xlsx';
         const isCsv = /\.csv$/i.test(name);
-        const wb = isCsv ? XLSX.read(await file.text(), { type: 'string', cellNF: true, raw: false }) : XLSX.read(await file.arrayBuffer(), { type: 'array', cellNF: true });
+        const wb = isCsv ? XLSX.read(await file.text(), { type: 'string', cellNF: true, raw: true }) : XLSX.read(await file.arrayBuffer(), { type: 'array', cellNF: true });
         const df = readDataframe(XLSX, wb);
         const sample = df.rows.slice(0, 5).map(r => { const o = {}; for (const h of df.columns) { const v = String(r[h] ?? ''); o[h] = v.toLowerCase() !== 'nan' ? v : ''; } return o; });
         return { df, info: { success: true, filename: name, file_path: name, sheet_name: df.sheet_names[0] || 'Sheet 1', sheet_names: df.sheet_names, headers: df.columns,
@@ -363,6 +363,33 @@
                 files[id] = { df, name: file.name };
                 info.file_id = id;
                 return jsonRes(info);
+            }
+            // استيراد ملف فاتورة (Excel/CSV/TXT) وتفريغه في الفاتورة النشطة — يعمل من الرابط
+            if (['/api/invoice/upload-file', '/api/invoice/upload', '/api/invoice/upload-excel', '/api/invoice/import-file'].includes(path)) {
+                const fd = init && init.body;
+                const file = fd && typeof fd.get === 'function' ? (fd.get('file') || fd.get('invoice')) : null;
+                if (!file) return jsonRes({ success: false, message: 'لم يتم إرسال ملف الفاتورة.' }, 400);
+                const invId = String(fd.get('invoice_id') || '');
+                const user = String(fd.get('user_name') || 'المسؤول');
+                let columns, rows;
+                if (/\.txt$/i.test(file.name || '')) {
+                    const lines = (await file.text()).split(/\r\n|\n|\r/).map(l => l.trim()).filter(Boolean);
+                    if (!lines.length) return jsonRes({ success: false, message: 'الملف النصي فارغ.' });
+                    columns = ['qr_code']; rows = lines.map(l => ({ qr_code: l }));
+                } else {
+                    const [XLSX] = await Promise.all([loadXlsx(), depsP]);
+                    const isCsv = /\.csv$/i.test(file.name || '');
+                    const wb = isCsv ? XLSX.read(await file.text(), { type: 'string', cellNF: true, raw: true }) : XLSX.read(await file.arrayBuffer(), { type: 'array', cellNF: true });
+                    const df = readDataframe(XLSX, wb);
+                    columns = df.columns; rows = df.rows;
+                }
+                if (!rows.length) return jsonRes({ success: false, message: 'ملف الفاتورة فارغ.' });
+                let target = /^\d+$/.test(invId) ? invId : '', imported = 0, skipped = 0;
+                for (let i = 0; i < rows.length; i += 80) {
+                    const r = await api('/api/invoice/import/rows', { invoice_id: target, columns, rows: rows.slice(i, i + 80), idx_offset: i, user_name: user });
+                    target = String(r.invoice_id); imported += r.imported_count; skipped += r.skipped_count;
+                }
+                return jsonRes(await api('/api/invoice/import/finish', { invoice_id: target, imported_count: imported, skipped_count: skipped }));
             }
             if (path === '/api/catalog/preview-import' || path === '/api/catalog/commit-import') {
                 await depsP;
