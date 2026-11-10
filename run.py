@@ -112,8 +112,30 @@ from backend.db_safety import get_server_logger
 from backend.server import run_server
 from backend.tunnel_manager import start_tunnel_in_background
 
+def acquire_server_mutex() -> bool:
+    """نسخة خادم واحدة فقط على الجهاز (تمنع تشغيل نسخ متعددة تقتل أنفاق بعضها)."""
+    if os.name != 'nt':
+        return True
+    try:
+        import ctypes
+        h = ctypes.windll.kernel32.CreateMutexW(None, False, r"Local\RAMBFE_Server_Single_Instance")
+        if not h or ctypes.windll.kernel32.GetLastError() == 183:
+            return False
+        globals()["_server_mutex"] = h
+        return True
+    except Exception:
+        return True
+
+
 if __name__ == '__main__':
     logger = get_server_logger()
+    if not acquire_server_mutex():
+        logger.info("run.py: another server instance is already running; exiting.")
+        print("البرنامج يعمل بالفعل: http://127.0.0.1:8000")
+        if os.name == 'nt' and os.environ.get("RAMBFE_NO_BROWSER", "") != "1":
+            import webbrowser
+            webbrowser.open("http://127.0.0.1:8000")
+        sys.exit(0)
     disable_windows_quick_edit()
     prevent_windows_sleep()
 

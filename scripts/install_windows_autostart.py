@@ -18,9 +18,12 @@ TASK_NAME = "RAMBFE_AutoServer"
 def main():
     print("1. Installing Windows Startup VBS...")
     if STARTUP_DIR.is_dir():
+        # ملف تشغيل صغير يشير لمسار المشروع الحالي (لا ننسخ الـ VBS لأنه يحسب المسار من مكانه)
         target_vbs = STARTUP_DIR / "RAMBFE_AutoServer.vbs"
-        shutil.copy2(VBS_PATH, target_vbs)
-        print(f"   Copied to Startup: {target_vbs}")
+        target_vbs.write_text(
+            'CreateObject("WScript.Shell").Run "wscript.exe ""' + str(VBS_PATH) + '""", 0, False' + chr(13) + chr(10),
+            encoding="utf-8")
+        print(f"   Startup launcher: {target_vbs}")
 
     print("2. Registering Windows Scheduled Task (ONLOGON + Watchdog trigger)...")
     cmd_create = [

@@ -5,3 +5,8 @@ compatibility_date = "2024-09-23"
 [assets]
 directory = "./frontend"
 binding = "ASSETS"
+
+# تخزين رابط النفق النشط بشكل دائم وعالمي (بدلاً من رفع commits على GitHub)
+[[kv_namespaces]]
+binding = "TUNNEL_KV"
+id = "25093de7c2cc4c4695446d99434ed24a"

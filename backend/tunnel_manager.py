@@ -75,20 +75,49 @@ def _remove_url_file() -> None:
         pass
 
 
+CF_PID_FILE = TEMP_DIR / "cloudflared.pid"
+
+
 def _kill_orphan_cloudflared() -> None:
-    """إنهاء أي عمليات cloudflared.exe عالقة من جلسات سابقة لمنع تعارض الأنفاق."""
-    if os.name == "nt":
-        try:
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "cloudflared.exe"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                creationflags=creationflags
-            )
-        except Exception:
-            pass
+    """إنهاء عملية cloudflared السابقة الخاصة بهذا البرنامج فقط (من ملف PID)، دون المساس بأي نفق آخر."""
+    try:
+        if not CF_PID_FILE.exists():
+            return
+        pid = int(CF_PID_FILE.read_text().strip() or "0")
+        CF_PID_FILE.unlink()
+        if pid <= 0:
+            return
+        if os.name == "nt":
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                 capture_output=True, text=True, timeout=5,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+            if "cloudflared" in out.lower():
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=5,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            os.kill(pid, 15)
+    except Exception:
+        pass
+
+
+def _read_setting(env_name: str, file_name: str) -> str:
+    v = os.environ.get(env_name, "").strip()
+    if v:
+        return v
+    try:
+        f = BASE_DIR / "data" / file_name
+        if f.is_file():
+            return f.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def get_named_tunnel_config():
+    """نفق دائم (Named Tunnel) برابط ثابت لا يتغير ولا تنتهي صلاحيته: token + الرابط العام."""
+    token = _read_setting("RAMBFE_TUNNEL_TOKEN", "tunnel_token.txt")
+    public_url = _read_setting("RAMBFE_PUBLIC_URL", "public_url.txt").rstrip("/")
+    return token, public_url
 
 
 def _cleanup():
@@ -152,57 +181,8 @@ def _check_tunnel_health(tunnel_url: str) -> bool:
 
 
 def _sync_tunnel_to_github_async(tunnel_url: str) -> None:
-    """تحديث activeTunnelUrl داخل worker.js ورفعه إلى GitHub في الخلفية لضمان ثبات الرابط حتى بعد إعادة تشغيل Worker."""
-    if not tunnel_url:
-        return
-
-    def _worker():
-        with _git_sync_lock:
-            try:
-                if not WORKER_JS_FILE.exists():
-                    return
-                content = WORKER_JS_FILE.read_text(encoding="utf-8")
-                new_content, count = re.subn(
-                    r'let\s+activeTunnelUrl\s*=\s*"[^"]*";',
-                    f'let activeTunnelUrl = "{tunnel_url}";',
-                    content,
-                    count=1
-                )
-                if count > 0 and new_content != content:
-                    WORKER_JS_FILE.write_text(new_content, encoding="utf-8")
-                    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-                    subprocess.run(
-                        ["git", "add", "worker.js"],
-                        cwd=str(BASE_DIR),
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                        creationflags=creationflags
-                    )
-                    subprocess.run(
-                        ["git", "commit", "-m", "chore(tunnel): auto-update active Cloudflare tunnel URL"],
-                        cwd=str(BASE_DIR),
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                        creationflags=creationflags
-                    )
-                    push_res = subprocess.run(
-                        ["git", "push", "origin", "main"],
-                        cwd=str(BASE_DIR),
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                        creationflags=creationflags
-                    )
-                    if push_res.returncode != 0:
-                        _safe_print(f"[!] تحذير تحديث GitHub للنفق: {push_res.stderr.strip()}")
-                    else:
-                        _safe_print("[*] تم تحديث رابط النفق في GitHub Worker بنجاح.")
-            except Exception:
-                pass
-
-    threading.Thread(target=_worker, name="tunnel-git-sync", daemon=True).start()
+    """أُلغيت: الـ Worker يحفظ رابط النفق في Workers KV عبر /api/tunnel/register، لا حاجة لرفع commits."""
+    return
 
 
 def _drain_output(proc: subprocess.Popen, url_found: threading.Event, tunnel_dead: threading.Event) -> None:
@@ -293,15 +273,19 @@ def _tunnel_worker(port: int):
         _kill_orphan_cloudflared()
 
         # استخدام بروتوكول http2 بدلاً من QUIC لمنع انقطاع النفق بعد فترات الخمول الطويلة على ويندوز
-        cmd = [
-            cf_exe,
-            "tunnel",
-            "--no-autoupdate",
-            "--protocol",
-            "http2",
-            "--url",
-            f"http://127.0.0.1:{port}"
-        ]
+        token, public_url = get_named_tunnel_config()
+        if token:
+            cmd = [cf_exe, "tunnel", "--no-autoupdate", "--protocol", "http2", "run", "--token", token]
+        else:
+            cmd = [
+                cf_exe,
+                "tunnel",
+                "--no-autoupdate",
+                "--protocol",
+                "http2",
+                "--url",
+                f"http://127.0.0.1:{port}"
+            ]
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -322,8 +306,20 @@ def _tunnel_worker(port: int):
             backoff = min(backoff * 2, 60)
             continue
 
+        try:
+            CF_PID_FILE.write_text(str(_cf_process.pid))
+        except Exception:
+            pass
         url_found = threading.Event()
         tunnel_dead = threading.Event()
+        if token and public_url:
+            # النفق الدائم: الرابط معروف مسبقاً ولا يظهر في السجل
+            _active_tunnel_url = public_url
+            try:
+                CF_URL_FILE.write_text(public_url, encoding="utf-8")
+            except Exception:
+                pass
+            url_found.set()
         threading.Thread(
             target=_drain_output,
             args=(_cf_process, url_found, tunnel_dead),

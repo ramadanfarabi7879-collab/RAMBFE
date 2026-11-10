@@ -27,6 +27,7 @@ from backend.db_safety import get_server_logger, check_db_health
 PORT = int(os.environ.get("RAMBFE_PORT", "8000"))
 HEALTH_URL = f"http://127.0.0.1:{PORT}/api/health"
 CHECK_INTERVAL = 15
+STARTUP_GRACE = 90
 
 
 def acquire_single_instance_mutex():
@@ -108,6 +109,7 @@ def main():
 
     logger.info(f"[Watchdog] Independent 24/7 Watchdog initialized (PID={os.getpid()}, port={PORT}).")
     server_proc = None
+    launched_at = 0.0
     consecutive_failures = 0
 
     while True:
@@ -120,6 +122,11 @@ def main():
                 consecutive_failures = 0
 
             health = probe_server_health()
+            # الخادم المُدار ما زال يقلع: لا نشغّل نسخة ثانية أثناء الإقلاع (كان سبب 3 خوادم متصارعة)
+            if (not health.get("reachable") and server_proc is not None
+                    and server_proc.poll() is None and time.time() - launched_at < STARTUP_GRACE):
+                time.sleep(CHECK_INTERVAL)
+                continue
             if health.get("reachable"):
                 consecutive_failures = 0
                 time.sleep(CHECK_INTERVAL)
@@ -129,13 +136,14 @@ def main():
             if not is_port_listening(PORT):
                 logger.warning("[Watchdog] Port 8000 is not listening -> launching server now.")
                 server_proc = launch_server_process(logger)
+                launched_at = time.time()
                 consecutive_failures = 0
                 time.sleep(6)
                 continue
 
             consecutive_failures += 1
             logger.warning(f"[Watchdog] Health probe failed ({consecutive_failures}/3): {health.get('error')}")
-            if consecutive_failures >= 3:
+            if consecutive_failures >= 4:
                 logger.error("[Watchdog] Server hung (3 failed health checks). Terminating hung process & restarting...")
                 if server_proc and server_proc.poll() is None:
                     try:
@@ -147,6 +155,7 @@ def main():
                         except Exception:
                             pass
                 server_proc = launch_server_process(logger)
+                launched_at = time.time()
                 consecutive_failures = 0
                 time.sleep(6)
                 continue

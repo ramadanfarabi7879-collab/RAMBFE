@@ -18,47 +18,33 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://rely-november-rose-honors.trycloudflare.com";
+let activeTunnelUrl = "";
 const TUNNEL_CACHE_KEY = "https://rambfe.internal/active-tunnel-url";
+const KV_KEY = "active_tunnel_url";
 
-async function saveTunnelToCache(tunnelUrl) {
+// التخزين الأساسي: Workers KV (عالمي ودائم ولا يضيع عند إعادة تشغيل الـ Worker). الكاش احتياطي فقط.
+async function saveTunnel(env, tunnelUrl) {
     if (!tunnelUrl) return;
+    try { if (env && env.TUNNEL_KV) await env.TUNNEL_KV.put(KV_KEY, tunnelUrl); } catch (_) {}
     try {
-        const cache = caches.default;
-        const resp = new Response(tunnelUrl, {
-            headers: {
-                'Content-Type': 'text/plain; charset=utf-8',
-                'Cache-Control': 'public, max-age=604800'
-            }
-        });
-        await cache.put(TUNNEL_CACHE_KEY, resp);
+        await caches.default.put(TUNNEL_CACHE_KEY, new Response(tunnelUrl, {
+            headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=604800' }
+        }));
     } catch (_) {}
 }
 
-async function getTunnelFromCache() {
+async function loadTunnel(env) {
     try {
-        const cache = caches.default;
-        const resp = await cache.match(TUNNEL_CACHE_KEY);
+        if (env && env.TUNNEL_KV) {
+            const v = ((await env.TUNNEL_KV.get(KV_KEY)) || '').trim();
+            if (v.startsWith('http')) return v.replace(/\/+$/, '');
+        }
+    } catch (_) {}
+    try {
+        const resp = await caches.default.match(TUNNEL_CACHE_KEY);
         if (resp && resp.ok) {
             const txt = (await resp.text()).trim();
             if (txt.startsWith('http')) return txt.replace(/\/+$/, '');
-        }
-    } catch (_) {}
-    return '';
-}
-
-async function discoverTunnelFromGitHub() {
-    try {
-        const ghUrl = `https://raw.githubusercontent.com/ramadanfarabi7879-collab/RAMBFE/main/worker.js?t=${Math.floor(Date.now() / 15000)}`;
-        const resp = await fetch(ghUrl, {
-            headers: { 'User-Agent': 'RAMBFE-Worker-Discovery/3.0' }
-        });
-        if (resp.ok) {
-            const text = await resp.text();
-            const m = text.match(/let\s+activeTunnelUrl\s*=\s*"(https:\/\/[^"]+)"/);
-            if (m && m[1]) {
-                return m[1].trim().replace(/\/+$/, '');
-            }
         }
     } catch (_) {}
     return '';
@@ -146,10 +132,13 @@ export default {
             try {
                 body = await request.json();
             } catch (_) {}
+            if (env.REGISTER_SECRET && request.headers.get('X-Register-Secret') !== env.REGISTER_SECRET) {
+                return jsonResponse({ success: false, message: 'unauthorized' }, 401);
+            }
             const newTunnel = String(body.tunnel_url || '').trim().replace(/\/+$/, '');
-            if (newTunnel && newTunnel.startsWith('http')) {
+            if (/^https:\/\/[a-z0-9.-]+$/i.test(newTunnel) && newTunnel !== activeTunnelUrl) {
                 activeTunnelUrl = newTunnel;
-                await saveTunnelToCache(newTunnel);
+                await saveTunnel(env, newTunnel);
             }
             return jsonResponse({
                 success: true,
@@ -159,14 +148,13 @@ export default {
         }
 
         if (path === '/api/tunnel/status') {
-            const cachedTunnel = await getTunnelFromCache();
-            if (cachedTunnel && cachedTunnel !== activeTunnelUrl) {
-                activeTunnelUrl = cachedTunnel;
-            }
+            const storedTunnel = await loadTunnel(env);
+            if (storedTunnel) activeTunnelUrl = storedTunnel;
             return jsonResponse({
                 is_connected: Boolean(activeTunnelUrl),
                 tunnel_url: activeTunnelUrl,
-                worker_version: "20261108_v15_autoheal"
+                kv_enabled: Boolean(env.TUNNEL_KV),
+                worker_version: "20261110_v16_kv"
             });
         }
 
@@ -188,23 +176,12 @@ export default {
                 if (proxied) return proxied;
             }
 
-            const cachedTunnel = await getTunnelFromCache();
-            if (cachedTunnel && !tried.has(cachedTunnel)) {
-                tried.add(cachedTunnel);
-                const proxied = await proxyToTunnelCandidate(cachedTunnel, request, url, path, method, rawProxyBody);
+            const storedTunnel = await loadTunnel(env);
+            if (storedTunnel && !tried.has(storedTunnel)) {
+                tried.add(storedTunnel);
+                const proxied = await proxyToTunnelCandidate(storedTunnel, request, url, path, method, rawProxyBody);
                 if (proxied) {
-                    activeTunnelUrl = cachedTunnel;
-                    return proxied;
-                }
-            }
-
-            const ghTunnel = await discoverTunnelFromGitHub();
-            if (ghTunnel && !tried.has(ghTunnel)) {
-                tried.add(ghTunnel);
-                const proxied = await proxyToTunnelCandidate(ghTunnel, request, url, path, method, rawProxyBody);
-                if (proxied) {
-                    activeTunnelUrl = ghTunnel;
-                    await saveTunnelToCache(ghTunnel);
+                    activeTunnelUrl = storedTunnel;
                     return proxied;
                 }
             }

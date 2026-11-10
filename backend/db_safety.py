@@ -40,8 +40,8 @@ CORE_TABLES = (
     "stocktake_entries",
 )
 
-MAX_BACKUPS_TO_KEEP = 15
-AUTO_BACKUP_INTERVAL_SECONDS = 4 * 3600  # كل 4 ساعات
+MAX_BACKUPS_TO_KEEP = 60
+AUTO_BACKUP_INTERVAL_SECONDS = 3600  # كل ساعة
 
 _log_lock = threading.Lock()
 _logger_configured = False
@@ -313,6 +313,25 @@ def check_db_health(deep: bool = False) -> Dict[str, Any]:
             _db_state["write_blocked"] = False
             _db_state["last_error"] = None
             _db_state["last_check_at"] = now_str
+        return result
+    except sqlite3.OperationalError as e:
+        # قفل مؤقت أثناء كتابة أخرى ليس تلفاً: لا نوقف الحفظ (كان يعطل الحفظ 15 دقيقة كاملة)
+        if "locked" in str(e).lower() or "busy" in str(e).lower():
+            result["healthy"] = True
+            result["integrity"] = "skipped_busy"
+            result["error"] = f"transient: {e}"
+            logger.warning(f"DB health check skipped (busy): {e}")
+            return result
+        err = f"خطأ في فحص قاعدة البيانات: {e}"
+        result["healthy"] = False
+        result["write_blocked"] = True
+        result["error"] = err
+        with _db_guard_lock:
+            _db_state["healthy"] = False
+            _db_state["write_blocked"] = True
+            _db_state["last_error"] = err
+            _db_state["last_check_at"] = now_str
+        logger.error(err)
         return result
     except Exception as e:
         err = f"خطأ في فحص قاعدة البيانات: {e}"

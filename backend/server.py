@@ -325,7 +325,14 @@ def parse_multipart(body_bytes: bytes, boundary: bytes):
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # على ويندوز SO_REUSEADDR يسمح لعدة نسخ بفتح نفس المنفذ معاً (سبب تشغيل 3 خوادم متصارعة).
+    # نستخدم ربطاً حصرياً بحيث تفشل أي نسخة ثانية فوراً بدلاً من العمل بصمت.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 class AppRequestHandler(BaseHTTPRequestHandler):
 
@@ -1641,15 +1648,8 @@ def run_server(port=8000, auto_open_browser=True):
         pass
 
     server_address = ('0.0.0.0', port)
-    try:
-        httpd = ReusableThreadingHTTPServer(server_address, AppRequestHandler)
-    except OSError as e:
-        if getattr(e, 'winerror', None) == 10048 or 'address already in use' in str(e).lower():
-            port = 8001
-            server_address = ('0.0.0.0', port)
-            httpd = ReusableThreadingHTTPServer(server_address, AppRequestHandler)
-        else:
-            raise e
+    # لا ننتقل لمنفذ 8001 أبداً: ذلك كان يخلق خادماً ثانياً منفصلاً عن الموبايل والنفق
+    httpd = ReusableThreadingHTTPServer(server_address, AppRequestHandler)
 
     srv_logger = get_server_logger()
     try:
