@@ -18,7 +18,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://participant-audio-industry-domains.trycloudflare.com";
+let activeTunnelUrl = "https://everyone-pensions-novel-relation.trycloudflare.com";
 const TUNNEL_CACHE_KEY = "https://rambfe.internal/active-tunnel-url";
 
 async function saveTunnelToCache(tunnelUrl) {
