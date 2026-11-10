@@ -1,10 +1,10 @@
 // منقول من backend/stock_manager.py (عمليات الجرد) ليعمل على Cloudflare D1 بدون الكمبيوتر.
 import { all, first, run, allIn, getProductByCode, findProductByGtinOrBarcode, attachBarcodesBulk, buildProductSearchWhere, runProductQuery, PRODUCT_ORDER_SQL } from './products.js';
-import { parseQrCode, extractCleanGtin, cleanBarcodePreserveZeros, cleanNumericCode, decodeArabicKeyboardLayout, parseExpiryDate, isDigitStr } from './qr.js';
+import { parseQrCode, extractCleanGtin, cleanBarcodePreserveZeros, cleanNumericCode, decodeArabicKeyboardLayout, parseExpiryDate, isDigitStr, pyRound } from './qr.js';
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const r2 = (v) => Math.round(num(v) * 100) / 100;
-const r4 = (v) => Math.round(num(v) * 10000) / 10000;
+const r2 = (v) => pyRound(num(v), 2);
+const r4 = (v) => pyRound(num(v), 4);
 // تنسيق الأرقام كما تطبعها بايثون في الرسائل (2.0 بدلاً من 2)
 const pyf = (v) => { const n = num(v); return Number.isInteger(n) ? n.toFixed(1) : String(n); };
 const up = (v) => String(v ?? '').trim().toUpperCase();

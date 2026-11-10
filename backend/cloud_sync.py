@@ -25,18 +25,29 @@ CLOUD_URL = os.environ.get("RAMBFE_CLOUD_URL", "https://rambfe.pages.dev").rstri
 TOKEN_FILE = os.path.join(DATA_DIR, "cloud_admin_token.txt")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RAMBFE-Desktop/4.0"
 STOCK_TABLES = ["stock_stores", "inventory_records", "stocktake_entries", "stocktake_scanned_serials"]
+INVOICE_TABLES = ["invoices", "invoice_lines", "scanned_serials", "returns_log", "product_aliases", "audit_logs"]
+SYNC_TABLES = STOCK_TABLES + INVOICE_TABLES
 
 # نفس قائمة المسارات في cloud/router.js
 CLOUD_GET = {"/api/catalog/products", "/api/stock/stores", "/api/stock/store/details", "/api/stock/store/search",
-             "/api/sync/events", "/api/mobile/poll"}
+             "/api/sync/events", "/api/mobile/poll", "/api/stats", "/api/catalog/product", "/api/catalog/next-code",
+             "/api/stock/uncounted", "/api/stock/preinventory-search", "/api/invoice/active", "/api/invoices/list", "/api/invoices/get"}
 CLOUD_POST = {"/api/mobile/scan", "/api/stock/scan", "/api/stock/save-batch-qty", "/api/stock/update-qty", "/api/stock/delete-item",
               "/api/stock/bulk-delete", "/api/stock/edit-item", "/api/stock/clear", "/api/stock/clear-inventory", "/api/stock/settle",
               "/api/stock/commit-bulk", "/api/stock/stores/commit-all", "/api/stock/stores/create", "/api/stock/stores/update",
-              "/api/stock/stores/delete", "/api/stock/reset-all", "/api/stock/populate-all"}
+              "/api/stock/stores/delete", "/api/stock/reset-all", "/api/stock/populate-all",
+              "/api/catalog/save", "/api/catalog/delete", "/api/catalog/parse-gs1", "/api/catalog/parse-gtin", "/api/invoice/new",
+              "/api/invoice/scan", "/api/invoice/delete-serial", "/api/invoice/delete-line", "/api/invoice/clear-lines", "/api/invoice/clear",
+              "/api/invoice/update-line-qty", "/api/invoice/manual-item", "/api/invoice/confirm", "/api/returns/process"}
 # مسارات تعمل محلياً على الكمبيوتر بعد سحب نسخة حديثة من جداول الجرد
-PULL_BEFORE_GET = {"/api/stock/search", "/api/stock/preinventory-search", "/api/stock/export-excel", "/api/stock/export",
-                   "/api/stock/uncounted", "/api/stock/uncounted/export-excel", "/api/stock/uncounted-export"}
-PUSH_AFTER_POST = {"/api/stock/upload-excel", "/api/stock/upload"}
+PULL_BEFORE_GET = {"/api/stock/search", "/api/stock/export-excel", "/api/stock/export", "/api/stock/uncounted/export-excel",
+                   "/api/stock/uncounted-export", "/api/invoice/export-excel", "/api/invoice/export", "/api/invoice/export-stock-excel",
+                   "/api/invoice/export-stock", "/api/catalog/export-excel", "/api/catalog/export"}
+PULL_BEFORE_POST = {"/api/invoice/export-custom-excel", "/api/catalog/export-excel", "/api/catalog/export"}
+# عمليات الكمبيوتر التي تكتب في الفواتير (قراءة ملف PDF/صورة) ثم تُرفع للسحابة
+INVOICE_WRITE_POST = {"/api/invoice/upload-file"}
+# عمليات الكمبيوتر التي تكتب في الكتالوج محلياً (استيراد إكسيل) ثم تُرفع التغييرات للسحابة
+CATALOG_WRITE_POST = {"/api/catalog/upload-excel", "/api/catalog/commit-import"}
 
 # بصمة الصنف: نفس التعبير بالضبط في cloud/router.js (CATALOG_SIG_SQL)
 CATALOG_SIG_SQL = (
@@ -118,8 +129,8 @@ def _admin(path: str, payload: Dict[str, Any], timeout: int = 120) -> Dict[str, 
 
 
 # ---------------- جداول الجرد ----------------
-def pull_stock_tables(max_age: float = 3.0) -> bool:
-    """تحديث نسخة الكمبيوتر من جداول الجرد من السحابة (بحد أقصى مرة كل max_age ثانية)."""
+def pull_stock_tables(max_age: float = 3.0, tables_list: Optional[List[str]] = None) -> bool:
+    """تحديث نسخة الكمبيوتر من جداول الجرد والفواتير من السحابة (بحد أقصى مرة كل max_age ثانية)."""
     global _last_pull
     if not is_enabled() or not admin_token():
         return False
@@ -127,12 +138,13 @@ def pull_stock_tables(max_age: float = 3.0) -> bool:
         if time.time() - _last_pull < max_age:
             return True
         try:
-            tables = _admin("/api/_admin/pull", {"tables": STOCK_TABLES}).get("tables", {})
+            wanted = tables_list or SYNC_TABLES
+            tables = _admin("/api/_admin/pull", {"tables": wanted}).get("tables", {})
             conn = get_connection()
             try:
                 c = conn.cursor()
                 c.execute("BEGIN")
-                for t in STOCK_TABLES:
+                for t in wanted:
                     rows = tables.get(t)
                     if rows is None:
                         continue
@@ -157,14 +169,14 @@ def pull_stock_tables(max_age: float = 3.0) -> bool:
             return False
 
 
-def push_stock_tables(event: str = "inventory_uploaded") -> bool:
+def push_stock_tables(event: str = "inventory_uploaded", tables_list: Optional[List[str]] = None) -> bool:
     """رفع جداول الجرد المحلية للسحابة (بعد رفع ملف مخزون من الكمبيوتر). دفعة ذرية واحدة."""
     global _last_pull
     if not is_enabled() or not admin_token():
         return False
     conn = get_connection()
     try:
-        tables = {t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")] for t in STOCK_TABLES}
+        tables = {t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")] for t in (tables_list or STOCK_TABLES)}
     finally:
         conn.close()
     _admin("/api/_admin/replace", {"tables": tables, "event": event}, timeout=300)
@@ -259,6 +271,80 @@ def push_catalog(full_compare: bool = False) -> Dict[str, Any]:
         return {"success": True, "changed": len(changed), "deleted": len(deleted)}
 
 
+def _load_seq() -> int:
+    try:
+        with open(os.path.join(DATA_DIR, "cloud_catalog_seq.txt"), "r", encoding="utf-8") as f:
+            return int(f.read().strip() or 0)
+    except Exception:
+        return -1
+
+
+def _save_seq(seq: int) -> None:
+    with open(os.path.join(DATA_DIR, "cloud_catalog_seq.txt"), "w", encoding="utf-8") as f:
+        f.write(str(seq))
+
+
+def pull_catalog_changes() -> int:
+    """جلب تعديلات الأصناف التي تمت من السحابة (الموبايل/الرابط) وتطبيقها على نسخة الكمبيوتر."""
+    if not is_enabled() or not admin_token():
+        return 0
+    with _catalog_lock:
+        since = _load_seq()
+        if since < 0:
+            # أول مرة: نبدأ من آخر تغيير حالي (المطابقة الكاملة تتم في push_catalog)
+            d = _admin("/api/_admin/catalog_changes", {"since": 10 ** 12})
+            _save_seq(int(d.get("max_seq") or 0))
+            return 0
+        applied = 0
+        while True:
+            d = _admin("/api/_admin/catalog_changes", {"since": since})
+            changes = d.get("changes") or []
+            if not changes:
+                break
+            codes = list({c["code"] for c in changes})
+            conn = get_connection()
+            try:
+                c = conn.cursor()
+                if "*" in codes:
+                    c.execute("DELETE FROM products")
+                    c.execute("DELETE FROM product_barcodes")
+                real = [x for x in codes if x != "*"]
+                for i in range(0, len(real), 500):
+                    part = real[i:i + 500]
+                    ph = ",".join("?" * len(part))
+                    c.execute(f"DELETE FROM product_barcodes WHERE product_code IN ({ph})", part)
+                    c.execute(f"DELETE FROM products WHERE code IN ({ph})", part)
+                local_cols = {r[1] for r in c.execute("PRAGMA table_info(products)").fetchall()}
+                for pr in d.get("products") or []:
+                    cols = [k for k in pr.keys() if k in local_cols]
+                    c.execute(f"INSERT INTO products ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", tuple(pr[k] for k in cols))
+                for b in d.get("barcodes") or []:
+                    c.execute("INSERT OR IGNORE INTO product_barcodes (product_code, barcode, barcode_type, created_at) VALUES (?, ?, ?, ?)",
+                              (b["product_code"], b["barcode"], b.get("barcode_type") or "barcode", b.get("created_at")))
+                conn.commit()
+            finally:
+                conn.close()
+            # تحديث بصمات هذه الأصناف حتى لا تُرفع مرة أخرى للسحابة
+            state = _load_state()
+            if state is not None:
+                fresh = _local_catalog_sigs()
+                if "*" in codes:
+                    state = dict(fresh)
+                else:
+                    for code in codes:
+                        if code in fresh:
+                            state[code] = fresh[code]
+                        else:
+                            state.pop(code, None)
+                _save_state(state)
+            since = int(d.get("last_seq") or since)
+            _save_seq(since)
+            applied += len(codes)
+        if applied:
+            get_server_logger().info(f"[Cloud] pulled {applied} catalog changes from the cloud")
+        return applied
+
+
 def _catalog_fingerprint() -> str:
     conn = get_connection()
     try:
@@ -298,6 +384,7 @@ def start_background_sync() -> None:
         last_fp = None
         while True:
             try:
+                pull_catalog_changes()
                 fp = _catalog_fingerprint()
                 if fp != last_fp:
                     push_catalog()
@@ -305,7 +392,7 @@ def start_background_sync() -> None:
             except Exception as e:
                 _status["last_error"] = f"catalog: {e}"
                 get_server_logger().warning(f"[Cloud] catalog sync failed: {e}")
-            time.sleep(60)
+            time.sleep(30)
 
     threading.Thread(target=loop, name="cloud-sync", daemon=True).start()
 

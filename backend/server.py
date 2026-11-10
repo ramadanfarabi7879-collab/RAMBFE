@@ -1,3 +1,4 @@
+import threading
 import os
 import sys
 import re
@@ -363,6 +364,19 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def send_json(self, data, status=200):
+        after = getattr(self, '_cloud_after', None)
+        if after:
+            self._cloud_after = None
+            if isinstance(data, dict) and data.get('success', True) and status < 400:
+                try:
+                    if after == 'invoices':
+                        cloud_sync.push_stock_tables(event='invoice_updated', tables_list=cloud_sync.INVOICE_TABLES)
+                    elif after == 'catalog':
+                        threading.Thread(target=cloud_sync.push_catalog, name='catalog-push', daemon=True).start()
+                except Exception as push_err:
+                    data = dict(data)
+                    data['success'] = False
+                    data['message'] = f"تمت العملية على الكمبيوتر لكن تعذر حفظها على السحابة: {push_err}"
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -430,6 +444,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 return
             if path in cloud_sync.PULL_BEFORE_GET:
                 cloud_sync.pull_stock_tables()
+                if path.startswith('/api/catalog/'):
+                    try:
+                        cloud_sync.pull_catalog_changes()
+                    except Exception:
+                        pass
         if path == '/api/cloud/status':
             self.send_json(cloud_sync.status())
             return
@@ -884,6 +903,29 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             if not is_invoice_scan:
                 self.forward_to_cloud('POST', body_bytes)
                 return
+
+        # عمليات تعمل على الكمبيوتر: نجلب أحدث بيانات السحابة قبلها، ونرفع ما كتبته بعدها
+        _cloud_after = None
+        if cloud_sync.is_enabled():
+            if path in cloud_sync.PULL_BEFORE_POST:
+                cloud_sync.pull_stock_tables()
+                try:
+                    cloud_sync.pull_catalog_changes()
+                except Exception:
+                    pass
+            elif path in cloud_sync.INVOICE_WRITE_POST:
+                if not cloud_sync.pull_stock_tables(max_age=0, tables_list=cloud_sync.INVOICE_TABLES):
+                    self.send_json({"success": False, "message": "تعذر الاتصال بالسحابة: تأكد من الإنترنت ثم أعد المحاولة."}, 503)
+                    return
+                _cloud_after = 'invoices'
+            elif path in cloud_sync.CATALOG_WRITE_POST:
+                try:
+                    cloud_sync.pull_catalog_changes()
+                except Exception:
+                    pass
+                _cloud_after = 'catalog'
+        if _cloud_after:
+            self._cloud_after = _cloud_after
 
         # نقاط نهاية النسخ الاحتياطي والاستعادة (محمية بالصلاحيات ومنع التراجع للخلف بدون موافقة صريحة)
         if path == '/api/backup/create':

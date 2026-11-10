@@ -282,3 +282,23 @@ export function extractCleanGtin(rawInput) {
     if (digits.length > 14 && digits.startsWith('01')) return digits.slice(2, 16);
     return '';
 }
+
+// تقريب مطابق لدالة round في بايثون: يعتمد على القيمة الثنائية الفعلية للرقم، والتعادل التام يُقرّب للزوجي
+export function pyRound(x, n = 0) {
+    x = Number(x);
+    if (!Number.isFinite(x)) return x;
+    const neg = x < 0, a = Math.abs(x);
+    const s = a.toFixed(Math.min(100, n + 25));
+    const dot = s.indexOf('.');
+    const tail = s.slice(dot + 1 + n);
+    let r;
+    if (/^50*$/.test(tail)) {
+        const base = Number(s.slice(0, dot + 1 + n).replace(/\.$/, ''));
+        const unit = 10 ** -n;
+        const lastDigit = Number(s.slice(0, dot + 1 + n).replace('.', '').slice(-1));
+        r = lastDigit % 2 === 0 ? base : Number((base + unit).toFixed(n));
+    } else {
+        r = Number(a.toFixed(n));
+    }
+    return neg ? -r : r;
+}

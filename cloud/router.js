@@ -1,7 +1,10 @@
 // مسارات API التي تعمل مباشرة على Cloudflare (D1) بدون الحاجة لتشغيل الكمبيوتر.
 // نفس أسماء المسارات وشكل الاستجابات في backend/server.py حتى تعمل الواجهات الحالية بدون تعديل.
 import * as S from './stock.js';
-import { searchProducts, all, first, run } from './products.js';
+import * as X from './extra.js';
+import { getProductByCode } from './products.js';
+import { extractCleanGtin } from './qr.js';
+import { searchProducts, all, first, run, allIn } from './products.js';
 
 // بصمة الصنف: نفس التعبير بالضبط في backend/cloud_sync.py (CATALOG_SIG_SQL) — لا تغيّره في مكان واحد فقط
 export const CATALOG_SIG_SQL = `p.id||'|'||ifnull(p.gtin,'')||'|'||ifnull(p.barcode,'')||'|'||ifnull(p.name_ar,'')||'|'||ifnull(p.name_en,'')||'|'||ifnull(p.name,'')||'|'||ifnull(p.category,'')||'|'||ifnull(p.selling_price,'')||'|'||ifnull(p.unit_price,'')||'|'||ifnull(p.cost_price,'')||'|'||ifnull(p.tax_rate,'')||'|'||ifnull(p.unit,'')||'|'||ifnull(p.unit_divisions,'')||'|'||ifnull(p.normalized_name,'')||'|'||ifnull(p.normalized_name_ar,'')||'|'||ifnull(p.normalized_name_en,'')||'|'||ifnull(p.scientific_name,'')||'|'||ifnull(p.company,'')||'|'||ifnull(p.wholesale_price,'')||'|'||ifnull((SELECT group_concat(x, ',') FROM (SELECT barcode||':'||ifnull(barcode_type,'') AS x FROM product_barcodes WHERE product_code = p.code ORDER BY barcode, barcode_type)),'')`;
@@ -43,10 +46,14 @@ async function broadcast(env, ctx, type, payload) {
 }
 
 // المسارات المنقولة للسحابة (GET و POST)
-export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health', '/api/realtime']);
+export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health', '/api/realtime',
+    '/api/health', '/api/stats', '/api/network-info', '/api/catalog/product', '/api/catalog/next-code', '/api/stock/uncounted',
+    '/api/stock/preinventory-search', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get']);
 export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/stock/save-batch-qty', '/api/stock/update-qty', '/api/stock/delete-item',
     '/api/stock/bulk-delete', '/api/stock/edit-item', '/api/stock/clear', '/api/stock/clear-inventory', '/api/stock/settle', '/api/stock/commit-bulk',
-    '/api/stock/stores/commit-all', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all']);
+    '/api/stock/stores/commit-all', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
+    '/api/catalog/save', '/api/catalog/delete', '/api/catalog/parse-gs1', '/api/catalog/parse-gtin', '/api/invoice/new', '/api/invoice/scan', '/api/invoice/delete-serial',
+    '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process']);
 
 export function isCloudRoute(method, path) {
     if (path.startsWith('/api/_admin/')) return true;
@@ -85,6 +92,36 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 const lim = /^\d+$/.test(p.get('limit') || '') ? intOr0(p.get('limit')) : 50;
                 const off = /^\d+$/.test(p.get('offset') || '') ? intOr0(p.get('offset')) : 0;
                 return json(await searchProducts(db, q, lim, off, (p.get('mode') || 'start').trim().toLowerCase()));
+            }
+            if (path === '/api/health') return json({ healthy: true, success: true, write_blocked: false, mode: 'cloud', db_path: 'cloudflare-d1', cloudflare_url: url.origin });
+            if (path === '/api/stats') return json(await X.getStats(db));
+            if (path === '/api/network-info') return json({ ip: url.host, port: 443, mobile_url: `${url.origin}/mobile`, companion_url: `${url.origin}/mobile`,
+                local_mobile_url: `${url.origin}/mobile`, cloudflare_url: url.origin, is_cloudflare_active: true });
+            if (path === '/api/catalog/next-code') return json({ code: await X.getNextProductCode(db) });
+            if (path === '/api/catalog/product') {
+                const prod = await getProductByCode(db, (p.get('code') || '').trim());
+                return prod ? json({ success: true, product: prod }) : json({ success: false, message: 'الصنف غير موجود' }, 404);
+            }
+            if (path === '/api/stock/uncounted') {
+                try { return json(await X.getUncountedStoreItems(db, (p.get('store_no') || '').trim() || 'ST-001', (p.get('category') || '').trim())); }
+                catch (e) { return json({ detail: `خطأ في جلب الأصناف غير المجرودة: ${e.message}` }, 500); }
+            }
+            if (path === '/api/stock/preinventory-search') {
+                const lim = /^\d+$/.test(p.get('limit') || '') ? intOr0(p.get('limit')) : 100;
+                const off = /^\d+$/.test(p.get('offset') || '') ? intOr0(p.get('offset')) : 0;
+                return json(await X.searchPreinventoryProducts(db, (p.get('query') || p.get('q') || '').replace(/^\s+/, ''), lim, off,
+                    (p.get('mode') || 'start').trim().toLowerCase(), ['1', 'true', 'yes'].includes((p.get('stock_only') || '0').trim().toLowerCase())));
+            }
+            if (path === '/api/invoice/active') return json({ success: true, invoice: await X.getOrCreateDraftInvoice(db) });
+            if (path === '/api/invoices/list') {
+                const lim = /^\d+$/.test(p.get('limit') || '') ? intOr0(p.get('limit')) : 50;
+                const off = /^\d+$/.test(p.get('offset') || '') ? intOr0(p.get('offset')) : 0;
+                return json({ success: true, invoices: await X.getAllInvoices(db, lim, off) });
+            }
+            if (path === '/api/invoices/get') {
+                const idS = (p.get('id') || '0').trim();
+                const inv = await X.getInvoiceDetails(db, /^\d+$/.test(idS) ? intOr0(idS) : 0);
+                return Object.keys(inv).length ? json({ success: true, invoice: inv }) : json({ success: false, message: 'الفاتورة غير موجودة' }, 404);
             }
             if (path === '/api/stock/stores') return json(await S.getAllStores(db, (p.get('q') || '').trim() || (p.get('query') || '').trim()));
             if (path === '/api/stock/store/details') {
@@ -189,6 +226,57 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 if (res.success) await broadcast(env, ctx, 'stock_reset', {});
                 return json(res);
             }
+            case '/api/catalog/save': {
+                const res = await X.saveOrUpdateProduct(db, data);
+                await broadcast(env, ctx, 'catalog_updated', { code: res.code });
+                return json(res);
+            }
+            case '/api/catalog/delete': {
+                if (data.clear_all) { await X.clearCatalog(db); await broadcast(env, ctx, 'catalog_cleared', {}); return json({ success: true, message: 'تم تفريغ دليل الأصناف بالكامل بنجاح' }); }
+                if (Array.isArray(data.codes) && data.codes.length) {
+                    const cnt = await X.bulkDeleteProducts(db, data.codes);
+                    await broadcast(env, ctx, 'catalog_bulk_deleted', { codes: data.codes, count: cnt });
+                    return json({ success: true, deleted_count: cnt, message: `تم حذف ${cnt} صنف بنجاح` });
+                }
+                const ok = await X.deleteProduct(db, data.code);
+                if (ok) await broadcast(env, ctx, 'catalog_deleted', { code: data.code });
+                return json({ success: ok, message: ok ? 'تم حذف بطاقة الصنف بنجاح' : 'فشل الحذف' });
+            }
+            case '/api/catalog/parse-gs1': return json(X.parseGs1(data.raw));
+            case '/api/catalog/parse-gtin': { const raw = String(data.raw || '').trim(); return json({ success: true, gtin: extractCleanGtin(raw), raw }); }
+            case '/api/invoice/new': return json({ success: true, invoice: await X.createNewInvoice(db, data.notes || '', data.user_name || 'المسؤول') });
+            case '/api/invoice/scan': {
+                let invId = intOr0(data.invoice_id);
+                const qr = String(data.qr_text || '').trim(), user = String(data.user_name || 'المسؤول').trim();
+                if (!invId) invId = (await X.getOrCreateDraftInvoice(db, user)).id;
+                const parsed = X.parseQrCode(qr);
+                const res = await X.scanQrToInvoice(db, invId, qr, user);
+                res.invoice = await X.getInvoiceDetails(db, invId);
+                const qd = parsed.success ? (parsed.data || {}) : {};
+                res.parsed_qr = qd;
+                for (const k of ['gtin', 'batch', 'serial', 'expiry']) if (qd[k] && !(k in res)) res[k] = qd[k];
+                await broadcast(env, ctx, 'invoice_updated', { invoice_id: invId });
+                return json(res);
+            }
+            case '/api/invoice/delete-serial': case '/api/invoice/delete-line': case '/api/invoice/clear-lines': case '/api/invoice/clear':
+            case '/api/invoice/update-line-qty': case '/api/invoice/manual-item': case '/api/invoice/confirm': {
+                let invId = intOr0(data.invoice_id);
+                const needsDraft = ['/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item'].includes(path);
+                if (!invId && needsDraft) invId = (await X.getOrCreateDraftInvoice(db)).id;
+                let res;
+                if (path === '/api/invoice/delete-serial') res = await X.deleteScannedSerial(db, invId, intOr0(data.serial_id));
+                else if (path === '/api/invoice/delete-line') res = await X.deleteInvoiceLine(db, invId, intOr0(data.line_id));
+                else if (path === '/api/invoice/update-line-qty') res = await X.updateInvoiceLineQuantity(db, invId, intOr0(data.line_id), data.quantity ?? 1);
+                else if (path === '/api/invoice/manual-item') res = await X.addManualItemToInvoice(db, invId, String(data.gtin || '').trim(), String(data.batch || '').trim().toUpperCase(),
+                    String(data.expiry || '').trim(), data.quantity ?? 1, String(data.user_name || 'المسؤول').trim());
+                else if (path === '/api/invoice/confirm') res = await X.confirmInvoice(db, invId);
+                else res = await X.clearInvoiceLines(db, invId);
+                res.invoice = await X.getInvoiceDetails(db, invId);
+                await broadcast(env, ctx, 'invoice_updated', { invoice_id: invId });
+                return json(res);
+            }
+            case '/api/returns/process':
+                return json(await X.processSerialReturn(db, data.serial_number || '', data.invoice_number || '', data.reason || 'إرجاع عبوة', data.user_name || 'المسؤول'));
             case '/api/stock/populate-all':
                 return json(await S.populateStoreFromInventory(db, storeNo));
         }
@@ -199,7 +287,7 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
 }
 
 // ---------- مسارات إدارية محمية لمزامنة الكمبيوتر مع السحابة ----------
-const STOCK_TABLES = ['stock_stores', 'inventory_records', 'stocktake_entries', 'stocktake_scanned_serials'];
+const STOCK_TABLES = ['stock_stores', 'inventory_records', 'stocktake_entries', 'stocktake_scanned_serials', 'invoices', 'invoice_lines', 'scanned_serials', 'returns_log', 'product_aliases', 'audit_logs'];
 const SYNC_TABLES = new Set([...STOCK_TABLES, 'products', 'product_barcodes', 'meta']);
 
 async function handleAdmin(request, env, path, data) {
@@ -278,6 +366,16 @@ async function handleAdmin(request, env, path, data) {
     if (path === '/api/_admin/catalog_rows') {
         const rows = await all(db, `SELECT code, ${CATALOG_SIG_SQL} AS s FROM products p ORDER BY code LIMIT ? OFFSET ?`, [intOr0(data.limit) || 5000, intOr0(data.offset)]);
         return json({ success: true, rows });
+    }
+    // تغييرات الكتالوج التي تمت من السحابة (من الموبايل أو رابط الكمبيوتر) ليجلبها برنامج الكمبيوتر
+    if (path === '/api/_admin/catalog_changes') {
+        const since = intOr0(data.since);
+        const ch = await all(db, 'SELECT seq, code FROM catalog_changes WHERE seq > ? ORDER BY seq ASC LIMIT 2000', [since]);
+        const codes = [...new Set(ch.map(r => r.code).filter(c => c !== '*'))];
+        const prods = codes.length ? await allIn(db, 'SELECT * FROM products WHERE code IN ({ph})', [], codes) : [];
+        const bcs = codes.length ? await allIn(db, 'SELECT product_code, barcode, barcode_type, created_at FROM product_barcodes WHERE product_code IN ({ph})', [], codes) : [];
+        const mx = await first(db, 'SELECT COALESCE(MAX(seq), 0) AS m FROM catalog_changes');
+        return json({ success: true, changes: ch, products: prods, barcodes: bcs, last_seq: ch.length ? ch[ch.length - 1].seq : since, max_seq: mx.m });
     }
     if (path === '/api/_admin/meta') {
         if (data.set) for (const [k, v] of Object.entries(data.set)) await run(db, 'INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v', [k, String(v)]);
