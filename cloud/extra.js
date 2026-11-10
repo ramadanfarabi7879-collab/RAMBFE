@@ -443,10 +443,11 @@ export async function updateInvoiceLineQuantity(db, invoiceId, lineId, newQuanti
     return { success: true, message: `تم تعديل الكمية بنجاح إلى ${q}`, new_quantity: q };
 }
 
-export async function addManualItemToInvoice(db, invoiceId, gtinOrCode, batch, expiry, quantity = 1, userName = 'المسؤول') {
+export async function addManualItemToInvoice(db, invoiceId, gtinOrCode, batch, expiry, quantity = 1, userName = 'المسؤول', forcedProductCode = null) {
     const val = String(gtinOrCode || '').trim();
     if (!val) return { success: false, message: 'يرجى كتابة كود الصنف أو الباركود أو GTIN.' };
-    const product = await findProductByGtinOrBarcode(db, val) || await getProductByCode(db, val);
+    // عند المراجعة اليدوية لفاتورة مقروءة بالذكاء الاصطناعي: الصنف محدد بالكود صراحة
+    const product = forcedProductCode ? await getProductByCode(db, forcedProductCode) : (await findProductByGtinOrBarcode(db, val) || await getProductByCode(db, val));
     if (!product) return { success: false, code: 'ITEM_NOT_FOUND', message: `لم يتم العثور على الصنف (${val}).` };
     const cb = decodeArabicKeyboardLayout(String(batch || '').trim()).toUpperCase() || 'BATCH1';
     const ce = parseExpiryDate(expiry) || expiry || '2027-12-31';

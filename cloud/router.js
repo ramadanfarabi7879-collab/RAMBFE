@@ -5,6 +5,7 @@ import * as X from './extra.js';
 import { exportData } from './exporter.js';
 import * as CI from './catalog_import.js';
 import * as II from './invoice_import.js';
+import * as AIX from './invoice_ai.js';
 import { getProductByCode } from './products.js';
 import { extractCleanGtin } from './qr.js';
 import { searchProducts, all, first, run, allIn } from './products.js';
@@ -66,7 +67,8 @@ export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/
     '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process',
     '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish', '/api/export/data',
     '/api/catalog/import/lookup', '/api/catalog/import/commit', '/api/catalog/import/finish',
-    '/api/invoice/import/rows', '/api/invoice/import/finish']);
+    '/api/invoice/import/rows', '/api/invoice/import/finish',
+    '/api/invoice/ai/extract', '/api/invoice/ai/match', '/api/invoice/ai/commit']);
 
 export function isCloudRoute(method, path) {
     if (path.startsWith('/api/_admin/')) return true;
@@ -291,6 +293,28 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 await broadcast(env, ctx, 'profiles_changed', { id, deleted: true }, id);
                 return json({ success: true, message: `تم حذف ${prof.name} وكل بياناتها` });
             }
+            case '/api/invoice/ai/extract': {
+                const r = await AIX.aiExtract(env, { image: data.image, text: data.text, model: data.model });
+                if (r.success && data.match !== false) r.items = await AIX.matchLines(db, r.items);
+                return json(r);
+            }
+            case '/api/invoice/ai/commit': {
+                let invId = intOr0(data.invoice_id);
+                if (!invId) invId = (await X.getOrCreateDraftInvoice(db)).id;
+                let added = 0; const errors = [];
+                for (const ln of Array.isArray(data.lines) ? data.lines : []) {
+                    const code = String(ln.product_code || '').trim();
+                    if (!code) continue;
+                    const r = await X.addManualItemToInvoice(db, invId, code, String(ln.batch || '').trim().toUpperCase(), String(ln.expiry || '').trim(),
+                        Math.max(1, intOr0(ln.quantity) || 1), 'المسؤول', code);
+                    if (r.success) added += r.added_qty; else errors.push(`${code}: ${r.message}`);
+                }
+                await bcast('invoice_updated', { invoice_id: invId });
+                return json({ success: errors.length === 0 || added > 0, added_packages: added, errors, invoice: await X.getInvoiceDetails(db, invId),
+                    message: `تمت إضافة ${added} عبوة من الفاتورة المقروءة` + (errors.length ? ` (تعذر ${errors.length} سطر)` : '') });
+            }
+            case '/api/invoice/ai/match':
+                return json({ success: true, items: await AIX.matchLines(db, Array.isArray(data.items) ? data.items : []) });
             case '/api/invoice/import/rows':
                 return json(await II.importInvoiceRows(db, data.invoice_id, Array.isArray(data.columns) ? data.columns : [], Array.isArray(data.rows) ? data.rows : [],
                     intOr0(data.idx_offset), String(data.user_name || 'المسؤول')));

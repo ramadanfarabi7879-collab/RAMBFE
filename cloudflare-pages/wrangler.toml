@@ -18,3 +18,7 @@ database_id = "445cfd63-a8d0-4548-88a4-940d096e472e"
 name = "SYNC_HUB"
 class_name = "SyncHub"
 script_name = "rambfe-realtime"
+
+# الذكاء الاصطناعي لقراءة فواتير PDF والصور
+[ai]
+binding = "AI"
