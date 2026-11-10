@@ -889,6 +889,55 @@ def _get_stocktake_eligible_map(cursor: sqlite3.Cursor, store_no: str) -> Tuple[
     return resolved_store, eligible
 
 
+def _is_exact_code_or_barcode_query(cursor: sqlite3.Cursor, raw_query: str) -> bool:
+    """
+    تمييز البحث بالكود/الباركود/GTIN عن البحث بالاسم:
+    - أي استعلام رقمي خالص (مثل الباركود أو GTIN أو كود الصنف الرقمي أو بعد فك لوحة المفاتيح العربية) يُعد بحث كود/باركود.
+    - أو أي استعلام يطابق بدقة كود صنف (p.code) أو باركوداً/GTIN في قاعدة البيانات (مثل 26606n أو BDN).
+    - أسماء الأدوية المحتوية على أرقام مثل '500MG' أو 'ADOL 500' ليست أرقاماً خالصة ولا تطابق كود/باركوداً فتبقى بحث اسم.
+    """
+    q = str(raw_query or "").strip()
+    if not q:
+        return False
+
+    from .qr_parser import decode_arabic_keyboard_layout
+    candidates = {q, q.lower(), q.upper()}
+    decoded = decode_arabic_keyboard_layout(q).strip()
+    if decoded:
+        candidates.update({decoded, decoded.lower(), decoded.upper()})
+
+    for cand in list(candidates):
+        c_clean = clean_numeric_code(cand)
+        b_clean = clean_barcode_preserve_zeros(cand)
+        if cand.isdigit():
+            return True
+        if c_clean:
+            candidates.add(c_clean)
+            if c_clean.isdigit():
+                candidates.add(c_clean.zfill(10))
+                candidates.add(c_clean.lstrip('0') or '0')
+        if b_clean:
+            candidates.add(b_clean)
+
+    cand_list = [c for c in candidates if c]
+    if not cand_list:
+        return False
+
+    placeholders = ",".join(["?"] * len(cand_list))
+    cursor.execute(
+        f"SELECT 1 FROM products WHERE code IN ({placeholders}) OR barcode IN ({placeholders}) OR gtin IN ({placeholders}) LIMIT 1",
+        tuple(cand_list) * 3
+    )
+    if cursor.fetchone():
+        return True
+
+    cursor.execute(
+        f"SELECT 1 FROM product_barcodes WHERE barcode IN ({placeholders}) LIMIT 1",
+        tuple(cand_list)
+    )
+    return bool(cursor.fetchone())
+
+
 def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mode: str = "start", stock_only: bool = False, store_no: str = "") -> Dict[str, Any]:
     """
     البحث في الأصناف بالاسم أو الكود أو الباركود أو GTIN مع دعم:
@@ -897,30 +946,43 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
     - قاعدة المسطرة / الفصلة (Word Boundary): بمجرد كتابة الكلمة وأخذ مسافة بعدها (مثل "ADOL ") تعتبر الكلمة مكتملة
       ولا يجوز مطابقة أصناف تبدأ بأحرف متصلة بها مثل ADOLIN، وتطابق فقط ما يبدأ بـ ADOL ككلمة مستقلة.
     - تطبيع اللغة وتخطيط لوحة المفاتيح
-    - عند stock_only=True (شاشة الجرد فقط): حصر النتائج على الأصناف ذات الرصيد الفعلي في store_no أو المدرجة في جرده الجاري.
+    - عند stock_only=True (شاشة الجرد فقط): يطبّق فلترة المخزون الموجب والجرد الجاري على البحث بالاسم فقط،
+      بينما يستثني البحث بالكود أو الباركود أو GTIN ليعرض الصنف المطابق مباشرةً في جميع الحالات.
     """
     conn = get_connection()
     cursor = conn.cursor()
-
-    eligible_map: Dict[str, Dict[str, Any]] = {}
-    resolved_store = ""
-    if stock_only:
-        resolved_store, eligible_map = _get_stocktake_eligible_map(cursor, store_no)
-        if not eligible_map:
-            conn.close()
-            return {"items": [], "total": 0, "limit": limit, "offset": offset, "store_no": resolved_store}
-        cursor.execute("CREATE TEMP TABLE IF NOT EXISTS _stk_eligible (code TEXT PRIMARY KEY)")
-        cursor.execute("DELETE FROM _stk_eligible")
-        cursor.executemany(
-            "INSERT OR IGNORE INTO _stk_eligible (code) VALUES (?)",
-            [(c,) for c in eligible_map.keys()]
-        )
 
     raw_q = str(query or "").lstrip()
     has_trailing_space = raw_q.endswith(' ')
     q = raw_q.strip()
     is_contains = str(match_mode or "").lower() in ("contains", "generalized", "all", "true", "1")
-    stk_join_sql = "INNER JOIN _stk_eligible stk_e ON stk_e.code = p.code" if stock_only else ""
+
+    bypassed_stock_filter = bool(stock_only and q and _is_exact_code_or_barcode_query(cursor, q))
+    apply_stock_filter = bool(stock_only and not bypassed_stock_filter)
+
+    eligible_map: Dict[str, Dict[str, Any]] = {}
+    resolved_store = ""
+    if stock_only:
+        resolved_store, eligible_map = _get_stocktake_eligible_map(cursor, store_no)
+        if apply_stock_filter:
+            if not eligible_map:
+                conn.close()
+                return {
+                    "items": [],
+                    "total": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "store_no": resolved_store,
+                    "bypassed_stock_filter": False,
+                }
+            cursor.execute("CREATE TEMP TABLE IF NOT EXISTS _stk_eligible (code TEXT PRIMARY KEY)")
+            cursor.execute("DELETE FROM _stk_eligible")
+            cursor.executemany(
+                "INSERT OR IGNORE INTO _stk_eligible (code) VALUES (?)",
+                [(c,) for c in eligible_map.keys()]
+            )
+
+    stk_join_sql = "INNER JOIN _stk_eligible stk_e ON stk_e.code = p.code" if apply_stock_filter else ""
 
     if not q:
         cursor.execute(f"SELECT COUNT(*) FROM products p {stk_join_sql}")
@@ -1139,6 +1201,7 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
     }
     if stock_only:
         res_payload["store_no"] = resolved_store
+        res_payload["bypassed_stock_filter"] = bypassed_stock_filter
     return res_payload
 
 # ==================== إدارة الفواتير والمسح الضوئي ====================

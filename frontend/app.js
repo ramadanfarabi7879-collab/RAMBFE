@@ -7503,6 +7503,13 @@ function selectActiveStockStore(storeNo, storeName) {
     const titleEl = document.getElementById('stk-current-counting-title');
     if (displayEl) displayEl.textContent = `${storeNo} (${storeName || ''})`;
     if (titleEl) titleEl.textContent = `${storeNo} (${storeName || ''})`;
+    if (typeof updateStkStockFilterUI === 'function') updateStkStockFilterUI();
+
+    const activeScanInp = document.getElementById('stk-scan-input');
+    const curQ = (activeScanInp?.value || '').replace(/^\s+/, '');
+    if (isStkStockFilterEnabled && curQ && typeof looksLikeDirectBarcodeOrQr === 'function' && !looksLikeDirectBarcodeOrQr(curQ)) {
+        fetchAndRenderStkCatalogSearch(curQ);
+    }
 
     loadCurrentStoreItems();
     loadStocktakeStores();
@@ -8419,6 +8426,7 @@ function updateStkStockFilterUI() {
     const btn = document.getElementById('btn-stk-toggle-stock-filter');
     const sw = document.getElementById('stk-stock-filter-switch');
     const knob = document.getElementById('stk-stock-filter-knob');
+    const feedbackText = document.getElementById('stk-feedback-text');
     if (btn) btn.setAttribute('aria-pressed', isStkStockFilterEnabled ? 'true' : 'false');
 
     if (isStkStockFilterEnabled) {
@@ -8426,14 +8434,29 @@ function updateStkStockFilterUI() {
             btn.className = 'h-[42px] px-2.5 rounded-xl text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 active:scale-95 shrink-0';
         }
         if (sw) sw.className = 'w-6 h-3 bg-emerald-800 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
-        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 -translate-x-3';
+        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 -translate-x-3 pointer-events-none';
+        if (feedbackText && (feedbackText.textContent.includes('جاهز لمسح') || feedbackText.textContent.includes('فلترة البحث بالاسم'))) {
+            feedbackText.textContent = `🟢 فلترة البحث بالاسم على المخزون (${currentActiveStoreNo || ''}) مفعّلة — الباركود والكود وQR تبقى مباشرة بدون فلترة`;
+        }
     } else {
         if (btn) {
             btn.className = 'h-[42px] px-2.5 rounded-xl text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95 shrink-0';
         }
         if (sw) sw.className = 'w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
-        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0';
+        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0 pointer-events-none';
+        if (feedbackText && feedbackText.textContent.includes('فلترة البحث بالاسم')) {
+            feedbackText.textContent = 'جاهز لمسح الباركود والداتا ماتريكس بالاسكانر...';
+        }
     }
+}
+
+function isStkCodeOrBarcodeSearch(raw) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) return false;
+    if (looksLikeDirectBarcodeOrQr(trimmed)) return true;
+    const decoded = (typeof decodeArabicKeyboard === 'function') ? decodeArabicKeyboard(trimmed).trim() : trimmed;
+    if (/^\d+$/.test(trimmed) || (decoded && /^\d+$/.test(decoded))) return true;
+    return false;
 }
 
 function closeStkSearchDropdown() {
@@ -8477,7 +8500,9 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
     try {
         const mode = isStkGeneralizedSearch ? 'contains' : 'start';
         const storeParam = encodeURIComponent(currentActiveStoreNo || '');
-        const url = isStkStockFilterEnabled
+        const isDirectCodeOrBarcode = isStkCodeOrBarcodeSearch(rawQuery);
+        const requestStockOnly = isStkStockFilterEnabled && !isDirectCodeOrBarcode;
+        const url = requestStockOnly
             ? `/api/stock/search?query=${encodeURIComponent(rawQuery)}&mode=${mode}&store_no=${storeParam}&limit=100&offset=0`
             : `/api/catalog/products?query=${encodeURIComponent(rawQuery)}&mode=${mode}&limit=100&offset=0`;
         const res = await fetch(url, { cache: 'no-store' });
@@ -8488,11 +8513,12 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
         const items = data.items || [];
         const total = data.total ?? items.length;
         const activeStoreLabel = data.store_no || currentActiveStoreNo || '';
+        const effectiveStockFiltered = requestStockOnly && !data.bypassed_stock_filter;
         stkSearchResults = items;
         stkActiveSearchIndex = -1;
 
         if (items.length === 0) {
-            const emptyMsg = isStkStockFilterEnabled
+            const emptyMsg = effectiveStockFiltered
                 ? `لا توجد أصناف ذات رصيد مخزني متاح أو مدرجة في الجرد الجاري للمخزن (<span class="font-mono font-bold text-slate-600">${escapeHtml(activeStoreLabel)}</span>) تطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"`
                 : `لم يتم العثور على أي صنف في كرت الصنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"`;
             dd.innerHTML = `
@@ -8505,7 +8531,7 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
             return;
         }
 
-        const headerLabel = isStkStockFilterEnabled
+        const headerLabel = effectiveStockFiltered
             ? `أصناف برصيد/جرد (${escapeHtml(activeStoreLabel)}): <span class="text-emerald-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`
             : `نتائج مطابقة من كرت الصنف: <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`;
         let html = `
@@ -8655,8 +8681,8 @@ function initStocktakeCatalogSearch() {
         }
 
         const trimmed = raw.trim();
-        // 2. إذا كان مسح QR ثنائي الأبعاد أو كوداً رقمياً بالكامل: نرسله مباشرة لمحرك المسح
-        if (looksLikeDirectBarcodeOrQr(trimmed) || /^\d+$/.test(trimmed)) {
+        // 2. إذا كان مسح QR ثنائي الأبعاد أو باركوداً/كوداً رقمياً بالكامل: نرسله مباشرة لمحرك المسح بدون فلترة
+        if (isStkCodeOrBarcodeSearch(trimmed)) {
             closeStkSearchDropdown();
             stkSearchResults = [];
             const decoded = (typeof decodeArabicKeyboard === 'function') ? decodeArabicKeyboard(trimmed) : trimmed;
@@ -8666,7 +8692,7 @@ function initStocktakeCatalogSearch() {
             return;
         }
 
-        // 3. إذا كان بحثاً بالاسم/العلمي/الشركة: نجلب النتائج إن لم تكن محملة ثم نضيف أو نعرض القائمة
+        // 3. إذا كان بحثاً بالاسم/العلمي/الشركة (أو كوداً مختلطاً مثل 26606n): نجلب النتائج ونعرضها ولا نحول الاسم الفاشل لمسح باركود
         if (!isDropdownOpen || stkSearchResults.length === 0) {
             await fetchAndRenderStkCatalogSearch(raw);
         }
@@ -8675,12 +8701,6 @@ function initStocktakeCatalogSearch() {
         } else if (stkSearchResults.length > 1) {
             stkActiveSearchIndex = 0;
             highlightStkSearchRow();
-        } else {
-            closeStkSearchDropdown();
-            const decoded = (typeof decodeArabicKeyboard === 'function') ? decodeArabicKeyboard(trimmed) : trimmed;
-            scanInput.value = '';
-            await processStoreScan(decoded);
-            scanInput.focus();
         }
         } finally {
             scanInput._handlingEnter = false;

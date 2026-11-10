@@ -2758,9 +2758,9 @@
 
                         <!-- خانة المسح الضوئي المباشر مع أزرار الكاميرا والجوال -->
 
-                        <div class="flex items-center gap-2">
+                        <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
 
-                            <form id="stk-scan-form" onsubmit="return false;" autocomplete="off" class="relative flex-1">
+                            <form id="stk-scan-form" onsubmit="return false;" autocomplete="off" class="relative flex-1 min-w-[240px]">
 
                                 <input type="text" id="stk-scan-input" dir="auto"
 
@@ -2796,11 +2796,11 @@
 
                             <button type="button" id="btn-stk-toggle-stock-filter" aria-pressed="false"
                                     class="h-[42px] px-2.5 rounded-xl text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95 shrink-0"
-                                    title="عرض الأصناف ذات الرصيد المخزني الفعلي أو المدرجة في الجرد الجاري فقط للمخزن المحدد (مغلق افتراضياً)">
+                                    title="تطبيق فلترة المخزون على البحث بالاسم فقط للمخزن المحدد (البحث بالكود أو الباركود أو QR يظل مباشراً بدون فلترة)">
                                 <span id="stk-stock-filter-switch" class="w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none">
-                                    <span id="stk-stock-filter-knob" class="w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0"></span>
+                                    <span id="stk-stock-filter-knob" class="w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0 pointer-events-none"></span>
                                 </span>
-                                <span id="stk-stock-filter-text" class="whitespace-nowrap">فلترة على المخزون</span>
+                                <span id="stk-stock-filter-text" class="whitespace-nowrap pointer-events-none">فلترة على المخزون</span>
                             </button>
 
                             <button id="btn-stk-open-camera" type="button" class="h-[42px] px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow" title="مسح بكاميرا الجهاز مباشرة (باركود • كيو ار • داتاماتريكس)">
@@ -5007,7 +5007,7 @@
 
     <!-- ملف الجافاسكريبت الرئيسي -->
 
-    <script src="app.js?v=20261110_v40_stk_filter_toggle"></script>
+    <script src="app.js?v=20261110_v41_stk_name_only_filter"></script>
 
 </body>
 

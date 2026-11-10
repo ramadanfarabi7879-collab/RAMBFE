@@ -102,6 +102,20 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
             "gtin_list": ["06289999999999"],
         })
 
+        # 6. كود حرفي صرف غير موجود في المخزون (BDN) + صنف بقوة 500MG في الاسم فقط
+        db.save_or_update_product({
+            "code": "BDN",
+            "name_en": "BDN SPECIAL ITEM",
+            "name_ar": "صنف كود حرفي",
+            "scientific_name": "Special",
+            "company": "Generic",
+            "category": "Misc",
+            "selling_price": 5.0,
+            "cost_price": 3.0,
+            "barcode_list": ["6285555555555"],
+            "gtin_list": ["06285555555555"],
+        })
+
         conn = db.get_connection()
         c = conn.cursor()
         # st_test: رصيد موجب لـ 0000093860
@@ -178,10 +192,41 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
         r_stk_wb = db.search_products("ADOL ", match_mode="start", stock_only=True, store_no=self.st_test)
         self.assertEqual([i["code"] for i in r_stk_wb["items"]], ["0000093860"])
 
-        # أولوية OR/AND في SQL: البحث باسم/باركود صنف عديم الرصيد في st_test يرجع 0 نتائج حتى مع وجود كلمة/شركة مشتركة
-        self.assertEqual(db.search_products("0000077777", match_mode="contains", stock_only=True, store_no=self.st_test)["total"], 0)
-        self.assertEqual(db.search_products("6287777777777", match_mode="start", stock_only=True, store_no=self.st_test)["total"], 0)
-        self.assertEqual(db.search_products("0000088888", match_mode="contains", stock_only=True, store_no=self.st_test)["total"], 0)
+        # أولوية OR/AND في SQL على البحث بالاسم: أسماء الأصناف عديمة الرصيد في st_test ترجع 0 نتائج
+        self.assertEqual(db.search_products("ADOL COLD", match_mode="contains", stock_only=True, store_no=self.st_test)["total"], 0)
+        self.assertEqual(db.search_products("ادول كولد", match_mode="contains", stock_only=True, store_no=self.st_test)["total"], 0)
+        self.assertEqual(db.search_products("ADOL ZERO", match_mode="contains", stock_only=True, store_no=self.st_test)["total"], 0)
+        # البحث بقوة دواء مثل 500MG يعتبر بحث اسم وليس كوداً -> يعرض فقط 0000093860 ذو الرصيد
+        r_500mg = db.search_products("500MG", match_mode="contains", stock_only=True, store_no=self.st_test)
+        self.assertFalse(r_500mg["bypassed_stock_filter"])
+        self.assertEqual([i["code"] for i in r_500mg["items"]], ["0000093860"])
+
+    def test_02b_code_and_barcode_bypass_stock_filter_when_enabled(self):
+        # الحالة 3 و 4: البحث بالكود أو الباركود أو GTIN يجب أن يُرجع الصنف المطابق مباشرة حتى عند stock_only=True ولصنف عديم الرصيد أو لمخزن فارغ
+        # 1. كود رقمي لصنف غير موجود في مخزن st_test (موجود في st_other فقط)
+        r_code_un = db.search_products("0000077777", match_mode="start", stock_only=True, store_no=self.st_test)
+        self.assertTrue(r_code_un["bypassed_stock_filter"])
+        self.assertEqual([i["code"] for i in r_code_un["items"]], ["0000077777"])
+
+        # 2. باركود لصنف غير موجود في st_test
+        r_bc_un = db.search_products("6287777777777", match_mode="start", stock_only=True, store_no=self.st_test)
+        self.assertTrue(r_bc_un["bypassed_stock_filter"])
+        self.assertEqual([i["code"] for i in r_bc_un["items"]], ["0000077777"])
+
+        # 3. GTIN لصنف كل دفعاته صفر في st_test
+        r_gtin_zero = db.search_products("06288888888888", match_mode="start", stock_only=True, store_no=self.st_test)
+        self.assertTrue(r_gtin_zero["bypassed_stock_filter"])
+        self.assertEqual([i["code"] for i in r_gtin_zero["items"]], ["0000088888"])
+
+        # 4. كود حرفي صرف غير موجود بالمخزون (BDN) في مخزن فارغ st_empty
+        r_bdn_empty = db.search_products("BDN", match_mode="start", stock_only=True, store_no=self.st_empty)
+        self.assertTrue(r_bdn_empty["bypassed_stock_filter"])
+        self.assertEqual([i["code"] for i in r_bdn_empty["items"]], ["BDN"])
+
+        # 5. كود مختلط (26606n) في مخزن فارغ st_empty -> يتجاوز فلترة المخزون أيضاً
+        r_alpha_empty = db.search_products("26606n", match_mode="start", stock_only=True, store_no=self.st_empty)
+        self.assertTrue(r_alpha_empty["bypassed_stock_filter"])
+        self.assertEqual([i["code"] for i in r_alpha_empty["items"]], ["26606n"])
 
     def test_03_current_stocktake_zero_qty_and_store_isolation(self):
         # 1. الصنف 0000099999 بدون رصيد مخزني، لكنه أُدخل في الجرد الجاري لـ st_test بكمية counted_qty = 0 -> يجب أن يظهر للمراجعة والتعديل
@@ -233,8 +278,10 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
         self.assertIn("if path == '/api/stock/search':", srv_py)
         self.assertIn("stock_only=True, store_no=store_no", srv_py)
         self.assertIn('let isStkStockFilterEnabled = false;', app_js)
+        self.assertIn('function isStkCodeOrBarcodeSearch(', app_js)
         fetch_body = app_js[app_js.index('fetchAndRenderStkCatalogSearch'):]
         self.assertIn('isStkStockFilterEnabled', fetch_body)
+        self.assertIn('isStkCodeOrBarcodeSearch', fetch_body)
         self.assertIn('/api/stock/search?query=', fetch_body)
         self.assertIn('/api/catalog/products?query=', fetch_body)
         self.assertIn('/api/catalog/products?query=', app_js[app_js.index('loadCatalogProducts'):])
