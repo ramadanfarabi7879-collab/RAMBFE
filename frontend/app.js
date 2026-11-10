@@ -1567,6 +1567,9 @@ function initScannerTab() {
         if (el) el.value = '';
     });
     document.getElementById('btn-clear-batch')?.addEventListener('click', () => {
+        const el = document.getElementById('field-batch');
+        if (el) el.value = '';
+    });
     ['field-batch', 'modal-edit-batch'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
