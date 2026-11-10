@@ -2,6 +2,7 @@
 // نفس أسماء المسارات وشكل الاستجابات في backend/server.py حتى تعمل الواجهات الحالية بدون تعديل.
 import * as S from './stock.js';
 import * as X from './extra.js';
+import { exportData } from './exporter.js';
 import { getProductByCode } from './products.js';
 import { extractCleanGtin } from './qr.js';
 import { searchProducts, all, first, run, allIn } from './products.js';
@@ -61,7 +62,7 @@ export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/
     '/api/stock/stores/commit-all', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
     '/api/catalog/save', '/api/catalog/delete', '/api/catalog/parse-gs1', '/api/catalog/parse-gtin', '/api/invoice/new', '/api/invoice/scan', '/api/invoice/delete-serial',
     '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process',
-    '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish']);
+    '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish', '/api/export/data']);
 
 export function isCloudRoute(method, path) {
     if (path.startsWith('/api/_admin/')) return true;
@@ -285,6 +286,10 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 ]);
                 await broadcast(env, ctx, 'profiles_changed', { id, deleted: true }, id);
                 return json({ success: true, message: `تم حذف ${prof.name} وكل بياناتها` });
+            }
+            case '/api/export/data': {
+                const r = await exportData(db, String(data.kind || ''), data.params || {});
+                return json(r, r.success === false ? 404 : 200);
             }
             case '/api/stock/upload/detect':
                 return json({ success: true, ...S.detectStockColumns(Array.isArray(data.rows) ? data.rows : []) });

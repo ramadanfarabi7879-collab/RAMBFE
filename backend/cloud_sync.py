@@ -41,7 +41,7 @@ CLOUD_POST = {"/api/mobile/scan", "/api/stock/scan", "/api/stock/save-batch-qty"
               "/api/invoice/scan", "/api/invoice/delete-serial", "/api/invoice/delete-line", "/api/invoice/clear-lines", "/api/invoice/clear",
               "/api/invoice/update-line-qty", "/api/invoice/manual-item", "/api/invoice/confirm", "/api/returns/process",
               "/api/profiles/create", "/api/profiles/rename", "/api/profiles/delete", "/api/stock/upload/detect",
-              "/api/stock/upload/rows", "/api/stock/upload/finish"}
+              "/api/stock/upload/rows", "/api/stock/upload/finish", "/api/export/data"}
 # مسارات تعمل محلياً على الكمبيوتر بعد سحب نسخة حديثة من جداول الجرد
 PULL_BEFORE_GET = {"/api/stock/search", "/api/stock/export-excel", "/api/stock/export", "/api/stock/uncounted/export-excel",
                    "/api/stock/uncounted-export", "/api/invoice/export-excel", "/api/invoice/export", "/api/invoice/export-stock-excel",
