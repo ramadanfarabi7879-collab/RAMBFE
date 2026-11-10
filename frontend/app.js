@@ -8543,11 +8543,11 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
             ? `أصناف لها رصيد أصلي قبل الجرد بالنظام: <span class="text-emerald-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`
             : `بحث المخزون قبل الجرد وكرت الصنف: <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`;
         let html = `
-            <div class="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between text-[11px] font-bold text-slate-600">
+            <div class="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold text-slate-700">
                 <span>${headerLabel}</span>
-                <span class="text-[10px] text-slate-400">اضغط على الصنف أو استخدم ↑↓ و Enter لإضافته لجرد ${escapeHtml(currentActiveStoreNo || '')}</span>
+                <span class="text-[10.5px] text-slate-500 font-medium">اضغط على الصنف أو استخدم ↑↓ و Enter لإضافته لجرد ${escapeHtml(currentActiveStoreNo || '')}</span>
             </div>
-            <div id="stk-search-items-list" class="divide-y divide-slate-100 overflow-y-auto max-h-[55vh]">
+            <div id="stk-search-items-list" class="divide-y divide-slate-200 overflow-y-auto max-h-[60vh] bg-white">
         `;
 
         items.forEach((it, idx) => {
@@ -8567,36 +8567,42 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
                 ? preStores.map(st => {
                     const qFmt = Number.isInteger(st.system_qty) ? st.system_qty : Number(st.system_qty || 0).toFixed(2);
                     const bTxt = st.batch_count > 1 ? ` (${st.batch_count} دفعات)` : '';
-                    return `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-mono text-[10px] font-bold" title="رصيد النظام الأصلي قبل الجرد في ${escapeHtml(st.store_name || st.store_no)}">📦 ${escapeHtml(st.store_no)}${st.store_name ? ` (${escapeHtml(st.store_name)})` : ''}: ${qFmt}${bTxt}</span>`;
+                    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md font-mono text-[10.5px] font-bold whitespace-nowrap" title="رصيد النظام الأصلي قبل الجرد في ${escapeHtml(st.store_name || st.store_no)}">📦 ${escapeHtml(st.store_no)}${st.store_name ? ` (${escapeHtml(st.store_name)})` : ''}: ${qFmt}${bTxt}</span>`;
                 }).join(' ')
-                : `<span class="px-1.5 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[10px]">بدون رصيد مسجل قبل الجرد</span>`;
+                : `<span class="inline-flex items-center px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded-md text-[10.5px] whitespace-nowrap">بدون رصيد مسجل قبل الجرد</span>`;
 
             const batchMatchBadgeHtml = matchedBatches.length > 0
-                ? `<span class="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded font-mono text-[9.5px] font-bold">دفعة: ${escapeHtml(matchedBatches.join(', '))}</span>`
+                ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-950 border border-indigo-300 rounded-md text-[10.5px] font-bold whitespace-nowrap"><span>دفعة:</span><strong class="font-mono" dir="ltr">${escapeHtml(matchedBatches.join(', '))}</strong></span>`
                 : '';
 
             html += `
-                <div class="stk-search-item p-2.5 px-3 flex items-center justify-between gap-2.5 hover:bg-indigo-50/60 cursor-pointer transition select-none" data-index="${idx}" data-code="${escapeHtml(it.code)}">
-                    <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                        <span class="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 shrink-0">${escapeHtml(it.code)}</span>
-                        <div class="min-w-0 flex-1">
-                            <div class="font-bold text-slate-900 truncate text-xs leading-tight">${escapeHtml(engName)}</div>
-                            <div class="flex items-center gap-2 text-[10.5px] text-slate-500 mt-0.5 flex-wrap">
-                                ${arName ? `<span class="font-medium text-slate-700 truncate max-w-[200px]">${escapeHtml(arName)}</span>` : ''}
-                                ${sciName ? `<span class="px-1.5 py-0.2 bg-sky-50 text-sky-800 border border-sky-200 rounded text-[9.5px] font-medium">${escapeHtml(sciName)}</span>` : ''}
-                                ${company ? `<span class="px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[9.5px] font-medium">${escapeHtml(company)}</span>` : ''}
-                                ${barcodeBadge ? `<span class="font-mono text-slate-600">باركود: ${escapeHtml(barcodeBadge)}</span>` : ''}
-                                ${gtinBadge ? `<span class="font-mono text-indigo-600">GTIN: ${escapeHtml(gtinBadge)}</span>` : ''}
-                                ${batchMatchBadgeHtml}
+                <div class="stk-search-item p-2.5 px-3 flex flex-col gap-1.5 hover:bg-indigo-50/50 cursor-pointer transition select-none" data-index="${idx}" data-code="${escapeHtml(it.code)}">
+                    <div class="flex items-start sm:items-center justify-between gap-2.5 flex-wrap sm:flex-nowrap">
+                        <div class="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+                            <span class="font-mono text-[11px] font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200 shadow-2xs shrink-0">${escapeHtml(it.code)}</span>
+                            <div class="min-w-0 flex-1">
+                                <div class="font-bold text-slate-900 text-xs leading-snug break-words" dir="ltr">${escapeHtml(engName)}</div>
+                                ${arName ? `<div class="font-medium text-slate-600 text-[11px] leading-snug mt-0.5">${escapeHtml(arName)}</div>` : ''}
                             </div>
                         </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <span class="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 font-mono font-bold text-emerald-800 text-xs whitespace-nowrap">${price} ر.س</span>
+                            <button type="button" class="btn-stk-pick-item px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition shadow-xs whitespace-nowrap" data-code="${escapeHtml(it.code)}">
+                                ➕ إضافة للجرد
+                            </button>
+                        </div>
                     </div>
-                    <div class="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
-                        ${storeBadgesHtml}
-                        <span class="font-mono font-bold text-emerald-700 text-xs">${price} ر.س</span>
-                        <button type="button" class="btn-stk-pick-item px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition shadow-xs" data-code="${escapeHtml(it.code)}">
-                            ➕ إضافة للجرد
-                        </button>
+                    <div class="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-slate-100">
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            ${sciName ? `<span class="inline-flex items-center px-2 py-0.5 bg-sky-50 text-sky-800 border border-sky-200 rounded-md text-[10px] font-medium">${escapeHtml(sciName)}</span>` : ''}
+                            ${company ? `<span class="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-md text-[10px] font-medium">${escapeHtml(company)}</span>` : ''}
+                            ${barcodeBadge ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-md text-[10.5px] text-slate-600 whitespace-nowrap"><span>باركود:</span><strong class="font-mono text-slate-900" dir="ltr">${escapeHtml(barcodeBadge)}</strong></span>` : ''}
+                            ${gtinBadge ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50/70 border border-indigo-200 rounded-md text-[10.5px] text-indigo-700 whitespace-nowrap"><span dir="ltr">GTIN:</span><strong class="font-mono text-indigo-950" dir="ltr">${escapeHtml(gtinBadge)}</strong></span>` : ''}
+                            ${batchMatchBadgeHtml}
+                        </div>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            ${storeBadgesHtml}
+                        </div>
                     </div>
                 </div>
             `;
