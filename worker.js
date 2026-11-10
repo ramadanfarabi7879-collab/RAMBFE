@@ -18,7 +18,7 @@ let memoryDraftInvoice = {
 };
 
 let memoryEvents = [];
-let activeTunnelUrl = "https://favourite-indicating-null-universal.trycloudflare.com";
+let activeTunnelUrl = "https://sunrise-believed-oxygen-functioning.trycloudflare.com";
 const TUNNEL_CACHE_KEY = "https://rambfe.internal/active-tunnel-url";
 
 async function saveTunnelToCache(tunnelUrl) {
