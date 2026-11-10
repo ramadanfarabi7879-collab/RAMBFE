@@ -8381,6 +8381,7 @@ function closeBatchEntryCard(isCommit = false) {
 let isStkGeneralizedSearch = localStorage.getItem('stk_search_mode')
     ? (localStorage.getItem('stk_search_mode') === 'contains')
     : (localStorage.getItem('catalog_search_mode') === 'contains');
+let isStkStockFilterEnabled = false;
 let stkSearchDebounceTimer = null;
 let stkSearchResults = [];
 let stkActiveSearchIndex = -1;
@@ -8409,6 +8410,27 @@ function updateStkSearchModeUI() {
         }
         if (icon) icon.textContent = '🔦';
         if (text) text.textContent = (typeof currentAppLang !== 'undefined' && currentAppLang === 'en') ? 'Starts' : 'بداية';
+        if (sw) sw.className = 'w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0';
+    }
+}
+
+function updateStkStockFilterUI() {
+    const btn = document.getElementById('btn-stk-toggle-stock-filter');
+    const sw = document.getElementById('stk-stock-filter-switch');
+    const knob = document.getElementById('stk-stock-filter-knob');
+    if (btn) btn.setAttribute('aria-pressed', isStkStockFilterEnabled ? 'true' : 'false');
+
+    if (isStkStockFilterEnabled) {
+        if (btn) {
+            btn.className = 'h-[42px] px-2.5 rounded-xl text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 active:scale-95 shrink-0';
+        }
+        if (sw) sw.className = 'w-6 h-3 bg-emerald-800 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 -translate-x-3';
+    } else {
+        if (btn) {
+            btn.className = 'h-[42px] px-2.5 rounded-xl text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95 shrink-0';
+        }
         if (sw) sw.className = 'w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
         if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0';
     }
@@ -8455,7 +8477,9 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
     try {
         const mode = isStkGeneralizedSearch ? 'contains' : 'start';
         const storeParam = encodeURIComponent(currentActiveStoreNo || '');
-        const url = `/api/stock/search?query=${encodeURIComponent(rawQuery)}&mode=${mode}&store_no=${storeParam}&limit=100&offset=0`;
+        const url = isStkStockFilterEnabled
+            ? `/api/stock/search?query=${encodeURIComponent(rawQuery)}&mode=${mode}&store_no=${storeParam}&limit=100&offset=0`
+            : `/api/catalog/products?query=${encodeURIComponent(rawQuery)}&mode=${mode}&limit=100&offset=0`;
         const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json().catch(() => ({}));
         if (seq !== stkSearchReqSeq) return;
@@ -8468,19 +8492,25 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
         stkActiveSearchIndex = -1;
 
         if (items.length === 0) {
+            const emptyMsg = isStkStockFilterEnabled
+                ? `لا توجد أصناف ذات رصيد مخزني متاح أو مدرجة في الجرد الجاري للمخزن (<span class="font-mono font-bold text-slate-600">${escapeHtml(activeStoreLabel)}</span>) تطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"`
+                : `لم يتم العثور على أي صنف في كرت الصنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"`;
             dd.innerHTML = `
                 <div class="p-4 text-center text-slate-400 font-medium">
                     <div class="text-lg mb-1">🔍</div>
-                    <div class="text-xs">لا توجد أصناف ذات رصيد مخزني متاح أو مدرجة في الجرد الجاري للمخزن (<span class="font-mono font-bold text-slate-600">${escapeHtml(activeStoreLabel)}</span>) تطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"</div>
+                    <div class="text-xs">${emptyMsg}</div>
                 </div>
             `;
             dd.classList.remove('hidden');
             return;
         }
 
+        const headerLabel = isStkStockFilterEnabled
+            ? `أصناف برصيد/جرد (${escapeHtml(activeStoreLabel)}): <span class="text-emerald-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`
+            : `نتائج مطابقة من كرت الصنف: <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`;
         let html = `
             <div class="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between text-[11px] font-bold text-slate-600">
-                <span>أصناف برصيد/جرد (${escapeHtml(activeStoreLabel)}): <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})</span>
+                <span>${headerLabel}</span>
                 <span class="text-[10px] text-slate-400">اضغط على الصنف أو استخدم ↑↓ و Enter لإضافته للجرد</span>
             </div>
             <div id="stk-search-items-list" class="divide-y divide-slate-100 overflow-y-auto max-h-[55vh]">
@@ -8562,11 +8592,26 @@ function initStocktakeCatalogSearch() {
     const scanInput = document.getElementById('stk-scan-input');
     const dropdown = document.getElementById('stk-search-dropdown');
     const btnToggle = document.getElementById('btn-stk-toggle-search-mode');
+    const btnStockFilter = document.getElementById('btn-stk-toggle-stock-filter');
     const form = document.getElementById('stk-scan-form');
     if (!scanInput || scanInput._stkSearchBound) return;
     scanInput._stkSearchBound = true;
 
     updateStkSearchModeUI();
+    updateStkStockFilterUI();
+
+    btnStockFilter?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isStkStockFilterEnabled = !isStkStockFilterEnabled;
+        updateStkStockFilterUI();
+        clearTimeout(stkSearchDebounceTimer);
+        const q = scanInput.value.replace(/^\s+/, '');
+        if (q && !looksLikeDirectBarcodeOrQr(q)) {
+            fetchAndRenderStkCatalogSearch(q);
+        }
+        scanInput.focus();
+    });
 
     btnToggle?.addEventListener('click', (e) => {
         e.preventDefault();
@@ -8686,7 +8731,7 @@ function initStocktakeCatalogSearch() {
     });
 
     document.addEventListener('click', (e) => {
-        if (dropdown && !dropdown.contains(e.target) && e.target !== scanInput && e.target !== btnToggle && !btnToggle?.contains(e.target)) {
+        if (dropdown && !dropdown.contains(e.target) && e.target !== scanInput && e.target !== btnToggle && !btnToggle?.contains(e.target) && e.target !== btnStockFilter && !btnStockFilter?.contains(e.target)) {
             closeStkSearchDropdown();
         }
     });

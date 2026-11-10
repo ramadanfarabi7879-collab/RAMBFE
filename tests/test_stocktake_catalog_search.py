@@ -227,10 +227,16 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
         srv_py = (BASE_DIR / "backend" / "server.py").read_text(encoding="utf-8")
 
         self.assertIn('id="btn-stk-toggle-search-mode"', idx_html)
+        self.assertIn('id="btn-stk-toggle-stock-filter"', idx_html)
+        self.assertIn('فلترة على المخزون', idx_html)
         self.assertIn('id="stk-search-dropdown"', idx_html)
         self.assertIn("if path == '/api/stock/search':", srv_py)
         self.assertIn("stock_only=True, store_no=store_no", srv_py)
-        self.assertIn('/api/stock/search?query=', app_js[app_js.index('fetchAndRenderStkCatalogSearch'):])
+        self.assertIn('let isStkStockFilterEnabled = false;', app_js)
+        fetch_body = app_js[app_js.index('fetchAndRenderStkCatalogSearch'):]
+        self.assertIn('isStkStockFilterEnabled', fetch_body)
+        self.assertIn('/api/stock/search?query=', fetch_body)
+        self.assertIn('/api/catalog/products?query=', fetch_body)
         self.assertIn('/api/catalog/products?query=', app_js[app_js.index('loadCatalogProducts'):])
 
 
