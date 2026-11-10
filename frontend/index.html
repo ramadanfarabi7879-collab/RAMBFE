@@ -2837,23 +2837,23 @@
 
                         <!-- =================== لوحة فحص الصنف وإدخال كميات الباتشات العلوية =================== -->
 
-                        <div id="stk-batch-entry-card" class="hidden bg-amber-50/70 border-2 border-amber-400 rounded-xl p-1.5 shadow-md space-y-1 transition-all animate-fadeIn">
+                        <div id="stk-batch-entry-card" class="hidden bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm transition-all animate-fadeIn">
 
                             <!-- تبويبة صغيرة مدمجة: اعتماد وإغلاق فقط -->
 
-                            <div class="flex items-center justify-between px-1 text-xs select-none">
+                            <div class="p-2 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs select-none">
 
-                                <div class="flex items-center gap-1.5">
+                                <div class="flex items-center gap-2 flex-wrap">
 
-                                    <span class="px-2 py-0.5 rounded bg-amber-600 text-white font-bold text-[11px] shadow-sm">⚡ استوكات وتشغيلات الصنف</span>
+                                    <strong class="text-slate-800">⚡ استوكات وتشغيلات الصنف:</strong>
 
-                                    <span id="stk-bec-batches-count" class="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-900 font-bold text-[10px] font-mono"></span>
+                                    <span id="stk-bec-batches-count" class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold text-[11px] font-mono"></span>
 
                                 </div>
 
-                                <div class="flex items-center gap-1.5">
+                                <div class="flex items-center gap-2 flex-wrap">
 
-                                    <button type="button" id="btn-add-extra-batch-row" class="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded font-bold text-[11px] shadow transition flex items-center gap-1" title="إضافة تشغيلة أخرى للصنف">
+                                    <button type="button" id="btn-add-extra-batch-row" class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 active:scale-95 rounded-lg font-bold text-xs shadow-2xs transition flex items-center gap-1" title="إضافة تشغيلة أخرى للصنف">
 
                                         <span>+</span>
 
@@ -2861,7 +2861,7 @@
 
                                     </button>
 
-                                    <button type="button" id="btn-finish-batch-entry" class="px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-[11px] shadow transition flex items-center gap-1">
+                                    <button type="button" id="btn-finish-batch-entry" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center gap-1">
 
                                         <span>✅</span>
 
@@ -2869,7 +2869,7 @@
 
                                     </button>
 
-                                    <button type="button" id="btn-close-batch-entry-card" class="text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 px-2 py-0.5 rounded text-[11px] font-bold transition" title="إغلاق (Esc)">
+                                    <button type="button" id="btn-close-batch-entry-card" class="text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-bold transition" title="إغلاق (Esc)">
 
                                         ✕
 
@@ -2881,45 +2881,57 @@
 
 
 
-                            <!-- جدول تشغيلات الصنف بنفس أعمدة وترتيب الفاتورة مضغوطة -->
+                            <!-- شريط بيانات الصنف الأساسية بأسلوب بطاقة الصنف -->
+                            <div class="bg-indigo-50/70 px-3 py-1.5 border-b border-indigo-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <div class="flex items-center gap-2 min-w-0 flex-wrap">
+                                    <span id="stk-bec-product-code" class="px-2 py-0.5 rounded-lg bg-white border border-indigo-200 font-mono font-bold text-indigo-800 text-[11px] shadow-2xs">-</span>
+                                    <span id="stk-bec-product-name" class="font-bold text-slate-900 text-xs truncate max-w-[520px]" dir="ltr">-</span>
+                                </div>
+                                <div class="flex items-center gap-1.5 text-[11px] text-slate-600 font-mono">
+                                    <span class="text-slate-500 font-sans font-semibold">الباركود / GTIN:</span>
+                                    <span id="stk-bec-barcode" class="px-2 py-0.5 rounded-lg bg-white border border-slate-300 font-mono font-bold text-slate-800" dir="ltr">-</span>
+                                </div>
+                            </div>
 
-                            <form id="stk-bec-batches-form" onsubmit="return false;" autocomplete="off" class="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
+                            <!-- جدول تشغيلات الصنف بنفس أعمدة وتنسيق فاتورة الجرد -->
+
+                            <form id="stk-bec-batches-form" onsubmit="return false;" autocomplete="off" class="overflow-x-auto bg-white">
 
                                 <table class="w-full text-xs text-right border-collapse border border-slate-300 bg-white font-sans">
 
-                                    <thead class="bg-amber-100/90 text-slate-800 font-bold text-[11px] border-b-2 border-amber-300 select-none">
+                                    <thead class="bg-slate-200/90 text-slate-800 font-bold text-[11px] border-b-2 border-slate-400 select-none">
 
                                         <tr class="divide-x divide-x-reverse divide-slate-300">
 
-                                            <th class="border border-slate-300 p-1 text-center w-7 bg-amber-100 text-slate-600 font-mono">م</th>
+                                            <th class="border border-slate-300 p-1 text-center w-7 bg-slate-200 text-slate-600 font-mono">م</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-20 bg-amber-100 font-bold">كود الصنف</th>
+                                            <th class="border border-slate-300 p-1 text-center w-20 bg-slate-200 font-bold font-mono">كود الصنف</th>
 
-                                            <th class="border border-slate-300 p-1 text-left bg-amber-100 min-w-[260px] font-bold">اسم الصنف (Name)</th>
+                                            <th class="border border-slate-300 p-1 text-left bg-slate-200 min-w-[200px] font-bold">اسم الصنف (Name)</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-24 bg-amber-100">الباركود / GTIN</th>
+                                            <th class="border border-slate-300 p-1 text-center w-24 bg-slate-200 font-mono">الباركود / GTIN</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-20 bg-indigo-100 text-indigo-950 font-black">التشغيلة (Batch)</th>
+                                            <th class="border border-slate-300 p-1 text-center w-20 bg-indigo-100 text-indigo-950 font-black font-mono">التشغيلة (Batch)</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-20 bg-indigo-100 text-indigo-950 font-black">الصلاحية (Exp)</th>
+                                            <th class="border border-slate-300 p-1 text-center w-20 bg-indigo-100 text-indigo-950 font-black font-mono">الصلاحية (Exp)</th>
 
                                             <th class="border border-slate-300 p-1 text-center w-16 bg-sky-100 text-sky-950 font-black">رصيد المخزون</th>
 
                                             <th class="border border-slate-300 p-1 text-center w-28 bg-emerald-100 text-emerald-950 font-black">الرصيد الفعلي (الجرد) ⭐</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-14 bg-amber-100">الفرق</th>
+                                            <th class="border border-slate-300 p-1 text-center w-14 bg-slate-200 font-mono">الفرق</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-16 bg-amber-100">التكلفة</th>
+                                            <th class="border border-slate-300 p-1 text-center w-16 bg-slate-200 font-mono">التكلفة</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-16 bg-amber-100">سعر البيع</th>
+                                            <th class="border border-slate-300 p-1 text-center w-16 bg-slate-200 font-mono">سعر البيع</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-20 bg-amber-100">إجمالي التكلفة</th>
+                                            <th class="border border-slate-300 p-1 text-center w-20 bg-slate-200 font-mono">إجمالي التكلفة</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-20 bg-amber-100">إجمالي البيع</th>
+                                            <th class="border border-slate-300 p-1 text-center w-20 bg-slate-200 font-mono">إجمالي البيع</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-16 bg-amber-100">حالة الباتش</th>
+                                            <th class="border border-slate-300 p-1 text-center w-16 bg-slate-200">حالة الباتش</th>
 
-                                            <th class="border border-slate-300 p-1 text-center w-20 bg-amber-100">ترحيل (Enter ↵)</th>
+                                            <th class="border border-slate-300 p-1 text-center w-20 bg-slate-200">ترحيل (Enter ↵)</th>
 
                                         </tr>
 

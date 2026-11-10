@@ -7543,6 +7543,10 @@ function updateBecRowCalc(inputEl) {
     if (diffCell) {
         diffCell.textContent = (diff > 0 ? '+' : '') + diff;
         diffCell.className = `bec-diff-cell font-mono font-bold text-xs ${diff < 0 ? 'text-rose-600' : (diff > 0 ? 'text-emerald-700' : 'text-slate-400')}`;
+        const diffTd = diffCell.closest('td');
+        if (diffTd) {
+            diffTd.className = `border border-slate-300 p-1 text-center font-mono font-bold text-xs ${diff < 0 ? 'text-rose-600 bg-rose-50/40' : (diff > 0 ? 'text-emerald-700 bg-emerald-50/40' : 'text-slate-400')}`;
+        }
     }
 
     const totCostCell = row.querySelector('.bec-totcost-cell');
@@ -7777,9 +7781,9 @@ function moveToNextBatchOrCommit(currentIdx) {
             const r = document.getElementById(`stk-bec-row-${j}`);
             if (r) {
                 if (j === nextIdx) {
-                    r.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                    r.classList.add('ring-2', 'ring-indigo-500', 'bg-sky-50/70');
                 } else {
-                    r.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                    r.classList.remove('ring-2', 'ring-indigo-500', 'bg-sky-50/70');
                 }
             }
         });
@@ -7817,14 +7821,14 @@ function renderBatchCardRows(data) {
         const expiryVal = (b.expiry_date && b.expiry_date !== '-') ? b.expiry_date : '';
 
         const batchBadge = (b.is_new_batch || isEditable || sysQty === 0)
-            ? `<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300 text-[10px] whitespace-nowrap">⚠️ تشغيلة جديدة</span>`
-            : `<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 text-[10px] whitespace-nowrap">مطابق ✅</span>`;
+            ? `<span class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300 text-[10px] whitespace-nowrap">⚠️ تشغيلة جديدة</span>`
+            : `<span class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 text-[10px] whitespace-nowrap">مطابق ✅</span>`;
 
         // خلية رقم التشغيلة: إدخال مفتوح أو قابل للتعديل
         const batchCell = isEditable
             ? `<div class="flex items-center justify-center gap-1">
                  <input type="text"
-                        class="stk-bec-batch-input font-mono font-black text-center text-xs w-28 py-0.5 px-1 border-2 border-indigo-400 focus:border-indigo-600 focus:bg-indigo-50 rounded bg-white text-indigo-950 shadow-inner outline-none transition"
+                        class="stk-bec-batch-input font-mono font-bold text-center text-xs w-28 py-1 px-1.5 border border-indigo-300 focus:border-indigo-600 focus:bg-white rounded-lg bg-slate-50 text-indigo-950 shadow-2xs outline-none transition"
                         data-index="${idx}"
                         value="${escapeHtml(defaultBatch)}"
                         placeholder="رقم التشغيلة"
@@ -7834,14 +7838,14 @@ function renderBatchCardRows(data) {
                </div>`
             : `<div class="flex items-center justify-center gap-1">
                  <span class="px-2 py-0.5 rounded bg-indigo-100 border border-indigo-300 text-indigo-950 font-black font-mono text-xs shadow-sm" dir="ltr">${escapeHtml(String(b.batch_number || '-').toUpperCase())}</span>
-                 <button type="button" class="stk-bec-btn-toggle-edit text-slate-400 hover:text-indigo-600 p-0.5 text-[10px]" data-index="${idx}" title="تعديل التشغيلة والصلاحية يدوياً">✏️</button>
+                 <button type="button" class="stk-bec-btn-toggle-edit p-1 rounded text-indigo-600 hover:bg-indigo-100 transition text-xs" data-index="${idx}" title="تعديل التشغيلة والصلاحية يدوياً">✏️</button>
                </div>`;
 
         // خلية الصلاحية: إدخال يدوي إلزامي بالصيغة المطلوبة (YYYY-MM)
         const expiryCell = isEditable
             ? `<div class="flex flex-col items-center gap-0.5">
                  <input type="text"
-                        class="stk-bec-expiry-input font-mono font-black text-center text-xs w-28 py-0.5 px-1 border-2 ${!expiryVal ? 'border-amber-400 bg-amber-50/70' : 'border-slate-300 bg-white'} focus:border-amber-600 focus:bg-amber-100/60 rounded text-slate-900 shadow-inner outline-none transition"
+                        class="stk-bec-expiry-input font-mono font-bold text-center text-xs w-28 py-1 px-1.5 border ${!expiryVal ? 'border-amber-400 bg-amber-50/70' : 'border-slate-300 bg-slate-50'} focus:border-indigo-600 focus:bg-white rounded-lg text-slate-900 shadow-2xs outline-none transition"
                         data-index="${idx}"
                         value="${escapeHtml(expiryVal)}"
                         placeholder="مثال 01012028 أو 1-1-2028"
@@ -7857,8 +7861,8 @@ function renderBatchCardRows(data) {
         // زر السطر: إن كان هناك باتشات تالية يظهر 'التالي ➔'، وإن كان الأخير يظهر 'ترحيل ↵'
         const isLastBatch = (idx === batches.length - 1);
         const actionBtn = isLastBatch
-            ? `<button type="button" class="stk-bec-btn-action px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="commit" data-index="${idx}"><span>ترحيل</span> <span>↵</span></button>`
-            : `<button type="button" class="stk-bec-btn-action px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-[11px] shadow-sm flex items-center justify-center gap-1 mx-auto transition" data-action="next" data-index="${idx}"><span>التالي</span> <span>➔</span></button>`;
+            ? `<button type="button" class="stk-bec-btn-action px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[11px] shadow-xs flex items-center justify-center gap-1 mx-auto transition" data-action="commit" data-index="${idx}"><span>ترحيل</span> <span>↵</span></button>`
+            : `<button type="button" class="stk-bec-btn-action px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-[11px] shadow-xs flex items-center justify-center gap-1 mx-auto transition" data-action="next" data-index="${idx}"><span>التالي</span> <span>➔</span></button>`;
 
         const deleteRowBtn = (b.is_dynamic_added && batches.length > 1)
             ? `<button type="button" class="stk-bec-btn-delete-row text-rose-500 hover:text-rose-700 p-0.5 text-xs transition" data-index="${idx}" title="حذف هذه التشغيلة">🗑️</button>`
@@ -7869,7 +7873,7 @@ function renderBatchCardRows(data) {
             : `<div class="flex items-center justify-center gap-1">${actionBtn}${deleteRowBtn}</div>`;
 
         html += `
-            <tr class="hover:bg-amber-50/50 transition border-b border-slate-300 text-slate-700 text-xs ${hasCounted ? 'bg-emerald-50/40' : (idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60')}" id="stk-bec-row-${idx}">
+            <tr class="${hasCounted ? 'bg-emerald-50/40 hover:bg-sky-50/40' : ((b.is_new_batch || sysQty === 0) ? 'bg-amber-50/60 hover:bg-amber-100/60' : (idx % 2 === 0 ? 'bg-white hover:bg-sky-50/40' : 'bg-slate-50/70 hover:bg-sky-50/40'))} transition text-slate-700 text-xs" id="stk-bec-row-${idx}">
                 <td class="border border-slate-300 p-1 text-center text-slate-500 font-mono text-[11px] select-none bg-slate-50/50">${idx + 1}</td>
                 <td class="border border-slate-300 p-1 font-mono font-bold text-slate-900 text-center">${escapeHtml(prod.code || '')}</td>
                 <td class="border border-slate-300 p-1 text-left font-bold text-slate-900 select-text min-w-[260px] whitespace-normal leading-snug" dir="ltr">
@@ -7885,10 +7889,10 @@ function renderBatchCardRows(data) {
                 <td class="border border-slate-300 p-1 text-center bg-sky-50/40">
                     <span class="font-mono font-black text-slate-900 text-xs px-2 py-0.5 rounded bg-slate-200/80 border border-slate-300 shadow-sm">${sysQty}</span>
                 </td>
-                <td class="border border-slate-300 p-1 text-center bg-emerald-50/50">
+                <td class="border border-slate-300 p-1 text-center bg-emerald-50/40">
                     <input type="text"
                            inputmode="decimal"
-                           class="stk-bec-qty-input font-mono font-black text-center text-xs w-20 py-0.5 px-1 border-2 border-emerald-500 focus:border-amber-500 focus:bg-amber-50 rounded bg-white text-emerald-950 shadow-inner outline-none transition"
+                           class="stk-bec-qty-input font-mono font-black text-center text-xs w-16 py-0.5 px-1 border border-emerald-400 focus:border-indigo-600 focus:bg-white rounded bg-white text-emerald-950 shadow-inner outline-none transition"
                            data-index="${idx}"
                            data-product-code="${escapeHtml(prod.code || '')}"
                            data-entry-id="${b.entry_id || ''}"
@@ -7902,7 +7906,7 @@ function renderBatchCardRows(data) {
                            enterkeyhint="done"
                            oninput="updateBecRowCalc(this)">
                 </td>
-                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-xs">
+                <td class="border border-slate-300 p-1 text-center font-mono font-bold text-xs ${diff < 0 ? 'text-rose-600 bg-rose-50/40' : (diff > 0 ? 'text-emerald-700 bg-emerald-50/40' : 'text-slate-400')}">
                     <span class="bec-diff-cell font-mono font-bold text-xs ${diff < 0 ? 'text-rose-600' : (diff > 0 ? 'text-emerald-700' : 'text-slate-400')}">${diff > 0 ? '+' : ''}${diff}</span>
                 </td>
                 <td class="border border-slate-300 p-1 text-center font-mono font-bold text-slate-800">${formatMoney(cost)}</td>
@@ -8036,9 +8040,9 @@ function attachBatchCardRowEvents(data) {
                 const r = document.getElementById(`stk-bec-row-${j}`);
                 if (r) {
                     if (idx === j) {
-                        r.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                        r.classList.add('ring-2', 'ring-indigo-500', 'bg-sky-50/70');
                     } else {
-                        r.classList.remove('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                        r.classList.remove('ring-2', 'ring-indigo-500', 'bg-sky-50/70');
                     }
                 }
             });
@@ -8201,14 +8205,14 @@ function openBatchEntryCard(data, source = 'desktop_input') {
             firstEmptyExpiry.select();
             const firstRow = document.getElementById('stk-bec-row-0');
             if (firstRow) {
-                firstRow.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                firstRow.classList.add('ring-2', 'ring-indigo-500', 'bg-sky-50/70');
             }
         } else if (firstQtyInput) {
             firstQtyInput.focus();
             firstQtyInput.select();
             const firstRow = document.getElementById('stk-bec-row-0');
             if (firstRow) {
-                firstRow.classList.add('ring-2', 'ring-amber-500', 'bg-amber-100/70');
+                firstRow.classList.add('ring-2', 'ring-indigo-500', 'bg-sky-50/70');
             }
         }
     }, 60);
