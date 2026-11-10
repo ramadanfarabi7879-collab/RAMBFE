@@ -10,6 +10,8 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const r2 = (v) => pyRound(num(v), 2);
 const r4 = (v) => pyRound(num(v), 4);
 const up = (v) => String(v ?? '').trim().toUpperCase();
+const pidOf = (db) => Number(db.pid || 1);
+const PSTORES = 'SELECT store_no FROM stock_stores WHERE profile_id = ?';
 const pyInt = (v) => { const n = parseInt(String(v ?? '').trim(), 10); if (!Number.isFinite(n)) throw new Error(`invalid literal for int() with base 10: '${v}'`); return n; };
 
 // وقت المملكة (نفس توقيت جهاز الصيدلية) لأرقام وتواريخ الفواتير
@@ -152,8 +154,8 @@ export function parseGs1(raw) {
 export async function getStats(db) {
     const r = await first(db, `SELECT (SELECT v FROM meta WHERE k='products_count') AS products_count,
         (SELECT COUNT(*) FROM product_barcodes) AS barcodes_count,
-        (SELECT COUNT(*) FROM invoices WHERE status = 'confirmed') AS invoices_count,
-        (SELECT COUNT(*) FROM scanned_serials WHERE is_confirmed = 1 AND is_returned = 0) AS active_serials`);
+        (SELECT COUNT(*) FROM invoices WHERE status = 'confirmed' AND profile_id = ?1) AS invoices_count,
+        (SELECT COUNT(*) FROM scanned_serials WHERE is_confirmed = 1 AND is_returned = 0 AND invoice_id IN (SELECT id FROM invoices WHERE profile_id = ?1)) AS active_serials`, [pidOf(db)]);
     return { products_count: Number(r.products_count || 0), barcodes_count: r.barcodes_count, invoices_count: r.invoices_count, active_serials: r.active_serials };
 }
 
@@ -190,9 +192,9 @@ async function resolveCanonicalCodeMap(db, pairs) {
 }
 
 async function allStoresPreinventoryMap(db) {
-    const names = Object.fromEntries((await all(db, 'SELECT store_no, store_name FROM stock_stores')).map(r => [r.store_no, r.store_name]));
+    const names = Object.fromEntries((await all(db, 'SELECT store_no, store_name FROM stock_stores WHERE profile_id = ?', [pidOf(db)])).map(r => [r.store_no, r.store_name]));
     const inv = await all(db, `SELECT product_code, COALESCE(barcode, '') AS barcode, COALESCE(store_no, 'ST-001') AS store_no, COALESCE(batch_number, '') AS batch_number,
-        COALESCE(expiry_date, '') AS expiry_date, COALESCE(system_qty, 0) AS system_qty FROM inventory_records ORDER BY expiry_date ASC, id ASC`);
+        COALESCE(expiry_date, '') AS expiry_date, COALESCE(system_qty, 0) AS system_qty FROM inventory_records WHERE store_no IN (${PSTORES}) ORDER BY expiry_date ASC, id ASC`, [pidOf(db)]);
     if (!inv.length) return {};
     const pairs = [...new Map(inv.map(r => [`${String(r.product_code || '').trim()}\u0000${String(r.barcode || '').trim()}`, [String(r.product_code || '').trim(), String(r.barcode || '').trim()]])).values()];
     const cmap = await resolveCanonicalCodeMap(db, pairs);
@@ -273,7 +275,7 @@ export async function searchPreinventoryProducts(db, query = '', limit = 100, of
         if (!qrGtin) {
             const pat = isContains ? `%${effQ.toUpperCase()}%` : `${effQ.toUpperCase()}%`;
             const br = await all(db, `SELECT DISTINCT product_code, COALESCE(barcode, '') AS barcode, UPPER(TRIM(batch_number)) AS batch_number FROM inventory_records
-                WHERE batch_number IS NOT NULL AND TRIM(batch_number) != '' AND UPPER(TRIM(batch_number)) LIKE ? LIMIT 200`, [pat]);
+                WHERE batch_number IS NOT NULL AND TRIM(batch_number) != '' AND UPPER(TRIM(batch_number)) LIKE ? AND store_no IN (${PSTORES}) LIMIT 200`, [pat, pidOf(db)]);
             if (br.length) {
                 const pairs = br.map(r => [String(r.product_code || '').trim(), String(r.barcode || '').trim()]);
                 const cmap = await resolveCanonicalCodeMap(db, pairs);
@@ -313,8 +315,8 @@ export async function getUncountedStoreItems(db, storeNo = 'ST-001', category = 
         AND ((ir.batch_number IS NOT NULL AND ir.batch_number != '' AND se.batch_number = ir.batch_number)
           OR ((ir.batch_number IS NULL OR ir.batch_number = '') AND (se.batch_number IS NULL OR se.batch_number = '')))
         AND se.counted_qty > 0)`;
-    let sql = hasInv ? `SELECT ir.* FROM inventory_records ir WHERE ir.store_no = ? AND ${notCounted}` : `SELECT ir.* FROM inventory_records ir WHERE ${notCounted}`;
-    const params = [storeNo];
+    let sql = hasInv ? `SELECT ir.* FROM inventory_records ir WHERE ir.store_no = ? AND ${notCounted}` : `SELECT ir.* FROM inventory_records ir WHERE ${notCounted} AND ir.store_no IN (${PSTORES})`;
+    const params = hasInv ? [storeNo] : [storeNo, pidOf(db)];
     if (category) { sql += ' AND ir.item_type = ?'; params.push(category); }
     const raw = await all(db, sql + ' ORDER BY ir.id ASC', params);
     const codes = new Set();
@@ -359,7 +361,7 @@ async function generateInvoiceNumber(db) {
 }
 
 export async function getInvoiceDetails(db, invoiceId) {
-    const inv = await first(db, 'SELECT * FROM invoices WHERE id = ?', [invoiceId]);
+    const inv = await first(db, 'SELECT * FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!inv) return {};
     const lines = await all(db, `SELECT l.*, COALESCE(p.gtin, '') as gtin, COALESCE(p.barcode, '') as barcode,
         COALESCE(p.name_en, l.name_en, '') as product_name_en, COALESCE(p.name_ar, l.name_ar, '') as product_name_ar
@@ -379,14 +381,14 @@ export async function getInvoiceDetails(db, invoiceId) {
 }
 
 export async function getOrCreateDraftInvoice(db, userName = 'المسؤول') {
-    const row = await first(db, "SELECT id FROM invoices WHERE status = 'draft' ORDER BY id DESC LIMIT 1");
+    const row = await first(db, "SELECT id FROM invoices WHERE status = 'draft' AND profile_id = ? ORDER BY id DESC LIMIT 1", [pidOf(db)]);
     if (row) return getInvoiceDetails(db, row.id);
-    const m = await run(db, "INSERT INTO invoices (invoice_number, invoice_date, status, user_name) VALUES (?, ?, 'draft', ?)", [await generateInvoiceNumber(db), riyadhNow().date, userName]);
+    const m = await run(db, "INSERT INTO invoices (invoice_number, invoice_date, status, user_name, profile_id) VALUES (?, ?, 'draft', ?, ?)", [await generateInvoiceNumber(db), riyadhNow().date, userName, pidOf(db)]);
     return getInvoiceDetails(db, m.last_row_id);
 }
 
 export async function createNewInvoice(db, notes = '', userName = 'المسؤول') {
-    const m = await run(db, "INSERT INTO invoices (invoice_number, invoice_date, status, notes, user_name) VALUES (?, ?, 'draft', ?, ?)", [await generateInvoiceNumber(db), riyadhNow().date, notes, userName]);
+    const m = await run(db, "INSERT INTO invoices (invoice_number, invoice_date, status, notes, user_name, profile_id) VALUES (?, ?, 'draft', ?, ?, ?)", [await generateInvoiceNumber(db), riyadhNow().date, notes, userName, pidOf(db)]);
     return getInvoiceDetails(db, m.last_row_id);
 }
 
@@ -410,12 +412,12 @@ export async function scanQrToInvoice(db, invoiceId, rawQr, userName = 'المس
     const pc = product.code, nAr = product.name_ar || '', nEn = product.name_en || '';
     const pName = product.name || nAr || nEn || `صنف ${pc}`;
     const sp = num(product.selling_price), unitPrice = num(product.unit_price || product.cost_price), tax = num(product.tax_rate), unit = String(product.unit || 'علبة').trim();
-    const inv = await first(db, 'SELECT invoice_number, status FROM invoices WHERE id = ?', [invoiceId]);
+    const inv = await first(db, 'SELECT invoice_number, status FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!inv) return { success: false, code: 'NO_INVOICE', message: 'الفاتورة غير موجودة' };
     if (inv.status !== 'draft') return { success: false, code: 'INVOICE_LOCKED', message: 'هذه الفاتورة معتمدة ولا يمكن إضافة عبوات جديدة إليها' };
     if (await first(db, 'SELECT id FROM scanned_serials WHERE invoice_id = ? AND serial_number = ? AND is_returned = 0 LIMIT 1', [invoiceId, serial]))
         return { success: false, code: 'DUPLICATE_IN_CURRENT', message: 'هذا السيريال مسجل بالفعل، ولم تتم إضافة العبوة مرة أخرى.', serial, gtin, batch, expiry, product_code: pc, name: pName };
-    const prev = await first(db, 'SELECT invoice_number FROM scanned_serials WHERE serial_number = ? AND product_code = ? AND is_confirmed = 1 AND is_returned = 0 LIMIT 1', [serial, pc]);
+    const prev = await first(db, 'SELECT invoice_number FROM scanned_serials WHERE serial_number = ? AND product_code = ? AND is_confirmed = 1 AND is_returned = 0 AND invoice_id IN (SELECT id FROM invoices WHERE profile_id = ?) LIMIT 1', [serial, pc, pidOf(db)]);
     if (prev) return { success: false, code: 'ALREADY_CONFIRMED', message: `هذا السيريال مسجل بالفعل في فاتورة معتمدة سابقة (رقم: ${prev.invoice_number})، ولم تتم إضافة العبوة.`, serial, prev_invoice: prev.invoice_number, gtin, batch, expiry, product_code: pc, name: pName };
     const lr = await first(db, 'SELECT id, quantity FROM invoice_lines WHERE invoice_id = ? AND product_code = ? AND batch_number = ? AND expiry_date = ? LIMIT 1', [invoiceId, pc, batch, expiry]);
     let lineId, newQty;
@@ -432,7 +434,7 @@ export async function scanQrToInvoice(db, invoiceId, rawQr, userName = 'المس
 export async function updateInvoiceLineQuantity(db, invoiceId, lineId, newQuantity) {
     const q = pyInt(newQuantity);
     if (q <= 0) return { success: false, message: 'يجب أن تكون الكمية أكبر من الصفر (1 على الأقل).' };
-    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ?', [invoiceId]);
+    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!inv) return { success: false, message: 'الفاتورة غير موجودة' };
     if (inv.status !== 'draft') return { success: false, message: 'الفاتورة معتمدة ولا يمكن تعديل كمياتها' };
     if (!await first(db, 'SELECT id FROM invoice_lines WHERE id = ? AND invoice_id = ?', [lineId, invoiceId])) return { success: false, message: 'سطر البند غير موجود في هذه الفاتورة' };
@@ -450,7 +452,7 @@ export async function addManualItemToInvoice(db, invoiceId, gtinOrCode, batch, e
     const cq = Math.max(1, pyInt(quantity || 1));
     const dummy = `MANUAL-${crypto.randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()}`;
     const rawStr = `MANUAL|${val}|${cb}|${ce}|${dummy}|QTY:${cq}`;
-    const inv = await first(db, 'SELECT invoice_number, status FROM invoices WHERE id = ?', [invoiceId]);
+    const inv = await first(db, 'SELECT invoice_number, status FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!inv || inv.status !== 'draft') return { success: false, message: 'الفاتورة غير موجودة أو معتمدة.' };
     const pc = product.code, nAr = product.name_ar || '', nEn = product.name_en || '';
     const pName = nEn || product.name || nAr || `صنف ${pc}`;
@@ -465,7 +467,7 @@ export async function addManualItemToInvoice(db, invoiceId, gtinOrCode, batch, e
 }
 
 export async function deleteScannedSerial(db, invoiceId, serialId) {
-    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ?', [invoiceId]);
+    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!inv || inv.status !== 'draft') return { success: false, message: 'لا يمكن حذف عبوات من فاتورة معتمدة.' };
     const s = await first(db, 'SELECT line_id FROM scanned_serials WHERE id = ? AND invoice_id = ?', [serialId, invoiceId]);
     if (!s) return { success: false, message: 'لم يتم العثور على السيريال المحدد.' };
@@ -479,7 +481,7 @@ export async function deleteScannedSerial(db, invoiceId, serialId) {
 }
 
 export async function deleteInvoiceLine(db, invoiceId, lineId) {
-    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ?', [invoiceId]);
+    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!inv || inv.status !== 'draft') return { success: false, message: 'لا يمكن حذف سطور من فاتورة معتمدة.' };
     await db.batch([
         db.prepare('DELETE FROM scanned_serials WHERE line_id = ? AND invoice_id = ?').bind(lineId, invoiceId),
@@ -490,7 +492,7 @@ export async function deleteInvoiceLine(db, invoiceId, lineId) {
 }
 
 export async function clearInvoiceLines(db, invoiceId) {
-    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ?', [invoiceId]);
+    const inv = await first(db, 'SELECT status FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!inv) return { success: false, message: 'الفاتورة غير موجودة.' };
     if (inv.status !== 'draft') return { success: false, message: 'لا يمكن تفريغ فاتورة معتمدة.' };
     await db.batch([
@@ -502,7 +504,7 @@ export async function clearInvoiceLines(db, invoiceId) {
 }
 
 export async function confirmInvoice(db, invoiceId) {
-    const row = await first(db, 'SELECT status, total_packages FROM invoices WHERE id = ?', [invoiceId]);
+    const row = await first(db, 'SELECT status, total_packages FROM invoices WHERE id = ? AND profile_id = ?', [invoiceId, pidOf(db)]);
     if (!row) return { success: false, message: 'الفاتورة غير موجودة.' };
     if (row.status === 'confirmed') return { success: true, message: 'تم اعتماد الفاتورة ويمكن تصديرها إلى Excel.' };
     if (row.total_packages <= 0) return { success: false, message: 'لا يمكن اعتماد فاتورة فارغة بدون عبوات ممسوحة.' };
@@ -516,8 +518,8 @@ export async function confirmInvoice(db, invoiceId) {
 export async function processSerialReturn(db, serialNumber, invoiceNumber = '', reason = 'إرجاع عبوة', userName = 'المسؤول') {
     const sn = String(serialNumber).trim();
     if (!sn) return { success: false, message: 'رقم السيريال غير صالح' };
-    let sql = 'SELECT id, invoice_number, product_code, is_returned FROM scanned_serials WHERE serial_number = ? AND is_confirmed = 1';
-    const params = [sn];
+    let sql = 'SELECT id, invoice_number, product_code, is_returned FROM scanned_serials WHERE serial_number = ? AND is_confirmed = 1 AND invoice_id IN (SELECT id FROM invoices WHERE profile_id = ?)';
+    const params = [sn, pidOf(db)];
     if (invoiceNumber) { sql += ' AND invoice_number = ?'; params.push(String(invoiceNumber).trim()); }
     const row = await first(db, sql, params);
     if (!row) return { success: false, message: 'لم يتم العثور على سيريال معتمد مطابق للبيانات المدخلة.' };
@@ -530,7 +532,7 @@ export async function processSerialReturn(db, serialNumber, invoiceNumber = '', 
 }
 
 export async function getAllInvoices(db, limit = 50, offset = 0) {
-    return all(db, 'SELECT * FROM invoices ORDER BY id DESC LIMIT ? OFFSET ?', [limit, offset]);
+    return all(db, 'SELECT * FROM invoices WHERE profile_id = ? ORDER BY id DESC LIMIT ? OFFSET ?', [pidOf(db), limit, offset]);
 }
 
 export { parseQrCode };

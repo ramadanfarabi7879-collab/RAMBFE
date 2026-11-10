@@ -16,9 +16,16 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
         'Cache-Control': 'no-store',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token'
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token, X-Profile-Id'
     }
 });
+
+// قاعدة بيانات مقيدة بالصيدلية الحالية: كل الدوال تقرأ db.pid
+class ScopedDB {
+    constructor(d, pid) { this.d = d; this.pid = pid; }
+    prepare(sql) { return this.d.prepare(sql); }
+    batch(stmts) { return this.d.batch(stmts); }
+}
 
 const uid = () => crypto.randomUUID().replaceAll('-', '').slice(0, 8);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -32,12 +39,12 @@ export async function pushRealtime(env, evt) {
     } catch (_) { }
 }
 
-async function broadcast(env, ctx, type, payload) {
-    const evt = { id: uid(), type, payload: payload || {}, timestamp: Date.now() / 1000 };
+async function broadcast(env, ctx, type, payload, pid = 1) {
+    const evt = { id: uid(), type, payload: payload || {}, timestamp: Date.now() / 1000, profile_id: pid };
     const p = (async () => {
         // إرسال فوري لكل الشاشات المفتوحة عبر WebSocket
         await pushRealtime(env, evt);
-        await run(env.DB, 'INSERT INTO sync_events (id, type, payload, ts) VALUES (?, ?, ?, ?)', [evt.id, type, JSON.stringify(evt.payload), evt.timestamp]);
+        await run(env.DB, 'INSERT INTO sync_events (id, type, payload, ts) VALUES (?, ?, ?, ?)', [evt.id, type, JSON.stringify({ ...evt.payload, __profile_id: pid }), evt.timestamp]);
         // الاحتفاظ بآخر ساعتين فقط من الأحداث
         if (Math.random() < 0.05) await run(env.DB, 'DELETE FROM sync_events WHERE ts < ?', [evt.timestamp - 7200]);
     })().catch(() => { });
@@ -48,12 +55,13 @@ async function broadcast(env, ctx, type, payload) {
 // المسارات المنقولة للسحابة (GET و POST)
 export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health', '/api/realtime',
     '/api/health', '/api/stats', '/api/network-info', '/api/catalog/product', '/api/catalog/next-code', '/api/stock/uncounted',
-    '/api/stock/preinventory-search', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get']);
+    '/api/stock/preinventory-search', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get', '/api/profiles']);
 export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/stock/save-batch-qty', '/api/stock/update-qty', '/api/stock/delete-item',
     '/api/stock/bulk-delete', '/api/stock/edit-item', '/api/stock/clear', '/api/stock/clear-inventory', '/api/stock/settle', '/api/stock/commit-bulk',
     '/api/stock/stores/commit-all', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
     '/api/catalog/save', '/api/catalog/delete', '/api/catalog/parse-gs1', '/api/catalog/parse-gtin', '/api/invoice/new', '/api/invoice/scan', '/api/invoice/delete-serial',
-    '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process']);
+    '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process',
+    '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish']);
 
 export function isCloudRoute(method, path) {
     if (path.startsWith('/api/_admin/')) return true;
@@ -61,7 +69,12 @@ export function isCloudRoute(method, path) {
 }
 
 export async function handleCloudApi(request, env, ctx, url, rawBody) {
-    const db = env.DB;
+    // الصيدلية الحالية من رأس الطلب (افتراضياً 1)، مع التحقق من وجودها
+    let pid = parseInt(request.headers.get('X-Profile-Id') || url.searchParams.get('profile_id') || '1', 10);
+    if (!Number.isFinite(pid) || pid < 1) pid = 1;
+    if (pid !== 1 && !(await first(env.DB, 'SELECT id FROM profiles WHERE id = ?', [pid]))) pid = 1;
+    const db = new ScopedDB(env.DB, pid);
+    const bcast = (type, payload) => broadcast(env, ctx, type, payload, pid);
     const path = url.pathname;
     const method = request.method;
     const p = url.searchParams;
@@ -84,7 +97,8 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
             if (path === '/api/sync/events' || path === '/api/mobile/poll') {
                 const since = num(p.get('since') || 0);
                 const rows = await all(db, 'SELECT id, type, payload, ts FROM sync_events WHERE ts > ? ORDER BY seq ASC LIMIT 300', [since]);
-                const events = rows.map(r => ({ id: r.id, type: r.type, payload: JSON.parse(r.payload || '{}'), timestamp: r.ts }));
+                const events = rows.map(r => { const pl = JSON.parse(r.payload || '{}'); const ep = pl.__profile_id || 1; delete pl.__profile_id;
+                    return { id: r.id, type: r.type, payload: pl, timestamp: r.ts, profile_id: ep }; }).filter(e => e.profile_id === pid || e.type === 'profiles_changed');
                 return json({ events, scans: events.filter(e => e.type === 'mobile_scan').map(e => e.payload), timestamp: Date.now() / 1000 });
             }
             if (path === '/api/catalog/products') {
@@ -123,6 +137,14 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 const inv = await X.getInvoiceDetails(db, /^\d+$/.test(idS) ? intOr0(idS) : 0);
                 return Object.keys(inv).length ? json({ success: true, invoice: inv }) : json({ success: false, message: 'الفاتورة غير موجودة' }, 404);
             }
+            if (path === '/api/profiles') {
+                const rows = await all(env.DB, `SELECT pr.id, pr.name, pr.created_at,
+                    (SELECT COUNT(*) FROM stock_stores s WHERE s.profile_id = pr.id) AS stores_count,
+                    (SELECT COUNT(*) FROM inventory_records ir WHERE ir.store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = pr.id)) AS stock_rows,
+                    (SELECT COUNT(*) FROM invoices i WHERE i.profile_id = pr.id) AS invoices_count
+                    FROM profiles pr ORDER BY pr.id ASC`);
+                return json({ success: true, profiles: rows, current_profile_id: pid });
+            }
             if (path === '/api/stock/stores') return json(await S.getAllStores(db, (p.get('q') || '').trim() || (p.get('query') || '').trim()));
             if (path === '/api/stock/store/details') {
                 return json(await S.getStoreStocktakeDetails(db, (p.get('store_no') || '').trim() || 'ST-001', (p.get('query') || p.get('q') || '').replace(/^\s+/, '')));
@@ -146,14 +168,14 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                     product_name: res.product_name || pr.name || '', product_code: res.product_code || pr.code || '',
                     batch: String(res.batch || res.batch_number || '').trim().toUpperCase(), message: res.message || '', timestamp: Date.now() / 1000
                 };
-                await broadcast(env, ctx, 'mobile_scan', event);
+                await bcast('mobile_scan', event);
                 res.event = event;
                 return json(res);
             }
             case '/api/stock/scan': {
                 const code = String(data.code || data.qr_text || '').trim();
                 const res = await S.scanItemToStore(db, code, storeNo, Boolean(data.force_direct), String(data.product_code || '').trim());
-                if (res.success) await broadcast(env, ctx, 'stock_scan', { store_no: storeNo, code, product_name: res.product_name || '', product_code: res.product_code || '' });
+                if (res.success) await bcast('stock_scan', { store_no: storeNo, code, product_name: res.product_name || '', product_code: res.product_code || '' });
                 return json(res);
             }
             case '/api/stock/save-batch-qty': {
@@ -164,25 +186,25 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                     expiry_date: String(data.expiry_date || '').trim(), counted_qty: counted, system_qty: num(data.system_qty),
                     cost_price: num(data.cost_price), selling_price: num(data.selling_price), entry_id: data.entry_id ? intOr0(data.entry_id) : null
                 });
-                if (res.success) await broadcast(env, ctx, 'stock_qty_updated', { store_no: storeNo, product_code: pc, counted_qty: counted });
+                if (res.success) await bcast('stock_qty_updated', { store_no: storeNo, product_code: pc, counted_qty: counted });
                 return json(res);
             }
             case '/api/stock/update-qty': {
                 const id = intOr0(data.entry_id || data.id), qty = num(data.quantity || data.qty);
                 const res = await S.updateEntryQuantity(db, id, qty, storeNo);
-                if (res.success) await broadcast(env, ctx, 'stock_qty_updated', { store_no: storeNo, entry_id: id, quantity: qty });
+                if (res.success) await bcast('stock_qty_updated', { store_no: storeNo, entry_id: id, quantity: qty });
                 return json(res);
             }
             case '/api/stock/delete-item': {
                 const id = intOr0(data.entry_id || data.id);
                 const res = await S.deleteEntryItem(db, id, storeNo);
-                if (res.success) await broadcast(env, ctx, 'stock_item_deleted', { store_no: storeNo, entry_id: id });
+                if (res.success) await bcast('stock_item_deleted', { store_no: storeNo, entry_id: id });
                 return json(res);
             }
             case '/api/stock/bulk-delete': {
                 const ids = (data.entry_ids || []).filter(i => /^\d+$/.test(String(i))).map(i => intOr0(i));
                 const res = await S.bulkDeleteEntries(db, ids, storeNo);
-                if (res.success) await broadcast(env, ctx, 'stock_item_deleted', { store_no: storeNo, entry_ids: ids });
+                if (res.success) await bcast('stock_item_deleted', { store_no: storeNo, entry_ids: ids });
                 return json(res);
             }
             case '/api/stock/edit-item':
@@ -190,56 +212,105 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
             case '/api/stock/clear-inventory': {
                 const clearAll = Boolean(data.clear_all || storeNo.toUpperCase() === 'ALL');
                 const res = await S.clearInventoryRecords(db, storeNo, clearAll);
-                if (res.success) await broadcast(env, ctx, 'inventory_cleared', { store_no: storeNo, clear_all: clearAll });
+                if (res.success) await bcast('inventory_cleared', { store_no: storeNo, clear_all: clearAll });
                 return json(res);
             }
             case '/api/stock/clear': {
                 const res = await S.clearStoreStocktake(db, storeNo);
-                if (res.success) await broadcast(env, ctx, 'stock_cleared', { store_no: storeNo });
+                if (res.success) await bcast('stock_cleared', { store_no: storeNo });
                 return json(res);
             }
             case '/api/stock/settle': case '/api/stock/commit-bulk': case '/api/stock/stores/commit-all': {
                 const commitAll = Boolean(data.commit_all);
                 const nos = Array.isArray(data.store_nos) ? data.store_nos : [];
                 const res = await S.commitStoresStocktake(db, commitAll ? ['ALL'] : (nos.length ? nos : [storeNo]));
-                if (res.success) await broadcast(env, ctx, 'stock_settled', { store_nos: nos.length ? nos : [commitAll ? 'ALL' : storeNo] });
+                if (res.success) await bcast('stock_settled', { store_nos: nos.length ? nos : [commitAll ? 'ALL' : storeNo] });
                 return json(res);
             }
             case '/api/stock/stores/create': {
                 const name = String(data.store_name || '').trim();
                 const res = await S.createNewStore(db, name, String(data.branch_name || 'الفرع الرئيسي').trim(), String(data.user_name || 'المسؤول').trim());
-                if (res.success) await broadcast(env, ctx, 'store_created', { store_no: res.store_no, store_name: name });
+                if (res.success) await bcast('store_created', { store_no: res.store_no, store_name: name });
                 return json(res);
             }
             case '/api/stock/stores/update': {
                 const res = await S.updateStore(db, storeNo, String(data.store_name || ''), String(data.branch_name || ''));
-                if (res.success) await broadcast(env, ctx, 'store_updated', { store_no: storeNo });
+                if (res.success) await bcast('store_updated', { store_no: storeNo });
                 return json(res);
             }
             case '/api/stock/stores/delete': {
                 const res = await S.deleteStore(db, storeNo);
-                if (res.success) await broadcast(env, ctx, 'store_deleted', { store_no: storeNo });
+                if (res.success) await bcast('store_deleted', { store_no: storeNo });
                 return json(res);
             }
             case '/api/stock/reset-all': {
                 const res = await S.resetAllStocktake(db);
-                if (res.success) await broadcast(env, ctx, 'stock_reset', {});
+                if (res.success) await bcast('stock_reset', {});
+                return json(res);
+            }
+            case '/api/profiles/create': {
+                const name = String(data.name || '').trim();
+                if (!name) return json({ success: false, message: 'يُرجى كتابة اسم الصيدلية' }, 400);
+                if (await first(env.DB, 'SELECT id FROM profiles WHERE name = ?', [name])) return json({ success: false, message: 'يوجد صيدلية بنفس الاسم' }, 400);
+                const m = await run(env.DB, 'INSERT INTO profiles (name) VALUES (?)', [name]);
+                const newDb = new ScopedDB(env.DB, m.last_row_id);
+                const storeNo = await S.resolveValidStoreNo(newDb, '');
+                await broadcast(env, ctx, 'profiles_changed', { id: m.last_row_id }, m.last_row_id);
+                return json({ success: true, id: m.last_row_id, name, store_no: storeNo, message: `تم إنشاء ${name} بنجاح` });
+            }
+            case '/api/profiles/rename': {
+                const id = intOr0(data.id), name = String(data.name || '').trim();
+                if (!id || !name) return json({ success: false, message: 'بيانات غير صالحة' }, 400);
+                if (await first(env.DB, 'SELECT id FROM profiles WHERE name = ? AND id != ?', [name, id])) return json({ success: false, message: 'يوجد صيدلية بنفس الاسم' }, 400);
+                await run(env.DB, 'UPDATE profiles SET name = ? WHERE id = ?', [name, id]);
+                await broadcast(env, ctx, 'profiles_changed', { id }, id);
+                return json({ success: true, message: 'تم تغيير الاسم بنجاح' });
+            }
+            case '/api/profiles/delete': {
+                const id = intOr0(data.id);
+                const prof = await first(env.DB, 'SELECT id, name FROM profiles WHERE id = ?', [id]);
+                if (!prof) return json({ success: false, message: 'الصيدلية غير موجودة' }, 404);
+                if ((await first(env.DB, 'SELECT COUNT(*) AS c FROM profiles')).c <= 1) return json({ success: false, message: 'لا يمكن حذف الصيدلية الوحيدة' }, 400);
+                if (String(data.confirm_name || '').trim() !== prof.name) return json({ success: false, message: 'اكتب اسم الصيدلية بالضبط لتأكيد الحذف' }, 400);
+                const sub = 'SELECT store_no FROM stock_stores WHERE profile_id = ?', isub = 'SELECT id FROM invoices WHERE profile_id = ?';
+                await env.DB.batch([
+                    env.DB.prepare(`DELETE FROM inventory_records WHERE store_no IN (${sub})`).bind(id),
+                    env.DB.prepare(`DELETE FROM stocktake_entries WHERE store_no IN (${sub})`).bind(id),
+                    env.DB.prepare(`DELETE FROM stocktake_scanned_serials WHERE store_no IN (${sub})`).bind(id),
+                    env.DB.prepare('DELETE FROM stock_stores WHERE profile_id = ?').bind(id),
+                    env.DB.prepare(`DELETE FROM scanned_serials WHERE invoice_id IN (${isub})`).bind(id),
+                    env.DB.prepare(`DELETE FROM invoice_lines WHERE invoice_id IN (${isub})`).bind(id),
+                    env.DB.prepare('DELETE FROM invoices WHERE profile_id = ?').bind(id),
+                    env.DB.prepare('DELETE FROM profiles WHERE id = ?').bind(id),
+                ]);
+                await broadcast(env, ctx, 'profiles_changed', { id, deleted: true }, id);
+                return json({ success: true, message: `تم حذف ${prof.name} وكل بياناتها` });
+            }
+            case '/api/stock/upload/detect':
+                return json({ success: true, ...S.detectStockColumns(Array.isArray(data.rows) ? data.rows : []) });
+            case '/api/stock/upload/rows': {
+                const res = await S.uploadStockRows(db, storeNo, Array.isArray(data.rows) ? data.rows : [], data.col_idx || {}, data.replace_existing !== false, Boolean(data.is_first));
+                return json(res);
+            }
+            case '/api/stock/upload/finish': {
+                const res = await S.finishStockUpload(db, storeNo, intOr0(data.total_added));
+                await bcast('inventory_uploaded', { store_no: res.store_details?.store?.store_no || storeNo });
                 return json(res);
             }
             case '/api/catalog/save': {
                 const res = await X.saveOrUpdateProduct(db, data);
-                await broadcast(env, ctx, 'catalog_updated', { code: res.code });
+                await bcast('catalog_updated', { code: res.code });
                 return json(res);
             }
             case '/api/catalog/delete': {
-                if (data.clear_all) { await X.clearCatalog(db); await broadcast(env, ctx, 'catalog_cleared', {}); return json({ success: true, message: 'تم تفريغ دليل الأصناف بالكامل بنجاح' }); }
+                if (data.clear_all) { await X.clearCatalog(db); await bcast('catalog_cleared', {}); return json({ success: true, message: 'تم تفريغ دليل الأصناف بالكامل بنجاح' }); }
                 if (Array.isArray(data.codes) && data.codes.length) {
                     const cnt = await X.bulkDeleteProducts(db, data.codes);
-                    await broadcast(env, ctx, 'catalog_bulk_deleted', { codes: data.codes, count: cnt });
+                    await bcast('catalog_bulk_deleted', { codes: data.codes, count: cnt });
                     return json({ success: true, deleted_count: cnt, message: `تم حذف ${cnt} صنف بنجاح` });
                 }
                 const ok = await X.deleteProduct(db, data.code);
-                if (ok) await broadcast(env, ctx, 'catalog_deleted', { code: data.code });
+                if (ok) await bcast('catalog_deleted', { code: data.code });
                 return json({ success: ok, message: ok ? 'تم حذف بطاقة الصنف بنجاح' : 'فشل الحذف' });
             }
             case '/api/catalog/parse-gs1': return json(X.parseGs1(data.raw));
@@ -255,7 +326,7 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 const qd = parsed.success ? (parsed.data || {}) : {};
                 res.parsed_qr = qd;
                 for (const k of ['gtin', 'batch', 'serial', 'expiry']) if (qd[k] && !(k in res)) res[k] = qd[k];
-                await broadcast(env, ctx, 'invoice_updated', { invoice_id: invId });
+                await bcast('invoice_updated', { invoice_id: invId });
                 return json(res);
             }
             case '/api/invoice/delete-serial': case '/api/invoice/delete-line': case '/api/invoice/clear-lines': case '/api/invoice/clear':
@@ -272,7 +343,7 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 else if (path === '/api/invoice/confirm') res = await X.confirmInvoice(db, invId);
                 else res = await X.clearInvoiceLines(db, invId);
                 res.invoice = await X.getInvoiceDetails(db, invId);
-                await broadcast(env, ctx, 'invoice_updated', { invoice_id: invId });
+                await bcast('invoice_updated', { invoice_id: invId });
                 return json(res);
             }
             case '/api/returns/process':

@@ -31,14 +31,17 @@ SYNC_TABLES = STOCK_TABLES + INVOICE_TABLES
 # نفس قائمة المسارات في cloud/router.js
 CLOUD_GET = {"/api/catalog/products", "/api/stock/stores", "/api/stock/store/details", "/api/stock/store/search",
              "/api/sync/events", "/api/mobile/poll", "/api/stats", "/api/catalog/product", "/api/catalog/next-code",
-             "/api/stock/uncounted", "/api/stock/preinventory-search", "/api/invoice/active", "/api/invoices/list", "/api/invoices/get"}
+             "/api/stock/uncounted", "/api/stock/preinventory-search", "/api/invoice/active", "/api/invoices/list", "/api/invoices/get",
+             "/api/profiles"}
 CLOUD_POST = {"/api/mobile/scan", "/api/stock/scan", "/api/stock/save-batch-qty", "/api/stock/update-qty", "/api/stock/delete-item",
               "/api/stock/bulk-delete", "/api/stock/edit-item", "/api/stock/clear", "/api/stock/clear-inventory", "/api/stock/settle",
               "/api/stock/commit-bulk", "/api/stock/stores/commit-all", "/api/stock/stores/create", "/api/stock/stores/update",
               "/api/stock/stores/delete", "/api/stock/reset-all", "/api/stock/populate-all",
               "/api/catalog/save", "/api/catalog/delete", "/api/catalog/parse-gs1", "/api/catalog/parse-gtin", "/api/invoice/new",
               "/api/invoice/scan", "/api/invoice/delete-serial", "/api/invoice/delete-line", "/api/invoice/clear-lines", "/api/invoice/clear",
-              "/api/invoice/update-line-qty", "/api/invoice/manual-item", "/api/invoice/confirm", "/api/returns/process"}
+              "/api/invoice/update-line-qty", "/api/invoice/manual-item", "/api/invoice/confirm", "/api/returns/process",
+              "/api/profiles/create", "/api/profiles/rename", "/api/profiles/delete", "/api/stock/upload/detect",
+              "/api/stock/upload/rows", "/api/stock/upload/finish"}
 # مسارات تعمل محلياً على الكمبيوتر بعد سحب نسخة حديثة من جداول الجرد
 PULL_BEFORE_GET = {"/api/stock/search", "/api/stock/export-excel", "/api/stock/export", "/api/stock/uncounted/export-excel",
                    "/api/stock/uncounted-export", "/api/invoice/export-excel", "/api/invoice/export", "/api/invoice/export-stock-excel",
@@ -105,10 +108,13 @@ def _request(method: str, path: str, body: Optional[bytes] = None, headers: Opti
         return he.code, he.read(), he.headers.get("Content-Type", "application/json")
 
 
-def forward(method: str, path_qs: str, body: Optional[bytes]) -> Tuple[int, bytes, str]:
+def forward(method: str, path_qs: str, body: Optional[bytes], profile_id: str = "") -> Tuple[int, bytes, str]:
     """تمرير طلب الجرد كما هو إلى السحابة. عند انقطاع الإنترنت نعيد 503 برسالة واضحة (لا نكتب محلياً لمنع تضارب البيانات)."""
     try:
-        return _request(method, path_qs, body, {"Content-Type": "application/json"} if body else None, timeout=45)
+        h = {"Content-Type": "application/json"} if body else {}
+        if profile_id:
+            h["X-Profile-Id"] = str(profile_id)
+        return _request(method, path_qs, body, h or None, timeout=45)
     except Exception as e:
         _status["last_error"] = f"forward {path_qs}: {e}"
         msg = {"success": False, "offline_reconnecting": True,
@@ -151,6 +157,11 @@ def pull_stock_tables(max_age: float = 3.0, tables_list: Optional[List[str]] = N
                     c.execute(f"DELETE FROM {t}")
                     if rows:
                         local_cols = {r[1] for r in c.execute(f"PRAGMA table_info({t})").fetchall()}
+                        # أعمدة جديدة في السحابة (مثل profile_id للصيدليات) تُضاف محلياً حتى لا تضيع عند الرفع
+                        for k in rows[0].keys():
+                            if k not in local_cols and k.replace("_", "").isalnum():
+                                c.execute(f"ALTER TABLE {t} ADD COLUMN {k}")
+                                local_cols.add(k)
                         cols = [k for k in rows[0].keys() if k in local_cols]
                         c.executemany(f"INSERT INTO {t} ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
                                       [tuple(r.get(k) for k in cols) for r in rows])

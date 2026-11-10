@@ -12,7 +12,12 @@
         _retry: 1000,
         _pingTimer: null,
         onEvent(fn) { this._handlers.push(fn); },
-        _emit(evt) { for (const h of this._handlers) { try { h(evt); } catch (e) { console.warn('realtime handler', e); } } },
+        _emit(evt) {
+            // تجاهل أحداث الصيدليات الأخرى
+            const cur = window.RambfeProfiles ? window.RambfeProfiles.currentId() : 1;
+            if (evt && evt.profile_id && evt.profile_id !== cur && evt.type !== 'profiles_changed') return;
+            for (const h of this._handlers) { try { h(evt); } catch (e) { console.warn('realtime handler', e); } }
+        },
         connect() {
             if (this._ws && (this._ws.readyState === 0 || this._ws.readyState === 1)) return;
             let ws;

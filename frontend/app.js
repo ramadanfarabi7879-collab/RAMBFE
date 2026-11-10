@@ -6774,20 +6774,19 @@ function initStocktakeTab() {
         const file = e.target.files?.[0];
         if (!file) return;
 
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('store_no', currentActiveStoreNo);
-        formData.append('replace_existing', 'true');
-
         const feedback = document.getElementById('stk-feedback-text');
         if (feedback) feedback.textContent = `جاري رفع واحتساب رصيد المخزون للاستور (${currentActiveStoreNo})...`;
 
         try {
-            const res = await fetch('/api/stock/upload-excel', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await res.json();
+            // قراءة الملف في المتصفح ورفعه على دفعات للسحابة (يعمل من الرابط بدون الكمبيوتر)
+            let data;
+            try {
+                data = await window.RambfeProfiles.uploadStockFile(file, currentActiveStoreNo, (done, total) => {
+                    if (feedback) feedback.textContent = `جاري رفع المخزون للاستور (${currentActiveStoreNo})... ${done} / ${total} سطر`;
+                });
+            } catch (upErr) {
+                data = { success: false, message: upErr.message };
+            }
             if (data.success) {
                 alert(data.message || 'تم رفع المخزون واحتساب التكلفة وسعر البيع بنجاح.');
                 await loadStocktakeStores();

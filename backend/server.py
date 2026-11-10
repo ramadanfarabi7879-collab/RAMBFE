@@ -386,7 +386,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
     def forward_to_cloud(self, method: str, body: bytes = None) -> None:
         """تمرير طلب الجرد إلى قاعدة البيانات السحابية (المصدر الوحيد لبيانات الجرد)."""
-        status, payload, ctype = cloud_sync.forward(method, self.path, body)
+        status, payload, ctype = cloud_sync.forward(method, self.path, body, self.headers.get('X-Profile-Id', ''))
         self.send_response(status)
         self.send_header('Content-Type', ctype or 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(payload)))
