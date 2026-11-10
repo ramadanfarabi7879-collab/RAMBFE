@@ -889,6 +889,175 @@ def _get_stocktake_eligible_map(cursor: sqlite3.Cursor, store_no: str) -> Tuple[
     return resolved_store, eligible
 
 
+def _build_product_search_where(raw_query: str, match_mode: str = "start") -> Tuple[str, List[Any], List[Any]]:
+    """بناء جملة WHERE المشتركة ومعاملاتها للبحث في بطاقات الأصناف بوضعي البداية والمعمم وقاعدة الحد اللفظي."""
+    from .normalizer import normalize_arabic, normalize_english
+    from .qr_parser import decode_arabic_keyboard_layout
+
+    raw_q = str(raw_query or "").lstrip()
+    has_trailing_space = raw_q.endswith(' ')
+    q = raw_q.strip()
+    is_contains = str(match_mode or "").lower() in ("contains", "generalized", "all", "true", "1")
+
+    words = q.split()
+    q_clean = clean_barcode_preserve_zeros(q)
+    norm_ar = normalize_arabic(q)
+    norm_en = normalize_english(q)
+
+    where_clauses = []
+    params = []
+
+    text_fields = [
+        'p.name_en', 'p.normalized_name_en',
+        'p.name_ar', 'p.normalized_name_ar',
+        'p.name', 'p.normalized_name',
+        'p.scientific_name', 'p.company', 'p.category'
+    ]
+
+    if has_trailing_space or len(words) > 1:
+        if len(words) == 1 and has_trailing_space:
+            tok = words[0]
+            search_tokens = [tok]
+            if norm_en and norm_en != tok: search_tokens.append(norm_en)
+            if norm_ar and norm_ar != tok: search_tokens.append(norm_ar)
+
+            token_conditions = []
+            for t in set(search_tokens):
+                for f in text_fields:
+                    if is_contains:
+                        token_conditions.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                        params.extend([t, f"{t} %", f"% {t} %", f"% {t}", f"{t}-%"])
+                    else:
+                        token_conditions.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                        params.extend([t, f"{t} %", f"{t}-%", f"{t}/%"])
+
+            token_conditions.append("(p.code = ? OR p.code LIKE ?)")
+            params.extend([tok, f"{tok} %"])
+
+            if q_clean:
+                token_conditions.append("(p.barcode = ? OR p.gtin = ? OR pb.barcode = ?)")
+                params.extend([q_clean, q_clean, q_clean])
+
+            where_clauses.append(f"({' OR '.join(token_conditions)})")
+
+            raw_dec = decode_arabic_keyboard_layout(raw_q)
+            if raw_dec != raw_q:
+                dec = raw_dec.strip()
+                if dec:
+                    dec_conds = []
+                    for f in ['p.name_en', 'p.normalized_name_en', 'p.scientific_name']:
+                        if is_contains:
+                            dec_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                            params.extend([dec, f"{dec} %", f"% {dec} %", f"% {dec}"])
+                        else:
+                            dec_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ?)")
+                            params.extend([dec, f"{dec} %", f"{dec}-%"])
+                    if dec_conds:
+                        where_clauses.append(f"({' OR '.join(dec_conds)})")
+        else:
+            w_first = words[0]
+            first_conds = []
+            for f in text_fields:
+                if is_contains:
+                    first_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                    params.extend([w_first, f"{w_first} %", f"% {w_first} %", f"% {w_first}", f"{w_first}-%"])
+                else:
+                    first_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
+                    params.extend([w_first, f"{w_first} %", f"{w_first}-%", f"{w_first}/%"])
+            first_conds.append("(p.code = ? OR p.code LIKE ?)")
+            params.extend([w_first, f"{w_first} %"])
+
+            where_clauses.append(f"({' OR '.join(first_conds)})")
+
+            for i, w in enumerate(words[1:]):
+                is_last = (i == len(words) - 2)
+                w_conds = []
+                for f in text_fields:
+                    if is_last and has_trailing_space:
+                        w_conds.append(f"({f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} = ?)")
+                        params.extend([f"% {w} %", f"% {w}", f"{w} %", w])
+                    else:
+                        w_conds.append(f"{f} LIKE ?")
+                        params.append(f"%{w}%")
+                where_clauses.append(f"({' OR '.join(w_conds)})")
+    else:
+        if is_contains:
+            q_pattern = f"%{q}%"
+            norm_ar_pattern = f"%{norm_ar}%" if norm_ar else q_pattern
+            norm_en_pattern = f"%{norm_en}%" if norm_en else q_pattern
+            clean_pattern = f"%{q_clean}%" if q_clean else ""
+        else:
+            q_pattern = f"{q}%"
+            norm_ar_pattern = f"{norm_ar}%" if norm_ar else q_pattern
+            norm_en_pattern = f"{norm_en}%" if norm_en else q_pattern
+            clean_pattern = f"{q_clean}%" if q_clean else ""
+
+        where_clauses.extend([
+            'p.name_ar LIKE ?',
+            'p.name LIKE ?',
+            'p.normalized_name_ar LIKE ?',
+            'p.normalized_name LIKE ?',
+            'p.name_en LIKE ?',
+            'p.normalized_name_en LIKE ?',
+            'p.scientific_name LIKE ?',
+            'p.company LIKE ?',
+            'p.category LIKE ?'
+        ])
+        params.extend([q_pattern, q_pattern, norm_ar_pattern, norm_ar_pattern, norm_en_pattern, norm_en_pattern, q_pattern, q_pattern, q_pattern])
+
+        where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+        params.extend([q, q_pattern])
+
+        if q_clean and clean_pattern and q_clean != q:
+            where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+            params.extend([q_clean, clean_pattern])
+
+        if q_clean and clean_pattern:
+            where_clauses.extend([
+                'p.barcode = ?', 'p.barcode LIKE ?',
+                'p.gtin = ?', 'p.gtin LIKE ?',
+                'pb.barcode = ?', 'pb.barcode LIKE ?'
+            ])
+            params.extend([
+                q_clean, clean_pattern,
+                q_clean, clean_pattern,
+                q_clean, clean_pattern
+            ])
+            if q_clean.isdigit():
+                padded_10 = q_clean.zfill(10)
+                if padded_10 != q_clean:
+                    where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+                    params.extend([padded_10, f"%{padded_10}%" if is_contains else f"{padded_10}%"])
+                if is_contains:
+                    stripped_zeros = q_clean.lstrip('0') or '0'
+                    if stripped_zeros != q_clean:
+                        where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
+                        params.extend([stripped_zeros, f"%{stripped_zeros}%"])
+
+        decoded_q = decode_arabic_keyboard_layout(q).strip()
+        if decoded_q and decoded_q.lower() != q.lower():
+            dec_pattern = f"%{decoded_q}%" if is_contains else f"{decoded_q}%"
+            where_clauses.extend(['p.name_en LIKE ?', 'p.normalized_name_en LIKE ?'])
+            params.extend([dec_pattern, dec_pattern])
+            if is_contains:
+                where_clauses.append('p.scientific_name LIKE ?')
+                params.append(dec_pattern)
+            dec_clean = clean_barcode_preserve_zeros(decoded_q)
+            if dec_clean:
+                dec_clean_pat = f"%{dec_clean}%" if is_contains else f"{dec_clean}%"
+                where_clauses.extend(['p.code = ?', 'p.code LIKE ?', 'p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?', 'pb.barcode = ?', 'pb.barcode LIKE ?'])
+                params.extend([dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat])
+
+    where_sql = " AND ".join(where_clauses) if len(words) > 1 else " OR ".join(where_clauses)
+    order_params = [
+        q_clean, f"{q_clean}%",
+        f"{q}%", f"{norm_en}%" if norm_en else f"{q}%", f"{q}%",
+        q_clean, q_clean,
+        f"{q_clean}%", f"{q_clean}%"
+    ]
+    return where_sql, params, order_params
+
+
 def _is_exact_code_or_barcode_query(cursor: sqlite3.Cursor, raw_query: str) -> bool:
     """
     تمييز البحث بالكود/الباركود/GTIN عن البحث بالاسم:
@@ -990,166 +1159,7 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
         cursor.execute(f"SELECT p.* FROM products p {stk_join_sql} ORDER BY p.id DESC LIMIT ? OFFSET ?", (limit, offset))
         rows = cursor.fetchall()
     else:
-        from .normalizer import normalize_arabic, normalize_english
-        from .qr_parser import extract_clean_gtin
-        from .qr_parser import decode_arabic_keyboard_layout
-        
-        words = q.split()
-        q_clean = clean_barcode_preserve_zeros(q)
-        norm_ar = normalize_arabic(q)
-        norm_en = normalize_english(q)
-
-        where_clauses = []
-        params = []
-
-        text_fields = [
-            'p.name_en', 'p.normalized_name_en',
-            'p.name_ar', 'p.normalized_name_ar',
-            'p.name', 'p.normalized_name',
-            'p.scientific_name', 'p.company', 'p.category'
-        ]
-
-        if has_trailing_space or len(words) > 1:
-            # قاعدة المسطرة / الفصلة: الكلمة السابقة انتهت ولا يجوز إدخال أي حروف متصلة بها (مثل منع ADOLIN عند كتابة "ADOL ")
-            if len(words) == 1 and has_trailing_space:
-                tok = words[0]
-                search_tokens = [tok]
-                if norm_en and norm_en != tok: search_tokens.append(norm_en)
-                if norm_ar and norm_ar != tok: search_tokens.append(norm_ar)
-
-                token_conditions = []
-                for t in set(search_tokens):
-                    for f in text_fields:
-                        if is_contains:
-                            token_conditions.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
-                            params.extend([t, f"{t} %", f"% {t} %", f"% {t}", f"{t}-%"])
-                        else:
-                            token_conditions.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
-                            params.extend([t, f"{t} %", f"{t}-%", f"{t}/%"])
-
-                token_conditions.append("(p.code = ? OR p.code LIKE ?)")
-                params.extend([tok, f"{tok} %"])
-
-                if q_clean:
-                    token_conditions.append("(p.barcode = ? OR p.gtin = ? OR pb.barcode = ?)")
-                    params.extend([q_clean, q_clean, q_clean])
-
-                where_clauses.append(f"({' OR '.join(token_conditions)})")
-
-                # معالجة فك الكيبورد العربي مع المسطرة
-                raw_dec = decode_arabic_keyboard_layout(raw_q)
-                if raw_dec != raw_q:
-                    dec = raw_dec.strip()
-                    if dec:
-                        dec_conds = []
-                        for f in ['p.name_en', 'p.normalized_name_en', 'p.scientific_name']:
-                            if is_contains:
-                                dec_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
-                                params.extend([dec, f"{dec} %", f"% {dec} %", f"% {dec}"])
-                            else:
-                                dec_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ?)")
-                                params.extend([dec, f"{dec} %", f"{dec}-%"])
-                        if dec_conds:
-                            where_clauses.append(f"({' OR '.join(dec_conds)})")
-            else:
-                # كلمات متعددة مفصولة بمسافات (مثل "ADOL EXTRA" أو "ADOL 500")
-                w_first = words[0]
-                first_conds = []
-                for f in text_fields:
-                    if is_contains:
-                        first_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
-                        params.extend([w_first, f"{w_first} %", f"% {w_first} %", f"% {w_first}", f"{w_first}-%"])
-                    else:
-                        first_conds.append(f"({f} = ? OR {f} LIKE ? OR {f} LIKE ? OR {f} LIKE ?)")
-                        params.extend([w_first, f"{w_first} %", f"{w_first}-%", f"{w_first}/%"])
-                first_conds.append("(p.code = ? OR p.code LIKE ?)")
-                params.extend([w_first, f"{w_first} %"])
-
-                where_clauses.append(f"({' OR '.join(first_conds)})")
-
-                # باقي الكلمات
-                for i, w in enumerate(words[1:]):
-                    is_last = (i == len(words) - 2)
-                    w_conds = []
-                    for f in text_fields:
-                        if is_last and has_trailing_space:
-                            w_conds.append(f"({f} LIKE ? OR {f} LIKE ? OR {f} LIKE ? OR {f} = ?)")
-                            params.extend([f"% {w} %", f"% {w}", f"{w} %", w])
-                        else:
-                            w_conds.append(f"{f} LIKE ?")
-                            params.append(f"%{w}%")
-                    where_clauses.append(f"({' OR '.join(w_conds)})")
-        else:
-            # الوضع بدون مسطرة وبكلمة واحدة: يبدأ بـ أو يحتوي على
-            if is_contains:
-                q_pattern = f"%{q}%"
-                norm_ar_pattern = f"%{norm_ar}%" if norm_ar else q_pattern
-                norm_en_pattern = f"%{norm_en}%" if norm_en else q_pattern
-                clean_pattern = f"%{q_clean}%" if q_clean else ""
-            else:
-                q_pattern = f"{q}%"
-                norm_ar_pattern = f"{norm_ar}%" if norm_ar else q_pattern
-                norm_en_pattern = f"{norm_en}%" if norm_en else q_pattern
-                clean_pattern = f"{q_clean}%" if q_clean else ""
-
-            where_clauses.extend([
-                'p.name_ar LIKE ?',
-                'p.name LIKE ?',
-                'p.normalized_name_ar LIKE ?',
-                'p.normalized_name LIKE ?',
-                'p.name_en LIKE ?',
-                'p.normalized_name_en LIKE ?',
-                'p.scientific_name LIKE ?',
-                'p.company LIKE ?',
-                'p.category LIKE ?'
-            ])
-            params.extend([q_pattern, q_pattern, norm_ar_pattern, norm_ar_pattern, norm_en_pattern, norm_en_pattern, q_pattern, q_pattern, q_pattern])
-
-            where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-            params.extend([q, q_pattern])
-
-            if q_clean and clean_pattern and q_clean != q:
-                where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-                params.extend([q_clean, clean_pattern])
-
-            if q_clean and clean_pattern:
-                where_clauses.extend([
-                    'p.barcode = ?', 'p.barcode LIKE ?',
-                    'p.gtin = ?', 'p.gtin LIKE ?',
-                    'pb.barcode = ?', 'pb.barcode LIKE ?'
-                ])
-                params.extend([
-                    q_clean, clean_pattern,
-                    q_clean, clean_pattern,
-                    q_clean, clean_pattern
-                ])
-                if q_clean.isdigit():
-                    padded_10 = q_clean.zfill(10)
-                    if padded_10 != q_clean:
-                        where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-                        params.extend([padded_10, f"%{padded_10}%" if is_contains else f"{padded_10}%"])
-                    if is_contains:
-                        stripped_zeros = q_clean.lstrip('0') or '0'
-                        if stripped_zeros != q_clean:
-                            where_clauses.extend(['p.code = ?', 'p.code LIKE ?'])
-                            params.extend([stripped_zeros, f"%{stripped_zeros}%"])
-
-            # معالجة ذكية إذا كُتب البحث الإنجليزي أو الباركود أثناء تفعيل الكيبورد العربي
-            decoded_q = decode_arabic_keyboard_layout(q).strip()
-            if decoded_q and decoded_q.lower() != q.lower():
-                dec_pattern = f"%{decoded_q}%" if is_contains else f"{decoded_q}%"
-                where_clauses.extend(['p.name_en LIKE ?', 'p.normalized_name_en LIKE ?'])
-                params.extend([dec_pattern, dec_pattern])
-                if is_contains:
-                    where_clauses.append('p.scientific_name LIKE ?')
-                    params.append(dec_pattern)
-                dec_clean = clean_barcode_preserve_zeros(decoded_q)
-                if dec_clean:
-                    dec_clean_pat = f"%{dec_clean}%" if is_contains else f"{dec_clean}%"
-                    where_clauses.extend(['p.code = ?', 'p.code LIKE ?', 'p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?', 'pb.barcode = ?', 'pb.barcode LIKE ?'])
-                    params.extend([dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat, dec_clean, dec_clean_pat])
-
-        where_sql = " AND ".join(where_clauses) if len(words) > 1 else " OR ".join(where_clauses)
+        where_sql, params, order_params = _build_product_search_where(raw_q, match_mode)
 
         cursor.execute(f"""
             SELECT COUNT(DISTINCT p.id) FROM products p
@@ -1158,14 +1168,6 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
             WHERE ({where_sql})
         """, tuple(params))
         total = cursor.fetchone()[0]
-        
-        # ترتيب النتائج الذكي حسب الأقرب لمطابقة كود الصنف ثم الاسم ثم الباركود
-        order_params = [
-            q_clean, f"{q_clean}%",
-            f"{q}%", f"{norm_en}%" if norm_en else f"{q}%", f"{q}%",
-            q_clean, q_clean,
-            f"{q_clean}%", f"{q_clean}%"
-        ]
         query_params = list(params) + order_params + [limit, offset]
         cursor.execute(f"""
             SELECT DISTINCT p.* FROM products p
@@ -1203,6 +1205,266 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
         res_payload["store_no"] = resolved_store
         res_payload["bypassed_stock_filter"] = bypassed_stock_filter
     return res_payload
+
+
+def _get_all_stores_preinventory_map(cursor: sqlite3.Cursor) -> Dict[str, Dict[str, Any]]:
+    """
+    قراءة أرصدة المخزون الأصلية المسجلة في inventory_records عبر كافة مخازن النظام (قبل الجرد)
+    بدون أي قراءة أو تأثر بجدول stocktake_entries، ومع فصل رصيد كل مخزن بوضوح دون دمج ملبس.
+    """
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('stock_stores', 'inventory_records')"
+    )
+    existing = {r["name"] for r in cursor.fetchall()}
+    if not {"stock_stores", "inventory_records"}.issubset(existing):
+        return {}
+
+    cursor.execute("SELECT store_no, store_name FROM stock_stores")
+    store_names = {r["store_no"]: r["store_name"] for r in cursor.fetchall()}
+
+    cursor.execute("""
+        SELECT product_code, COALESCE(barcode, '') AS barcode,
+               COALESCE(store_no, 'ST-001') AS store_no,
+               COALESCE(batch_number, '') AS batch_number,
+               COALESCE(expiry_date, '') AS expiry_date,
+               COALESCE(system_qty, 0) AS system_qty
+        FROM inventory_records
+        ORDER BY expiry_date ASC, id ASC
+    """)
+    inv_rows = cursor.fetchall()
+    if not inv_rows:
+        return {}
+
+    raw_pairs = list({
+        (str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip())
+        for r in inv_rows
+    })
+    code_map = _resolve_canonical_product_code_map(cursor, raw_pairs)
+
+    per_prod_store: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for r in inv_rows:
+        key = (str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip())
+        canon = code_map.get(key)
+        if not canon:
+            continue
+        st_no = str(r["store_no"] or "ST-001").strip() or "ST-001"
+        qty = float(r["system_qty"] or 0.0)
+        b_num = str(r["batch_number"] or "").strip().upper()
+        exp = str(r["expiry_date"] or "").strip()
+
+        st_map = per_prod_store.setdefault(canon, {})
+        st_entry = st_map.setdefault(st_no, {
+            "store_no": st_no,
+            "store_name": store_names.get(st_no, st_no),
+            "sum_qty": 0.0,
+            "max_qty": float("-inf"),
+            "batch_count": 0,
+            "batches": [],
+        })
+        st_entry["sum_qty"] += qty
+        if qty > st_entry["max_qty"]:
+            st_entry["max_qty"] = qty
+        st_entry["batch_count"] += 1
+        if qty != 0 or b_num or exp:
+            st_entry["batches"].append({
+                "batch_number": b_num,
+                "expiry_date": exp,
+                "system_qty": round(qty, 4),
+            })
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for canon, st_map in per_prod_store.items():
+        positive_stores = []
+        total_qty = 0.0
+        total_batches = 0
+        for st_no in sorted(st_map.keys()):
+            st_entry = st_map[st_no]
+            if st_entry["max_qty"] > 0 and st_entry["sum_qty"] > 0:
+                s_qty = round(st_entry["sum_qty"], 4)
+                total_qty += s_qty
+                total_batches += st_entry["batch_count"]
+                positive_stores.append({
+                    "store_no": st_no,
+                    "store_name": st_entry["store_name"],
+                    "system_qty": s_qty,
+                    "batch_count": st_entry["batch_count"],
+                    "batches": st_entry["batches"],
+                })
+        if positive_stores:
+            out[canon] = {
+                "pre_inventory_stores": positive_stores,
+                "pre_inventory_total_qty": round(total_qty, 4),
+                "pre_inventory_batch_count": total_batches,
+            }
+    return out
+
+
+def _find_batch_matching_codes_in_inventory(cursor: sqlite3.Cursor, raw_query: str, is_contains: bool) -> Dict[str, List[str]]:
+    """إرجاع أكواد الأصناف التي يطابق رقم دفعتها في inventory_records نص البحث."""
+    q_trim = str(raw_query or "").strip().upper()
+    if not q_trim:
+        return {}
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_records'")
+    if not cursor.fetchone():
+        return {}
+    pat = f"%{q_trim}%" if is_contains else f"{q_trim}%"
+    cursor.execute(
+        "SELECT DISTINCT product_code, COALESCE(barcode, '') AS barcode, UPPER(TRIM(batch_number)) AS batch_number "
+        "FROM inventory_records WHERE batch_number IS NOT NULL AND TRIM(batch_number) != '' AND UPPER(TRIM(batch_number)) LIKE ? LIMIT 200",
+        (pat,)
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        return {}
+    raw_pairs = [(str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip()) for r in rows]
+    code_map = _resolve_canonical_product_code_map(cursor, raw_pairs)
+    matched: Dict[str, List[str]] = {}
+    for r in rows:
+        key = (str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip())
+        canon = code_map.get(key)
+        if canon:
+            matched.setdefault(canon, []).append(r["batch_number"])
+    return matched
+
+
+def search_preinventory_products(
+    query: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    match_mode: str = "start",
+    stock_only: bool = False,
+) -> Dict[str, Any]:
+    """
+    الخانة الأولى المستقلة في شاشة الجرد: البحث عن المخزون الفعلي بالنظام قبل الجرد.
+    - تقرأ الأرصدة الأصلية من inventory_records عبر كافة مخازن النظام (لا تتأثر بالاستور المختار ولا بكميات stocktake_entries).
+    - عند stock_only=True: تطبّق الفلترة على البحث بالاسم/الدفعة فقط، وتُرجع الأصناف التي لها رصيد أصلي موجب في أي مخزن.
+    - عند البحث بالكود أو الباركود أو GTIN أو QR/GS1: تتجاوز الفلترة دائماً وتعيد الصنف المطابق مباشرةً.
+    - ترفق لكل صنف تفصيل رصيده الأصلي في كل مخزن على حدة (pre_inventory_stores).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    preinv_map = _get_all_stores_preinventory_map(cursor)
+
+    raw_q = str(query or "").lstrip()
+    q = raw_q.strip()
+    is_contains = str(match_mode or "").lower() in ("contains", "generalized", "all", "true", "1")
+
+    # فحص ما إذا كان الاستعلام كود QR / GS1 ثنائي الأبعاد
+    qr_gtin = ""
+    qr_batch = ""
+    if q:
+        from .qr_parser import parse_qr_code, extract_clean_gtin
+        parsed_qr = parse_qr_code(q)
+        qr_data = parsed_qr.get("data") or {}
+        if parsed_qr.get("success") and (qr_data.get("gtin") or qr_data.get("batch") or parsed_qr.get("gtin")):
+            raw_g = qr_data.get("gtin") or parsed_qr.get("gtin") or ""
+            qr_gtin = clean_barcode_preserve_zeros(extract_clean_gtin(raw_g) or raw_g)
+            qr_batch = str(qr_data.get("batch") or parsed_qr.get("batch_number") or "").strip().upper()
+
+    effective_raw_q = qr_gtin if qr_gtin else raw_q
+    effective_q = effective_raw_q.strip()
+
+    is_code_or_qr = bool(qr_gtin or (effective_q and _is_exact_code_or_barcode_query(cursor, effective_q)))
+    bypassed_stock_filter = bool(stock_only and is_code_or_qr)
+    apply_stock_filter = bool(stock_only and not bypassed_stock_filter)
+
+    if apply_stock_filter and not preinv_map:
+        conn.close()
+        return {
+            "items": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "bypassed_stock_filter": False,
+        }
+
+    stk_join_sql = ""
+    if apply_stock_filter:
+        cursor.execute("CREATE TEMP TABLE IF NOT EXISTS _stk_preinv_eligible (code TEXT PRIMARY KEY)")
+        cursor.execute("DELETE FROM _stk_preinv_eligible")
+        cursor.executemany(
+            "INSERT OR IGNORE INTO _stk_preinv_eligible (code) VALUES (?)",
+            [(c,) for c in preinv_map.keys()]
+        )
+        stk_join_sql = "INNER JOIN _stk_preinv_eligible stk_e ON stk_e.code = p.code"
+
+    batch_matched_map: Dict[str, List[str]] = {}
+    if not effective_q:
+        cursor.execute(f"SELECT COUNT(*) FROM products p {stk_join_sql}")
+        total = cursor.fetchone()[0]
+        cursor.execute(f"SELECT p.* FROM products p {stk_join_sql} ORDER BY p.id DESC LIMIT ? OFFSET ?", (limit, offset))
+        rows = cursor.fetchall()
+    else:
+        where_sql, params, order_params = _build_product_search_where(effective_raw_q, match_mode)
+        if not qr_gtin:
+            batch_matched_map = _find_batch_matching_codes_in_inventory(cursor, effective_q, is_contains)
+        if batch_matched_map:
+            b_codes = list(batch_matched_map.keys())
+            b_placeholders = ",".join(["?"] * len(b_codes))
+            combined_where = f"(({where_sql}) OR p.code IN ({b_placeholders}))"
+            params_with_batch = list(params) + b_codes
+        else:
+            combined_where = f"({where_sql})"
+            params_with_batch = list(params)
+
+        cursor.execute(f"""
+            SELECT COUNT(DISTINCT p.id) FROM products p
+            {stk_join_sql}
+            LEFT JOIN product_barcodes pb ON p.code = pb.product_code
+            WHERE {combined_where}
+        """, tuple(params_with_batch))
+        total = cursor.fetchone()[0]
+
+        query_params = params_with_batch + order_params + [limit, offset]
+        cursor.execute(f"""
+            SELECT DISTINCT p.* FROM products p
+            {stk_join_sql}
+            LEFT JOIN product_barcodes pb ON p.code = pb.product_code
+            WHERE {combined_where}
+            ORDER BY
+                CASE
+                    WHEN p.code = ? THEN 1
+                    WHEN p.code LIKE ? THEN 2
+                    WHEN p.name_en LIKE ? OR p.normalized_name_en LIKE ? THEN 3
+                    WHEN p.name_ar LIKE ? THEN 4
+                    WHEN p.barcode = ? OR p.gtin = ? THEN 5
+                    WHEN p.barcode LIKE ? OR p.gtin LIKE ? THEN 6
+                    ELSE 7
+                END,
+                p.id DESC
+            LIMIT ? OFFSET ?
+        """, tuple(query_params))
+        rows = cursor.fetchall()
+
+    items = [dict(r) for r in rows]
+    conn.close()
+    for item in items:
+        _attach_product_barcodes(item)
+        p_code = item.get("code", "")
+        pre_info = preinv_map.get(p_code)
+        if pre_info:
+            item["pre_inventory_stores"] = pre_info["pre_inventory_stores"]
+            item["pre_inventory_total_qty"] = pre_info["pre_inventory_total_qty"]
+            item["pre_inventory_batch_count"] = pre_info["pre_inventory_batch_count"]
+        else:
+            item["pre_inventory_stores"] = []
+            item["pre_inventory_total_qty"] = 0.0
+            item["pre_inventory_batch_count"] = 0
+        if p_code in batch_matched_map:
+            item["matched_batch_numbers"] = sorted(set(batch_matched_map[p_code]))
+        if qr_batch:
+            item["matched_qr_batch"] = qr_batch
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "bypassed_stock_filter": bypassed_stock_filter,
+        "qr_gtin": qr_gtin,
+        "qr_batch": qr_batch,
+    }
 
 # ==================== إدارة الفواتير والمسح الضوئي ====================
 

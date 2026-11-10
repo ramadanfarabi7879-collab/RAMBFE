@@ -2766,7 +2766,7 @@
 
                                        enterkeyhint="search" autocomplete="off"
 
-                                       placeholder="ابحث باسم الصنف (عربي / إنجليزي / علمي / شركة) أو امسح الباركود / QR / GTIN / الكود..."
+                                       placeholder="بحث المخزون قبل الجرد (كل مخازن النظام) أو مسح الباركود / QR / GTIN / الكود / الدفعة..."
 
                                        class="w-full pr-10 pl-28 py-2.5 bg-slate-50 border-2 border-indigo-500 rounded-xl text-sm font-medium focus:bg-white focus:border-indigo-700 focus:outline-none transition shadow-inner">
 
@@ -2796,7 +2796,7 @@
 
                             <button type="button" id="btn-stk-toggle-stock-filter" aria-pressed="false"
                                     class="h-[42px] px-2.5 rounded-xl text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95 shrink-0"
-                                    title="تطبيق فلترة المخزون على البحث بالاسم فقط للمخزن المحدد (البحث بالكود أو الباركود أو QR يظل مباشراً بدون فلترة)">
+                                    title="فلترة البحث بالاسم على الأصناف ذات الرصيد الفعلي المسجل بالنظام قبل الجرد (البحث بالكود أو الباركود أو QR يظل مباشراً بدون فلترة)">
                                 <span id="stk-stock-filter-switch" class="w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none">
                                     <span id="stk-stock-filter-knob" class="w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0 pointer-events-none"></span>
                                 </span>
@@ -2945,27 +2945,57 @@
 
                             <div class="p-2 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
 
-                                <div class="flex items-center gap-2">
+                                <div class="flex items-center gap-2 flex-wrap">
 
                                     <strong class="text-slate-800">أصناف الاستور المسحوبة:</strong>
 
                                     <span id="stk-items-table-count" class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold text-[11px] font-mono">0 بند</span>
 
+                                    <span class="text-[10.5px] text-slate-500 font-medium hidden sm:inline">• بحث مستقل داخل جرد الاستور المحدد فقط</span>
+
                                 </div>
 
-                                <div class="flex items-center gap-2">
+                                <div class="flex items-center gap-1.5 flex-wrap sm:flex-nowrap w-full sm:w-auto">
 
-                                    <!-- بحث في الأصناف المجرودة متبع لنفس طرق البرنامج -->
+                                    <!-- خانة البحث المستقلة داخل جرد الاستور المحدد فقط -->
 
-                                    <input type="text" id="stk-items-search-filter" enterkeyhint="search" placeholder="بحث بالاسم، الكود، الباركود، أو الباتش..."
+                                    <div class="relative flex-1 sm:flex-initial">
 
-                                           tabindex="100"
+                                        <input type="text" id="stk-items-search-filter" dir="auto" enterkeyhint="search" autocomplete="off"
 
-                                           class="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs focus:border-indigo-600 outline-none w-56">
+                                               placeholder="بحث داخل الاستور المحدد فقط (اسم / كود / باركود / GTIN / QR / دفعة)..."
+
+                                               tabindex="100"
+
+                                               class="pl-24 pr-2.5 py-1 bg-white border border-indigo-300 rounded-lg text-xs focus:border-indigo-600 outline-none w-full sm:w-80">
+
+                                        <button type="button" id="btn-stk-store-search-mode"
+
+                                                class="absolute left-1 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-[10px] font-bold transition-all duration-150 flex items-center gap-1 select-none cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300"
+
+                                                title="نمط البحث داخل الاستور المحدد">
+
+                                            <span id="stk-store-mode-icon" class="text-[11px] pointer-events-none">🔦</span>
+
+                                            <span id="stk-store-mode-text" class="pointer-events-none">بداية</span>
+
+                                            <span id="stk-store-mode-switch" class="w-5 h-2.5 bg-slate-300 rounded-full relative inline-flex items-center p-0.5 pointer-events-none">
+
+                                                <span id="stk-store-mode-knob" class="w-1.5 h-1.5 bg-white rounded-full shadow-xs transition-transform duration-150 translate-x-0 pointer-events-none"></span>
+
+                                            </span>
+
+                                        </button>
+
+                                    </div>
 
                                 </div>
 
                             </div>
+
+                            <!-- لوحة ملخص نتائج البحث داخل الاستور المحدد (تظهر فقط عند البحث في الخانة الثانية) -->
+
+                            <div id="stk-store-search-summary" class="hidden bg-indigo-50/70 border-b border-indigo-200 px-3 py-2 text-xs space-y-1.5"></div>
 
 
 
@@ -5007,7 +5037,7 @@
 
     <!-- ملف الجافاسكريبت الرئيسي -->
 
-    <script src="app.js?v=20261110_v41_stk_name_only_filter"></script>
+    <script src="app.js?v=20261110_v42_dual_stk_search"></script>
 
 </body>
 

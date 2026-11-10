@@ -6702,18 +6702,30 @@ function initStocktakeTab() {
         }
     });
 
-    // 4. البحث في الأصناف المجرودة داخل الاستور المختار (يدعم مفتاح السهم / Enter في الموبايل والكمبيوتر)
+    // 4. الخانة الثانية المستقلة: البحث داخل الاستور المختار فقط (تجميع الكميات المعدودة + حالة لم يُجرد بعد)
+    updateStkStoreSearchModeUI();
+    document.getElementById('btn-stk-store-search-mode')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isStkStoreSearchGeneralized = !isStkStoreSearchGeneralized;
+        localStorage.setItem('stk_store_search_mode', isStkStoreSearchGeneralized ? 'contains' : 'start');
+        updateStkStoreSearchModeUI();
+        const curQ = (itemsSearch?.value || '').replace(/^\s+/, '');
+        loadCurrentStoreItems(curQ);
+        itemsSearch?.focus();
+    });
+
     const handleItemsSearchExecute = () => {
         clearTimeout(stockItemsSearchTimer);
-        const q = itemsSearch?.value?.trim() || '';
+        const q = (itemsSearch?.value || '').replace(/^\s+/, '');
         loadCurrentStoreItems(q);
     };
 
     itemsSearch?.addEventListener('input', () => {
         clearTimeout(stockItemsSearchTimer);
         stockItemsSearchTimer = setTimeout(() => {
-            loadCurrentStoreItems(itemsSearch.value.trim());
-        }, 200);
+            loadCurrentStoreItems((itemsSearch?.value || '').replace(/^\s+/, ''));
+        }, 180);
     });
 
     itemsSearch?.addEventListener('keydown', (e) => {
@@ -7505,13 +7517,9 @@ function selectActiveStockStore(storeNo, storeName) {
     if (titleEl) titleEl.textContent = `${storeNo} (${storeName || ''})`;
     if (typeof updateStkStockFilterUI === 'function') updateStkStockFilterUI();
 
-    const activeScanInp = document.getElementById('stk-scan-input');
-    const curQ = (activeScanInp?.value || '').replace(/^\s+/, '');
-    if (isStkStockFilterEnabled && curQ && typeof looksLikeDirectBarcodeOrQr === 'function' && !looksLikeDirectBarcodeOrQr(curQ)) {
-        fetchAndRenderStkCatalogSearch(curQ);
-    }
-
-    loadCurrentStoreItems();
+    const box2Inp = document.getElementById('stk-items-search-filter');
+    const box2Q = (box2Inp?.value || '').replace(/^\s+/, '');
+    loadCurrentStoreItems(box2Q);
     loadStocktakeStores();
     setTimeout(() => document.getElementById('stk-scan-input')?.focus(), 150);
 }
@@ -8436,7 +8444,7 @@ function updateStkStockFilterUI() {
         if (sw) sw.className = 'w-6 h-3 bg-emerald-800 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
         if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 -translate-x-3 pointer-events-none';
         if (feedbackText && (feedbackText.textContent.includes('جاهز لمسح') || feedbackText.textContent.includes('فلترة البحث بالاسم'))) {
-            feedbackText.textContent = `🟢 فلترة البحث بالاسم على المخزون (${currentActiveStoreNo || ''}) مفعّلة — الباركود والكود وQR تبقى مباشرة بدون فلترة`;
+            feedbackText.textContent = `🟢 فلترة المخزون قبل الجرد مفعّلة (البحث بالاسم في مخزون النظام) — الكود والباركود وQR تبقى مباشرة بدون فلترة`;
         }
     } else {
         if (btn) {
@@ -8499,12 +8507,9 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
     const seq = ++stkSearchReqSeq;
     try {
         const mode = isStkGeneralizedSearch ? 'contains' : 'start';
-        const storeParam = encodeURIComponent(currentActiveStoreNo || '');
         const isDirectCodeOrBarcode = isStkCodeOrBarcodeSearch(rawQuery);
         const requestStockOnly = isStkStockFilterEnabled && !isDirectCodeOrBarcode;
-        const url = requestStockOnly
-            ? `/api/stock/search?query=${encodeURIComponent(rawQuery)}&mode=${mode}&store_no=${storeParam}&limit=100&offset=0`
-            : `/api/catalog/products?query=${encodeURIComponent(rawQuery)}&mode=${mode}&limit=100&offset=0`;
+        const url = `/api/stock/preinventory-search?query=${encodeURIComponent(rawQuery)}&mode=${mode}&stock_only=${requestStockOnly ? '1' : '0'}&limit=100&offset=0`;
         const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json().catch(() => ({}));
         if (seq !== stkSearchReqSeq) return;
@@ -8512,14 +8517,13 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
 
         const items = data.items || [];
         const total = data.total ?? items.length;
-        const activeStoreLabel = data.store_no || currentActiveStoreNo || '';
         const effectiveStockFiltered = requestStockOnly && !data.bypassed_stock_filter;
         stkSearchResults = items;
         stkActiveSearchIndex = -1;
 
         if (items.length === 0) {
             const emptyMsg = effectiveStockFiltered
-                ? `لا توجد أصناف ذات رصيد مخزني متاح أو مدرجة في الجرد الجاري للمخزن (<span class="font-mono font-bold text-slate-600">${escapeHtml(activeStoreLabel)}</span>) تطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"`
+                ? `لا توجد أصناف ذات رصيد مخزني مسجل قبل الجرد في أي مخزن بالنظام تطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"`
                 : `لم يتم العثور على أي صنف في كرت الصنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"`;
             dd.innerHTML = `
                 <div class="p-4 text-center text-slate-400 font-medium">
@@ -8532,12 +8536,12 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
         }
 
         const headerLabel = effectiveStockFiltered
-            ? `أصناف برصيد/جرد (${escapeHtml(activeStoreLabel)}): <span class="text-emerald-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`
-            : `نتائج مطابقة من كرت الصنف: <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`;
+            ? `أصناف لها رصيد أصلي قبل الجرد بالنظام: <span class="text-emerald-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`
+            : `بحث المخزون قبل الجرد وكرت الصنف: <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})`;
         let html = `
             <div class="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between text-[11px] font-bold text-slate-600">
                 <span>${headerLabel}</span>
-                <span class="text-[10px] text-slate-400">اضغط على الصنف أو استخدم ↑↓ و Enter لإضافته للجرد</span>
+                <span class="text-[10px] text-slate-400">اضغط على الصنف أو استخدم ↑↓ و Enter لإضافته لجرد ${escapeHtml(currentActiveStoreNo || '')}</span>
             </div>
             <div id="stk-search-items-list" class="divide-y divide-slate-100 overflow-y-auto max-h-[55vh]">
         `;
@@ -8548,18 +8552,23 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
             const sciName = it.scientific_name || '';
             const company = it.company || '';
             const price = parseFloat(it.selling_price || 0).toFixed(2);
-            const stockQty = parseFloat(it.store_stock_qty || 0);
-            const batchCount = parseInt(it.store_batch_count || 0, 10);
-            const inCurrStk = !!it.in_current_stocktake;
+            const preStores = Array.isArray(it.pre_inventory_stores) ? it.pre_inventory_stores : [];
+            const matchedBatches = Array.isArray(it.matched_batch_numbers) ? it.matched_batch_numbers : [];
             const gList = (it.gtin_list || []).filter(Boolean);
             const bList = (it.barcode_list || []).filter(Boolean);
             const barcodeBadge = bList[0] || it.barcode || '';
             const gtinBadge = gList[0] || it.gtin || '';
-            const stockBadgeHtml = stockQty > 0
-                ? `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-mono text-[10px] font-bold" title="إجمالي الرصيد المتاح في المخزن">رصيد: ${Number.isInteger(stockQty) ? stockQty : stockQty.toFixed(2)}${batchCount > 1 ? ` (${batchCount} دفعات)` : ''}</span>`
-                : '';
-            const stkEntryBadgeHtml = inCurrStk
-                ? `<span class="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[10px] font-bold">بالجرد الجاري</span>`
+
+            const storeBadgesHtml = preStores.length > 0
+                ? preStores.map(st => {
+                    const qFmt = Number.isInteger(st.system_qty) ? st.system_qty : Number(st.system_qty || 0).toFixed(2);
+                    const bTxt = st.batch_count > 1 ? ` (${st.batch_count} دفعات)` : '';
+                    return `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-mono text-[10px] font-bold" title="رصيد النظام الأصلي قبل الجرد في ${escapeHtml(st.store_name || st.store_no)}">📦 ${escapeHtml(st.store_no)}${st.store_name ? ` (${escapeHtml(st.store_name)})` : ''}: ${qFmt}${bTxt}</span>`;
+                }).join(' ')
+                : `<span class="px-1.5 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[10px]">بدون رصيد مسجل قبل الجرد</span>`;
+
+            const batchMatchBadgeHtml = matchedBatches.length > 0
+                ? `<span class="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded font-mono text-[9.5px] font-bold">دفعة: ${escapeHtml(matchedBatches.join(', '))}</span>`
                 : '';
 
             html += `
@@ -8574,12 +8583,12 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
                                 ${company ? `<span class="px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[9.5px] font-medium">${escapeHtml(company)}</span>` : ''}
                                 ${barcodeBadge ? `<span class="font-mono text-slate-600">باركود: ${escapeHtml(barcodeBadge)}</span>` : ''}
                                 ${gtinBadge ? `<span class="font-mono text-indigo-600">GTIN: ${escapeHtml(gtinBadge)}</span>` : ''}
+                                ${batchMatchBadgeHtml}
                             </div>
                         </div>
                     </div>
-                    <div class="flex items-center gap-2 shrink-0">
-                        ${stockBadgeHtml}
-                        ${stkEntryBadgeHtml}
+                    <div class="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
+                        ${storeBadgesHtml}
                         <span class="font-mono font-bold text-emerald-700 text-xs">${price} ر.س</span>
                         <button type="button" class="btn-stk-pick-item px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition shadow-xs" data-code="${escapeHtml(it.code)}">
                             ➕ إضافة للجرد
@@ -8842,23 +8851,159 @@ async function processStoreScan(rawCode, explicitProductCode = '') {
     }
 }
 
-// تحميل بنود الاستور الحالي
+let isStkStoreSearchGeneralized = localStorage.getItem('stk_store_search_mode') === 'contains';
+let stkStoreSearchReqSeq = 0;
+
+function updateStkStoreSearchModeUI() {
+    const btn = document.getElementById('btn-stk-store-search-mode');
+    const icon = document.getElementById('stk-store-mode-icon');
+    const text = document.getElementById('stk-store-mode-text');
+    const sw = document.getElementById('stk-store-mode-switch');
+    const knob = document.getElementById('stk-store-mode-knob');
+
+    if (isStkStoreSearchGeneralized) {
+        if (btn) {
+            btn.className = 'absolute left-1 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-[10px] font-bold transition-all duration-150 flex items-center gap-1 select-none cursor-pointer border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700';
+            btn.title = 'بحث معمم داخل الاستور (يحتوي على)';
+        }
+        if (icon) icon.textContent = '💡';
+        if (text) text.textContent = (typeof currentAppLang !== 'undefined' && currentAppLang === 'en') ? 'Contains' : 'معمم';
+        if (sw) sw.className = 'w-5 h-2.5 bg-emerald-800 rounded-full relative inline-flex items-center p-0.5 pointer-events-none';
+        if (knob) knob.className = 'w-1.5 h-1.5 bg-white rounded-full shadow-xs transition-transform duration-150 -translate-x-2.5 pointer-events-none';
+    } else {
+        if (btn) {
+            btn.className = 'absolute left-1 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-[10px] font-bold transition-all duration-150 flex items-center gap-1 select-none cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300';
+            btn.title = 'بحث بالبداية داخل الاستور (يبدأ بـ)';
+        }
+        if (icon) icon.textContent = '🔦';
+        if (text) text.textContent = (typeof currentAppLang !== 'undefined' && currentAppLang === 'en') ? 'Starts' : 'بداية';
+        if (sw) sw.className = 'w-5 h-2.5 bg-slate-300 rounded-full relative inline-flex items-center p-0.5 pointer-events-none';
+        if (knob) knob.className = 'w-1.5 h-1.5 bg-white rounded-full shadow-xs transition-transform duration-150 translate-x-0 pointer-events-none';
+    }
+}
+
+function renderStoreSearchSummary(searchData) {
+    const panel = document.getElementById('stk-store-search-summary');
+    if (!panel) return;
+    const q = String(searchData?.query || '').trim();
+    if (!q) {
+        panel.innerHTML = '';
+        panel.classList.add('hidden');
+        return;
+    }
+
+    const stNo = searchData.store_no || currentActiveStoreNo || '';
+    const stName = searchData.store?.store_name || stNo;
+    const summaries = Array.isArray(searchData.product_summaries) ? searchData.product_summaries : [];
+    const statusLabelMap = { new: 'جديد', in_progress: 'جاري الجرد', completed: 'معتمد/منتهي', settled: 'مرحّل' };
+
+    if (summaries.length === 0) {
+        panel.innerHTML = `
+            <div class="flex items-center justify-between text-slate-600 py-1">
+                <span>🔍 نتيجة البحث داخل جرد الاستور <strong class="font-mono text-indigo-800">${escapeHtml(stNo)} (${escapeHtml(stName)})</strong> عن "<strong class="text-slate-900">${escapeHtml(q)}</strong>": <span class="font-bold text-rose-700">لا توجد أي أصناف أو بنود مطابقة</span></span>
+            </div>
+        `;
+        panel.classList.remove('hidden');
+        return;
+    }
+
+    let html = `
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-indigo-200/80 text-[11px] font-bold text-indigo-950">
+            <span>📋 نتائج البحث المستقل داخل جرد الاستور: <span class="font-mono text-indigo-700">${escapeHtml(stNo)} (${escapeHtml(stName)})</span> — ${searchData.counted_matches_count || 0} صنف مجرود • ${searchData.uncounted_matches_count || 0} غير مجرود بعد</span>
+            <span class="text-[10px] text-slate-500 font-medium">الأرقام تعرض الكمية المعدودة فعلياً في هذا الاستور فقط</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-0.5">
+    `;
+
+    summaries.slice(0, 12).forEach(s => {
+        const qFmt = Number.isInteger(s.total_counted_qty) ? s.total_counted_qty : Number(s.total_counted_qty || 0).toFixed(2);
+        const sysStoreFmt = Number.isInteger(s.store_system_qty) ? s.store_system_qty : Number(s.store_system_qty || 0).toFixed(2);
+        const stCycleLabel = statusLabelMap[s.store_status] || s.store_status || 'جاري';
+
+        if (s.is_counted_in_store) {
+            const batchesHtml = (s.batch_rows || []).map(b => {
+                const bQty = Number.isInteger(b.counted_qty) ? b.counted_qty : Number(b.counted_qty || 0).toFixed(2);
+                return `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-emerald-300 text-emerald-900 font-mono text-[10px]">دفعة: <strong>${escapeHtml(b.batch_number)}</strong>${b.expiry_date && b.expiry_date !== '-' ? ` (${escapeHtml(b.expiry_date)})` : ''} • معدود: <strong>${bQty}</strong></span>`;
+            }).join(' ');
+
+            html += `
+                <div class="bg-white border border-emerald-300 rounded-lg p-2 flex flex-col gap-1 shadow-xs">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                            <div class="font-bold text-slate-900 text-xs truncate" dir="ltr">${escapeHtml(s.name_en)}</div>
+                            <div class="text-[10.5px] text-slate-600 flex items-center gap-2 flex-wrap">
+                                <span class="font-mono font-bold text-indigo-700">${escapeHtml(s.product_code)}</span>
+                                ${s.name_ar ? `<span>${escapeHtml(s.name_ar)}</span>` : ''}
+                                ${s.barcode ? `<span class="font-mono">باركود: ${escapeHtml(s.barcode)}</span>` : ''}
+                            </div>
+                        </div>
+                        <span class="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-mono font-bold text-[11px] shrink-0">✅ المعدود في ${escapeHtml(stNo)}: ${qFmt}</span>
+                    </div>
+                    <div class="flex items-center gap-1 flex-wrap pt-0.5">${batchesHtml}</div>
+                </div>
+            `;
+        } else {
+            html += `
+                <div class="bg-white/90 border border-slate-300 rounded-lg p-2 flex flex-col gap-1">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                            <div class="font-bold text-slate-800 text-xs truncate" dir="ltr">${escapeHtml(s.name_en)}</div>
+                            <div class="text-[10.5px] text-slate-500 flex items-center gap-2 flex-wrap">
+                                <span class="font-mono font-bold text-slate-700">${escapeHtml(s.product_code)}</span>
+                                ${s.name_ar ? `<span>${escapeHtml(s.name_ar)}</span>` : ''}
+                                ${s.barcode ? `<span class="font-mono">باركود: ${escapeHtml(s.barcode)}</span>` : ''}
+                            </div>
+                        </div>
+                        <span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10.5px] shrink-0">⏳ لم يُجرد بعد في ${escapeHtml(stNo)} (المعدود: 0)</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500 flex items-center justify-between gap-2">
+                        <span>حالة دورة الاستور: <strong>${escapeHtml(stCycleLabel)}</strong> • ${s.store_system_qty > 0 ? `رصيد دفتري خاص بهذا الاستور: <strong class="font-mono">${sysStoreFmt}</strong>` : 'لا يوجد رصيد دفتري مسجل داخل هذا الاستور'}</span>
+                    </div>
+                </div>
+            `;
+        }
+    });
+
+    html += `</div>`;
+    panel.innerHTML = html;
+    panel.classList.remove('hidden');
+}
+
+// تحميل أو بحث بنود الاستور الحالي فقط (الخانة الثانية المستقلة)
 async function loadCurrentStoreItems(searchQ = '') {
+    const seq = ++stkStoreSearchReqSeq;
+    const rawQ = String(searchQ || '').replace(/^\s+/, '');
     try {
-        const url = `/api/stock/store/details?store_no=${encodeURIComponent(currentActiveStoreNo)}&query=${encodeURIComponent(searchQ)}`;
+        if (!rawQ.trim()) {
+            const url = `/api/stock/store/details?store_no=${encodeURIComponent(currentActiveStoreNo)}`;
+            const res = await fetch(url, { cache: 'no-store' });
+            const data = await res.json().catch(() => ({}));
+            if (seq !== stkStoreSearchReqSeq) return;
+            if (isUnavailableApiResponse(res, data) || data.success === false) {
+                return;
+            }
+            renderStoreSearchSummary({ query: '' });
+            renderCurrentStoreDetails(data);
+            return;
+        }
+
+        const mode = isStkStoreSearchGeneralized ? 'contains' : 'start';
+        const url = `/api/stock/store/search?store_no=${encodeURIComponent(currentActiveStoreNo)}&query=${encodeURIComponent(rawQ)}&mode=${mode}`;
         const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json().catch(() => ({}));
+        if (seq !== stkStoreSearchReqSeq) return;
         if (isUnavailableApiResponse(res, data) || data.success === false) {
             return;
         }
-        renderCurrentStoreDetails(data);
+        renderStoreSearchSummary(data);
+        renderCurrentStoreDetails(data.store_details || { store: data.store, items: data.items || [], stats: {} }, rawQ.trim());
     } catch (e) {
-        console.error('Failed to load store items', e);
+        console.error('Failed to load/search store items', e);
         updateConnectionBanner('offline');
     }
 }
 
-function renderCurrentStoreDetails(storeData) {
+function renderCurrentStoreDetails(storeData, activeSearchQuery = '') {
     const items = storeData.items || [];
     currentStoreItemsCache = items;
     const stats = storeData.stats || {};
@@ -8880,7 +9025,10 @@ function renderCurrentStoreDetails(storeData) {
     if (!tbody) return;
 
     if (!items || items.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="16" class="p-6 text-center text-slate-400">لا توجد أصناف مجرودة في هذا الاستور حتى الآن. ابدأ المسح بالاسكانر مباشرة!</td></tr>`;
+        const emptyRowMsg = activeSearchQuery
+            ? `لم يتم جرد أصناف تطابق "${escapeHtml(activeSearchQuery)}" داخل الاستور (${escapeHtml(currentActiveStoreNo || '')}) حتى الآن.`
+            : 'لا توجد أصناف مجرودة في هذا الاستور حتى الآن. ابدأ المسح بالاسكانر مباشرة!';
+        tbody.innerHTML = `<tr><td colspan="16" class="p-6 text-center text-slate-400">${emptyRowMsg}</td></tr>`;
         updateStockSelectionBar();
         return;
     }
@@ -9004,7 +9152,12 @@ async function saveStoreEntryQty(id, newQty) {
         });
         const data = await res.json();
         if (data.success && data.store_details) {
-            renderCurrentStoreDetails(data.store_details);
+            const box2Q = (document.getElementById('stk-items-search-filter')?.value || '').replace(/^\s+/, '');
+            if (box2Q.trim()) {
+                await loadCurrentStoreItems(box2Q);
+            } else {
+                renderCurrentStoreDetails(data.store_details);
+            }
             loadStocktakeStores();
         }
     } catch (e) {
@@ -9027,10 +9180,11 @@ async function deleteStoreItem(id) {
         if (data.success) {
             selectedStockEntryIds.delete(id);
             updateStockSelectionBar();
-            if (data.store_details) {
-                renderCurrentStoreDetails(data.store_details);
+            const box2Q = (document.getElementById('stk-items-search-filter')?.value || '').replace(/^\s+/, '');
+            if (box2Q.trim() || !data.store_details) {
+                await loadCurrentStoreItems(box2Q);
             } else {
-                await loadCurrentStoreItems();
+                renderCurrentStoreDetails(data.store_details);
             }
             await loadStocktakeStores();
             showCatalogToast('🗑️ تم مسح الصنف من الجرد بنجاح');

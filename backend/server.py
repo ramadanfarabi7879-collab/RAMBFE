@@ -24,7 +24,7 @@ except:
 try:
     from .db import (
         init_db, get_stats, get_next_product_code,
-        save_or_update_product, delete_product, bulk_delete_products, search_products,
+        save_or_update_product, delete_product, bulk_delete_products, search_products, search_preinventory_products,
         get_product_by_code, find_product_by_gtin_or_barcode,
         get_or_create_draft_invoice, create_new_invoice, get_invoice_details,
         scan_qr_to_invoice, delete_scanned_serial, delete_invoice_line,
@@ -42,7 +42,7 @@ try:
     from .excel_exporter import export_invoice_to_excel, export_invoice_stock_count_to_excel, export_invoice_custom_columns_to_excel, export_catalog_to_excel
     from .stock_manager import (
         get_all_stores, create_new_store, update_store, delete_store,
-        get_store_stocktake_details, scan_item_to_store,
+        get_store_stocktake_details, search_store_stocktake_items, scan_item_to_store,
         update_entry_quantity, delete_entry_item,
         clear_store_stocktake, settle_store_stocktake, commit_stores_stocktake, populate_store_from_inventory, save_stock_batch_count,
         upload_inventory_excel, export_store_stocktake_to_excel,
@@ -52,7 +52,7 @@ try:
 except (ImportError, ValueError):
     from backend.db import (
         init_db, get_stats, get_next_product_code,
-        save_or_update_product, delete_product, bulk_delete_products, search_products,
+        save_or_update_product, delete_product, bulk_delete_products, search_products, search_preinventory_products,
         get_product_by_code, find_product_by_gtin_or_barcode,
         get_or_create_draft_invoice, create_new_invoice, get_invoice_details,
         scan_qr_to_invoice, delete_scanned_serial, delete_invoice_line,
@@ -70,7 +70,7 @@ except (ImportError, ValueError):
     from backend.excel_exporter import export_invoice_to_excel, export_invoice_stock_count_to_excel, export_invoice_custom_columns_to_excel, export_catalog_to_excel
     from backend.stock_manager import (
         get_all_stores, create_new_store, update_store, delete_store,
-        get_store_stocktake_details, scan_item_to_store,
+        get_store_stocktake_details, search_store_stocktake_items, scan_item_to_store,
         update_entry_quantity, delete_entry_item,
         clear_store_stocktake, settle_store_stocktake, commit_stores_stocktake, populate_store_from_inventory, save_stock_batch_count,
         upload_inventory_excel, export_store_stocktake_to_excel,
@@ -472,6 +472,26 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             limit = int(limit_str) if limit_str.isdigit() else 50
             offset = int(offset_str) if offset_str.isdigit() else 0
             self.send_json(search_products(q, limit, offset, match_mode=mode, stock_only=True, store_no=store_no))
+            return
+
+        # 3c. الخانة الأولى المستقلة في شاشة الجرد: البحث في المخزون الفعلي بالنظام قبل الجرد (عبر كافة المخازن)
+        if path == '/api/stock/preinventory-search':
+            q = (params.get('query', [''])[0] or params.get('q', [''])[0]).lstrip()
+            mode = params.get('mode', ['start'])[0].strip().lower()
+            stock_only = params.get('stock_only', ['0'])[0].strip().lower() in ('1', 'true', 'yes')
+            limit_str = params.get('limit', ['100'])[0]
+            offset_str = params.get('offset', ['0'])[0]
+            limit = int(limit_str) if limit_str.isdigit() else 100
+            offset = int(offset_str) if offset_str.isdigit() else 0
+            self.send_json(search_preinventory_products(q, limit, offset, match_mode=mode, stock_only=stock_only))
+            return
+
+        # 3d. الخانة الثانية المستقلة في شاشة الجرد: البحث داخل جرد الاستور المحدد فقط
+        if path == '/api/stock/store/search':
+            q = (params.get('query', [''])[0] or params.get('q', [''])[0]).lstrip()
+            mode = params.get('mode', ['start'])[0].strip().lower()
+            store_no = params.get('store_no', [''])[0].strip()
+            self.send_json(search_store_stocktake_items(store_no=store_no, query=q, match_mode=mode))
             return
 
         # 4. جلب صنف واحد بالكود

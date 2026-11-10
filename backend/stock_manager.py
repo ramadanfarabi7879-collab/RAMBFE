@@ -10,7 +10,9 @@ from .db import (
     clean_numeric_code,
     clean_barcode_preserve_zeros,
     find_product_by_gtin_or_barcode,
-    get_product_by_code
+    get_product_by_code,
+    _build_product_search_where,
+    _attach_product_barcodes
 )
 from .qr_parser import parse_qr_code, extract_clean_gtin, parse_expiry_date
 
@@ -539,6 +541,300 @@ def get_store_stocktake_details(store_no: str = 'ST-001', search_query: str = ''
             "scanned_serials_count": ser_row['cnt'] if ser_row else 0
         }
     }
+
+
+def search_store_stocktake_items(store_no: str = 'ST-001', query: str = '', match_mode: str = 'start') -> Dict[str, Any]:
+    """
+    الخانة الثانية المستقلة في شاشة الجرد: البحث داخل الاستور المحدد فقط (قراءة فقط).
+    - يقرأ بيانات الجرد حصراً من stocktake_entries WHERE store_no = ? (لا يتأثر أبداً بجرد أي استور آخر).
+    - إذا لم يُجرد الصنف بعد في هذا الاستور: يعرض حالته صراحةً (لم يُجرد بعد / 0 معدود) ولا يستبدلها برصيد مخزون عام أو استور آخر.
+    - يجمع الكميات المعدودة فعلياً عبر الدفعات/الرفوف داخل الاستور نفسه دون تكرار (حسب unique id).
+    - يدعم البحث بالاسم العربي/الإنجليزي/العلمي/الشركة/الكود/الباركود/GTIN/QR-GS1/رقم الدفعة بوضعي Start و Contains.
+    """
+    raw_q = str(query or '').lstrip()
+    q_trim = raw_q.strip()
+    is_contains = str(match_mode or '').lower() in ('contains', 'generalized', 'all', 'true', '1')
+
+    conn = get_connection()
+    resolved_store = resolve_valid_store_no(conn, store_no)
+    c = conn.cursor()
+
+    c.execute("SELECT * FROM stock_stores WHERE store_no = ?", (resolved_store,))
+    store_row = c.fetchone()
+    store_dict = dict(store_row) if store_row else {"store_no": resolved_store, "store_name": "الاستور الرئيسي", "status": "new"}
+    store_status = str(store_dict.get("status") or "new").strip().lower()
+
+    # إحصائيات الاستور الحالية (قراءة فقط)
+    c.execute("""
+        SELECT
+            COUNT(DISTINCT product_code) AS total_products,
+            COUNT(*) AS total_lines,
+            COALESCE(SUM(counted_qty), 0) AS total_qty,
+            COALESCE(SUM(counted_qty * cost_price), 0) AS total_counted_cost,
+            COALESCE(SUM(counted_qty * selling_price), 0) AS total_counted_sale,
+            COALESCE(SUM(CASE WHEN is_new_batch = 1 THEN 1 ELSE 0 END), 0) AS new_batches_count
+        FROM stocktake_entries
+        WHERE store_no = ?
+    """, (resolved_store,))
+    act = c.fetchone()
+
+    c.execute("""
+        SELECT
+            COALESCE(SUM(system_qty), 0) AS total_sys_qty,
+            COALESCE(SUM(system_qty * cost_price), 0) AS total_sys_cost,
+            COALESCE(SUM(system_qty * selling_price), 0) AS total_sys_sale
+        FROM inventory_records
+        WHERE store_no = ?
+    """, (resolved_store,))
+    sys_rec = c.fetchone()
+
+    c.execute("SELECT COUNT(*) AS cnt FROM stocktake_scanned_serials WHERE store_no = ?", (resolved_store,))
+    ser_row = c.fetchone()
+
+    stats = {
+        "store_no": resolved_store,
+        "counted_products": act["total_products"] if act else 0,
+        "counted_lines": act["total_lines"] if act else 0,
+        "counted_qty": round(float(act["total_qty"] or 0.0), 2) if act else 0.0,
+        "system_qty": round(float(sys_rec["total_sys_qty"] or 0.0), 2) if sys_rec else 0.0,
+        "system_cost": round(float(sys_rec["total_sys_cost"] or 0.0), 2) if sys_rec else 0.0,
+        "system_sale": round(float(sys_rec["total_sys_sale"] or 0.0), 2) if sys_rec else 0.0,
+        "counted_cost": round(float(act["total_counted_cost"] or 0.0), 2) if act else 0.0,
+        "counted_sale": round(float(act["total_counted_sale"] or 0.0), 2) if act else 0.0,
+        "diff_cost": round(float((act["total_counted_cost"] or 0.0) - (sys_rec["total_sys_cost"] or 0.0)), 2) if (act and sys_rec) else 0.0,
+        "diff_sale": round(float((act["total_counted_sale"] or 0.0) - (sys_rec["total_sys_sale"] or 0.0)), 2) if (act and sys_rec) else 0.0,
+        "new_batches_count": act["new_batches_count"] if act else 0,
+        "scanned_serials_count": ser_row["cnt"] if ser_row else 0,
+    }
+
+    if not q_trim:
+        c.execute("SELECT * FROM stocktake_entries WHERE store_no = ? ORDER BY id DESC", (resolved_store,))
+        all_rows = [dict(r) for r in c.fetchall()]
+        prod_codes = list({str(r.get("product_code") or "").strip() for r in all_rows if r.get("product_code")})
+        prod_map: Dict[str, Dict[str, Any]] = {}
+        for i in range(0, len(prod_codes), 400):
+            chunk = prod_codes[i:i + 400]
+            ph = ",".join(["?"] * len(chunk))
+            c.execute(f"SELECT code, name_en, name, cost_price, selling_price, unit_price FROM products WHERE code IN ({ph})", tuple(chunk))
+            for pr in c.fetchall():
+                prod_map[pr["code"]] = dict(pr)
+        for it in all_rows:
+            pr = prod_map.get(str(it.get("product_code") or "").strip())
+            if pr:
+                if pr.get("name_en"):
+                    it["product_name"] = pr["name_en"]
+                elif not it.get("product_name") and pr.get("name"):
+                    it["product_name"] = pr["name"]
+                if (not it.get("cost_price") or float(it["cost_price"]) == 0) and pr.get("cost_price"):
+                    it["cost_price"] = float(pr["cost_price"])
+                if not it.get("selling_price") or float(it["selling_price"]) == 0:
+                    sp = pr.get("selling_price") or pr.get("unit_price")
+                    if sp:
+                        it["selling_price"] = float(sp)
+            if it.get("batch_number"):
+                it["batch_number"] = str(it["batch_number"]).strip().upper()
+        conn.close()
+        store_details = {"store": store_dict, "items": all_rows, "stats": stats}
+        return {
+            "success": True,
+            "query": "",
+            "store_no": resolved_store,
+            "store": store_dict,
+            "items": all_rows,
+            "product_summaries": [],
+            "store_details": store_details,
+        }
+
+    # 1. تحليل QR / GS1 إن وجد
+    qr_gtin = ""
+    qr_batch = ""
+    parsed_qr = parse_qr_code(q_trim)
+    qr_data = parsed_qr.get("data") or {}
+    if parsed_qr.get("success") and (qr_data.get("gtin") or qr_data.get("batch") or parsed_qr.get("gtin")):
+        raw_g = qr_data.get("gtin") or parsed_qr.get("gtin") or ""
+        qr_gtin = clean_barcode_preserve_zeros(extract_clean_gtin(raw_g) or raw_g)
+        qr_batch = str(qr_data.get("batch") or parsed_qr.get("batch_number") or "").strip().upper()
+
+    effective_raw_q = qr_gtin if qr_gtin else raw_q
+    effective_q = effective_raw_q.strip()
+
+    # 2. جلب الأصناف المطابقة من كرت الصنف (مع نفس قواعد Start / Contains / Word Boundary / 500MG / العربي / الإنجليزي)
+    matched_prods: Dict[str, Dict[str, Any]] = {}
+    ordered_codes: List[str] = []
+    if effective_q:
+        where_sql, params, order_params = _build_product_search_where(effective_raw_q, match_mode)
+        c.execute(f"""
+            SELECT DISTINCT p.* FROM products p
+            LEFT JOIN product_barcodes pb ON p.code = pb.product_code
+            WHERE ({where_sql})
+            ORDER BY
+                CASE
+                    WHEN p.code = ? THEN 1
+                    WHEN p.code LIKE ? THEN 2
+                    WHEN p.name_en LIKE ? OR p.normalized_name_en LIKE ? THEN 3
+                    WHEN p.name_ar LIKE ? THEN 4
+                    WHEN p.barcode = ? OR p.gtin = ? THEN 5
+                    WHEN p.barcode LIKE ? OR p.gtin LIKE ? THEN 6
+                    ELSE 7
+                END,
+                p.id DESC
+            LIMIT 80
+        """, tuple(list(params) + order_params))
+        for pr in c.fetchall():
+            pd = dict(pr)
+            _attach_product_barcodes(pd)
+            pc = pd["code"]
+            if pc not in matched_prods:
+                matched_prods[pc] = pd
+                ordered_codes.append(pc)
+
+    # 3. جلب بنود stocktake_entries داخل هذا الاستور فقط التي تطابق مباشرةً (شامل رقم الدفعة والإدخالات الخاصة)
+    direct_st_conds = [
+        "UPPER(TRIM(COALESCE(batch_number, ''))) LIKE ?",
+        "product_code LIKE ?",
+        "product_name LIKE ?",
+        "barcode LIKE ?",
+        "gtin LIKE ?",
+    ]
+    st_pat = f"%{q_trim}%" if is_contains else f"{q_trim}%"
+    st_batch_pat = f"%{qr_batch or q_trim.upper()}%" if (is_contains or qr_batch) else f"{q_trim.upper()}%"
+    direct_st_params = [st_batch_pat, st_pat, st_pat, st_pat, st_pat]
+    c.execute(f"""
+        SELECT * FROM stocktake_entries
+        WHERE store_no = ? AND ({' OR '.join(direct_st_conds)})
+        ORDER BY id DESC
+    """, tuple([resolved_store] + direct_st_params))
+    direct_st_rows = [dict(r) for r in c.fetchall()]
+
+    # جمع كافة أكواد الأصناف ذات الصلة (من كرت الصنف أو من بنود الاستور المباشرة)
+    all_target_codes = list(ordered_codes)
+    for sr in direct_st_rows:
+        spc = str(sr.get("product_code") or "").strip()
+        if spc and spc not in matched_prods and spc not in all_target_codes:
+            all_target_codes.append(spc)
+
+    # جلب تعريف أي كود دخل عبر البحث برقم الدفعة فقط ولم يكن ضمن أول 80 نتيجة
+    missing_meta_codes = [pc for pc in all_target_codes if pc not in matched_prods]
+    for i in range(0, len(missing_meta_codes), 200):
+        chunk = missing_meta_codes[i:i + 200]
+        ph = ",".join(["?"] * len(chunk))
+        c.execute(f"SELECT * FROM products WHERE code IN ({ph})", tuple(chunk))
+        for pr in c.fetchall():
+            pd = dict(pr)
+            _attach_product_barcodes(pd)
+            matched_prods[pd["code"]] = pd
+
+    # 4. قراءة بنود الجرد من هذا الاستور فقط (stocktake_entries WHERE store_no = ?)
+    entries_by_id: Dict[int, Dict[str, Any]] = {}
+    for sr in direct_st_rows:
+        if qr_batch and str(sr.get("batch_number") or "").strip().upper() != qr_batch:
+            continue
+        entries_by_id[sr["id"]] = sr
+
+    if all_target_codes:
+        for i in range(0, len(all_target_codes), 200):
+            chunk = all_target_codes[i:i + 200]
+            ph = ",".join(["?"] * len(chunk))
+            c.execute(
+                f"SELECT * FROM stocktake_entries WHERE store_no = ? AND product_code IN ({ph}) ORDER BY id DESC",
+                tuple([resolved_store] + chunk)
+            )
+            for sr in c.fetchall():
+                sd = dict(sr)
+                if qr_batch and str(sd.get("batch_number") or "").strip().upper() != qr_batch:
+                    continue
+                entries_by_id[sd["id"]] = sd
+
+    # تجميع حسب product_code بدون تكرار أي صف (unique id)
+    entries_by_code: Dict[str, List[Dict[str, Any]]] = {}
+    matching_items = sorted(entries_by_id.values(), key=lambda x: x["id"], reverse=True)
+    for sd in matching_items:
+        pc = str(sd.get("product_code") or "").strip()
+        pr = matched_prods.get(pc)
+        if pr:
+            if pr.get("name_en"):
+                sd["product_name"] = pr["name_en"]
+            elif not sd.get("product_name") and pr.get("name"):
+                sd["product_name"] = pr["name"]
+        if sd.get("batch_number"):
+            sd["batch_number"] = str(sd["batch_number"]).strip().upper()
+        entries_by_code.setdefault(pc, []).append(sd)
+
+    # 5. قراءة الرصيد الدفتري الخاص بهذا الاستور فقط (إن وُجد في inventory_records WHERE store_no = ?) دون أي استور آخر
+    store_inv_by_code: Dict[str, float] = {}
+    if all_target_codes:
+        for i in range(0, len(all_target_codes), 200):
+            chunk = all_target_codes[i:i + 200]
+            ph = ",".join(["?"] * len(chunk))
+            c.execute(
+                f"SELECT product_code, COALESCE(SUM(system_qty), 0) AS sys_q "
+                f"FROM inventory_records WHERE store_no = ? AND product_code IN ({ph}) GROUP BY product_code",
+                tuple([resolved_store] + chunk)
+            )
+            for ir in c.fetchall():
+                store_inv_by_code[ir["product_code"]] = round(float(ir["sys_q"] or 0.0), 4)
+
+    conn.close()
+
+    # 6. بناء ملخصات الأصناف: المجرودة في هذا الاستور أولاً ثم المطابقة غير المجرودة بعد
+    counted_summaries = []
+    uncounted_summaries = []
+    for pc in all_target_codes:
+        pr = matched_prods.get(pc, {})
+        rows_for_prod = entries_by_code.get(pc, [])
+        is_counted = len(rows_for_prod) > 0
+        total_counted = round(sum(float(r.get("counted_qty") or 0.0) for r in rows_for_prod), 4)
+        batch_rows = [
+            {
+                "entry_id": r["id"],
+                "batch_number": str(r.get("batch_number") or "").strip().upper() or "-",
+                "expiry_date": r.get("expiry_date") or "-",
+                "counted_qty": round(float(r.get("counted_qty") or 0.0), 4),
+                "system_qty": round(float(r.get("system_qty") or 0.0), 4),
+                "is_new_batch": int(r.get("is_new_batch") or 0),
+                "updated_at": r.get("updated_at") or "",
+            }
+            for r in rows_for_prod
+        ]
+        summary_obj = {
+            "product_code": pc,
+            "name_en": pr.get("name_en") or pr.get("name") or (rows_for_prod[0].get("product_name") if rows_for_prod else "") or "",
+            "name_ar": pr.get("name_ar") or "",
+            "scientific_name": pr.get("scientific_name") or "",
+            "company": pr.get("company") or "",
+            "barcode": (pr.get("barcode_list") or [pr.get("barcode") or ""])[0] or (rows_for_prod[0].get("barcode") if rows_for_prod else ""),
+            "gtin": (pr.get("gtin_list") or [pr.get("gtin") or ""])[0] or (rows_for_prod[0].get("gtin") if rows_for_prod else ""),
+            "selling_price": float(pr.get("selling_price") or pr.get("unit_price") or (rows_for_prod[0].get("selling_price") if rows_for_prod else 0.0) or 0.0),
+            "store_no": resolved_store,
+            "store_name": store_dict.get("store_name") or resolved_store,
+            "store_status": store_status,
+            "is_counted_in_store": is_counted,
+            "total_counted_qty": total_counted,
+            "entry_count": len(rows_for_prod),
+            "store_system_qty": store_inv_by_code.get(pc, 0.0),
+            "batch_rows": batch_rows,
+        }
+        if is_counted:
+            counted_summaries.append(summary_obj)
+        else:
+            uncounted_summaries.append(summary_obj)
+
+    product_summaries = (counted_summaries + uncounted_summaries)[:30]
+    store_details = {"store": store_dict, "items": matching_items, "stats": stats}
+    return {
+        "success": True,
+        "query": q_trim,
+        "store_no": resolved_store,
+        "store": store_dict,
+        "items": matching_items,
+        "product_summaries": product_summaries,
+        "counted_matches_count": len(counted_summaries),
+        "uncounted_matches_count": len(uncounted_summaries),
+        "qr_gtin": qr_gtin,
+        "qr_batch": qr_batch,
+        "store_details": store_details,
+    }
+
 
 def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bool = False, product_code: str = '') -> Dict[str, Any]:
     """
