@@ -10,3 +10,8 @@ binding = "ASSETS"
 [[kv_namespaces]]
 binding = "TUNNEL_KV"
 id = "25093de7c2cc4c4695446d99434ed24a"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rambfe-db"
+database_id = "445cfd63-a8d0-4548-88a4-940d096e472e"

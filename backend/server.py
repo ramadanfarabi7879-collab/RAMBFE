@@ -325,6 +325,12 @@ def parse_multipart(body_bytes: bytes, boundary: bytes):
                 
     return fields, files
 
+try:
+    from . import cloud_sync
+except (ImportError, ValueError):
+    from backend import cloud_sync
+
+
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     # على ويندوز SO_REUSEADDR يسمح لعدة نسخ بفتح نفس المنفذ معاً (سبب تشغيل 3 خوادم متصارعة).
@@ -364,6 +370,16 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def forward_to_cloud(self, method: str, body: bytes = None) -> None:
+        """تمرير طلب الجرد إلى قاعدة البيانات السحابية (المصدر الوحيد لبيانات الجرد)."""
+        status, payload, ctype = cloud_sync.forward(method, self.path, body)
+        self.send_response(status)
+        self.send_header('Content-Type', ctype or 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(payload)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(payload)
+
     def read_full_body(self) -> bytes:
         """قراءة كامل جسم الطلب بدقة ومنع اقتطاع الملفات الكبيرة في مقبس ويندوز"""
         content_length = int(self.headers.get('Content-Length', 0))
@@ -389,8 +405,33 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             deep = params.get('deep', ['0'])[0] == '1'
             health = check_db_health(deep=deep)
             health["cloudflare_url"] = get_cloudflare_url() or None
+            health["cloud"] = cloud_sync.status()
             health["success"] = bool(health.get("healthy"))
             self.send_json(health, status=200 if health["healthy"] else 503)
+            return
+
+        # 0.أ بيانات الجرد والأصناف من السحابة (نفس البيانات على الموبايل والكمبيوتر حتى لو كان الكمبيوتر مطفأً)
+        if cloud_sync.is_enabled():
+            if path in ('/api/sync/events', '/api/mobile/poll'):
+                try:
+                    since = float(params.get('since', [0])[0] or 0)
+                except Exception:
+                    since = 0.0
+                res = cloud_sync.get_events(since)
+                # أحداث الكمبيوتر المحلية (مثل تحديث الكتالوج) تُدمج مع أحداث السحابة
+                local_evts = [e for e in SYNC_EVENTS_QUEUE if e.get('timestamp', 0) > since]
+                if local_evts:
+                    res["events"] = sorted(res["events"] + local_evts, key=lambda e: e.get('timestamp', 0))
+                    res["timestamp"] = max([res["timestamp"]] + [e.get('timestamp', 0) for e in local_evts])
+                self.send_json(res)
+                return
+            if path in cloud_sync.CLOUD_GET:
+                self.forward_to_cloud('GET')
+                return
+            if path in cloud_sync.PULL_BEFORE_GET:
+                cloud_sync.pull_stock_tables()
+        if path == '/api/cloud/status':
+            self.send_json(cloud_sync.status())
             return
 
         # 0.ب عرض قائمة النسخ الاحتياطية المتوفرة (محلي أو بتفويض إداري فقط)
@@ -831,6 +872,18 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
         body_bytes = self.read_full_body()
         content_type = self.headers.get('Content-Type', '')
+
+        if cloud_sync.is_enabled() and path in cloud_sync.CLOUD_POST:
+            is_invoice_scan = False
+            if path == '/api/mobile/scan':
+                try:
+                    _d = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+                    is_invoice_scan = str(_d.get('target') or 'stocktake').strip() != 'stocktake'
+                except Exception:
+                    pass
+            if not is_invoice_scan:
+                self.forward_to_cloud('POST', body_bytes)
+                return
 
         # نقاط نهاية النسخ الاحتياطي والاستعادة (محمية بالصلاحيات ومنع التراجع للخلف بدون موافقة صريحة)
         if path == '/api/backup/create':
@@ -1616,7 +1669,17 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
                 store_no = fields.get('store_no', 'ST-001')
                 replace_existing = fields.get('replace_existing', 'true').lower() in ('true', '1')
+                if cloud_sync.is_enabled():
+                    if not cloud_sync.pull_stock_tables(max_age=0):
+                        self.send_json({"success": False, "message": "تعذر الاتصال بالسحابة: تأكد من الإنترنت ثم أعد رفع الملف."}, 503)
+                        return
                 res = upload_inventory_excel(saved_path, store_no=store_no, replace_existing=replace_existing)
+                if res.get("success") and cloud_sync.is_enabled():
+                    try:
+                        cloud_sync.push_stock_tables()
+                    except Exception as push_err:
+                        res["success"] = False
+                        res["message"] = f"تم قراءة الملف لكن تعذر حفظه على السحابة: {push_err}"
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": f"خطأ أثناء رفع المخزون: {str(e)}"}, 500)
@@ -1714,6 +1777,11 @@ def run_server(port=8000, auto_open_browser=True):
         start_autosync(on_synced=lambda res: broadcast_sync('catalog_updated', res))
     except Exception as e:
         print(f"[!] تعذر تشغيل الربط التلقائي لملف الأصناف: {e}")
+
+    try:
+        cloud_sync.start_background_sync()
+    except Exception as e:
+        srv_logger.warning(f"Cloud sync start warning: {e}")
 
     if auto_open_browser:
         def open_browser_later():

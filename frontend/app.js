@@ -4254,6 +4254,7 @@ function initMobileCompanionScanner() {
 function startMobileCompanionPolling() {
     if (mobileCompanionPollTimer) return;
     mobileCompanionPollTimer = setInterval(async () => {
+        if (document.hidden) return;
         try {
             const res = await fetch(`/api/mobile/poll?since=${lastMobilePollTimestamp}`);
             const data = await res.json();
@@ -4306,7 +4307,7 @@ function startMobileCompanionPolling() {
         } catch (e) {
             // silent poll
         }
-    }, 1000);
+    }, 3000);
 }
 
 // ==================== تبويب 2: بطاقات ودليل الأصناف ====================

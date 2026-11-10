@@ -2,6 +2,7 @@
  * Cloudflare Worker for RAMBFE (Invoice Matcher & Real-time Stocktake)
  * Serves frontend static assets via env.ASSETS and proxies /api/* routes with 24/7 Auto-Healing Tunnel Discovery.
  */
+import { isCloudRoute, handleCloudApi } from './cloud/router.js';
 
 // لا توجد أي بيانات وهمية إطلاقاً لمنع ظهور أصناف غير حقيقية أو مسح الشاشة عند تجديد النفق
 let memoryProducts = [];
@@ -104,7 +105,7 @@ function jsonResponse(data, status = 200) {
             'Content-Type': 'application/json; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token'
         }
     });
 }
@@ -121,7 +122,7 @@ export default {
                 headers: {
                     'Access-Control-Allow-Origin': '*',
                     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
-                    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token'
                 }
             });
         }
@@ -164,6 +165,12 @@ export default {
             try {
                 rawProxyBody = await request.arrayBuffer();
             } catch (_) {}
+        }
+
+        // 0. عمليات الجرد والأصناف تعمل مباشرة على قاعدة بيانات Cloudflare D1 (بدون الحاجة لتشغيل الكمبيوتر)
+        if (env.DB && isCloudRoute(method, path)) {
+            const cloudRes = await handleCloudApi(request, env, ctx, url, rawProxyBody);
+            if (cloudRes) return cloudRes;
         }
 
         // 1. محاولة تمرير الطلب لنفق الكمبيوتر النشط، ثم الكاش السحابي، ثم الاكتشاف التلقائي من GitHub
@@ -222,9 +229,12 @@ export default {
 
         // توجيه المسار /mobile لصفحة mobile.html
         if (path === '/mobile' || path === '/mobile.html') {
-            const mobileReq = new Request(new URL('/mobile.html', request.url), request);
+            // Pages يحوّل mobile.html إلى /mobile و Workers العكس: نجرب الاثنين ونرجع المحتوى مباشرة بدون أي تحويل (منع حلقة التحويل)
             if (env.ASSETS) {
-                return env.ASSETS.fetch(mobileReq);
+                for (const p of ['/mobile.html', '/mobile']) {
+                    const r = await env.ASSETS.fetch(new Request(new URL(p, request.url), { method: 'GET', headers: request.headers }));
+                    if (r.status === 200) return r;
+                }
             }
         }
 
