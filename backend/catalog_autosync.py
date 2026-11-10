@@ -58,6 +58,11 @@ def _log(msg: str) -> None:
         print(f"[Catalog Auto-Sync] {msg}", flush=True)
     except Exception:
         pass
+    try:
+        from backend.db_safety import get_server_logger
+        get_server_logger().info(f"[Catalog Auto-Sync] {msg}")
+    except Exception:
+        pass
 
 
 def find_catalog_file() -> str:
@@ -152,14 +157,25 @@ def sync_now(force: bool = False) -> Dict[str, Any]:
         state = _load_state()
         prev = state.get("signature") or {}
 
-        # فحص أمان ذكي: إذا كانت قاعدة البيانات خالية من الأصناف يتم الاستيراد فوراً بدون تخطي
+        file_unchanged = (
+            prev.get("path") == sig["path"]
+            and prev.get("mtime") == sig["mtime"]
+            and prev.get("size") == sig["size"]
+        )
+        intentionally_cleared = bool(state.get("catalog_intentionally_cleared"))
+
+        # إذا فرّغ المستخدم الدليل يدوياً ولم يقم بتحديث ملف الإكسيل نفسه أو طلب المزامنة يدوياً، لا نعيد استيراد القاعدة القديمة
+        if not force and intentionally_cleared and file_unchanged:
+            return {"success": True, "skipped": True, "message": "تم احترام تفريغ الدليل اليدوي — لم يتغير ملف الأصناف."}
+
+        # فحص أمان ذكي: إذا كانت القاعدة خالية من الأصناف دون تفريغ متعمد، نعيد المزامنة
         try:
             from backend.db import get_stats
-            has_no_products = (get_stats().get("products_count", 0) == 0)
+            has_no_products = (get_stats().get("products_count", 0) == 0) and not intentionally_cleared
         except Exception:
             has_no_products = False
 
-        if not force and not has_no_products and prev.get("path") == sig["path"] and prev.get("mtime") == sig["mtime"] and prev.get("size") == sig["size"]:
+        if not force and not has_no_products and file_unchanged:
             return {"success": True, "skipped": True, "message": "ملف الأصناف لم يتغير منذ آخر مزامنة."}
 
         if not _is_file_stable(path):

@@ -762,7 +762,130 @@ function initLanguageSystem() {
     setAppLanguage(currentAppLang);
 }
 
+
+// ==================== محرك مراقبة الاتصال وسلامة قاعدة البيانات (24/7 Safe Reconnect) ====================
+let _serverConnectionLost = false;
+let _reconnectHealthTimer = null;
+let _idleHealthCheckTimer = null;
+
+function ensureConnectionBannerEl() {
+    let el = document.getElementById('rambfe-conn-banner');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'rambfe-conn-banner';
+        el.className = 'hidden fixed top-2 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-xl shadow-lg border text-xs sm:text-sm font-bold flex items-center gap-2 transition-all duration-300';
+        document.body.appendChild(el);
+    }
+    return el;
+}
+
+function updateConnectionBanner(state, message = '') {
+    const el = ensureConnectionBannerEl();
+    if (state === 'online') {
+        if (_serverConnectionLost) {
+            _serverConnectionLost = false;
+            el.className = 'fixed top-2 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-xl shadow-lg border bg-emerald-600 text-white border-emerald-400 text-xs sm:text-sm font-bold flex items-center gap-2';
+            el.innerHTML = '<span>✅</span><span>تم استعادة الاتصال بالسيرفر وقاعدة البيانات بنجاح</span>';
+            setTimeout(() => { el.classList.add('hidden'); }, 3500);
+            // تحديث التبويب النشط بهدوء بعد استعادة الاتصال
+            try {
+                refreshSystemStats();
+                if (typeof currentTab !== 'undefined') {
+                    if (currentTab === 'catalog') loadCatalogProducts();
+                    else if (currentTab === 'invoices') loadInvoicesList();
+                    else if (currentTab === 'stocktake') loadStocktakeStores();
+                    else if (currentTab === 'scanner') loadActiveDraftInvoice();
+                }
+            } catch (_) {}
+        } else {
+            el.classList.add('hidden');
+        }
+        return;
+    }
+
+    _serverConnectionLost = true;
+    if (state === 'db_error') {
+        el.className = 'fixed top-2 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-xl shadow-lg border bg-rose-700 text-white border-rose-400 text-xs sm:text-sm font-bold flex items-center gap-2';
+        el.innerHTML = `<span>🛡️</span><span>${message || 'تم إيقاف الكتابة مؤقتاً لحماية قاعدة البيانات — راجع السجلات'}</span>`;
+    } else {
+        el.className = 'fixed top-2 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-xl shadow-lg border bg-amber-500 text-slate-950 border-amber-300 text-xs sm:text-sm font-bold flex items-center gap-2';
+        el.innerHTML = `<span>⏳</span><span>${message || 'جاري تجديد الاتصال بالسيرفر المحلي... بياناتك محفوظة بأمان ولن تُمسح'}</span>`;
+    }
+    scheduleReconnectProbe();
+}
+
+function scheduleReconnectProbe() {
+    if (_reconnectHealthTimer) return;
+    _reconnectHealthTimer = setInterval(async () => {
+        try {
+            const res = await fetch('/api/health', { cache: 'no-store' });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data && data.healthy) {
+                clearInterval(_reconnectHealthTimer);
+                _reconnectHealthTimer = null;
+                updateConnectionBanner('online');
+            } else if (data && data.db_error) {
+                updateConnectionBanner('db_error', data.message || data.error);
+            }
+        } catch (_) {}
+    }, 3500);
+}
+
+async function checkServerHealthSilent() {
+    try {
+        const res = await fetch('/api/health', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data && data.healthy) {
+            if (_serverConnectionLost) updateConnectionBanner('online');
+            return true;
+        }
+        if (data && data.db_error) {
+            updateConnectionBanner('db_error', data.message || data.error);
+        } else {
+            updateConnectionBanner('offline', data && data.message ? data.message : '');
+        }
+        return false;
+    } catch (_) {
+        updateConnectionBanner('offline');
+        return false;
+    }
+}
+
+function initConnectionHealthMonitor() {
+    if (_idleHealthCheckTimer) clearInterval(_idleHealthCheckTimer);
+    _idleHealthCheckTimer = setInterval(() => {
+        if (!document.hidden) checkServerHealthSilent();
+    }, 25000);
+
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) checkServerHealthSilent();
+    });
+    window.addEventListener('focus', () => checkServerHealthSilent());
+    window.addEventListener('online', () => checkServerHealthSilent());
+}
+
+function isUnavailableApiResponse(res, data) {
+    if (!res || !res.ok) {
+        if (data && data.db_error) updateConnectionBanner('db_error', data.message || data.error);
+        else if (res && res.status === 503) updateConnectionBanner('offline', (data && data.message) || '');
+        return true;
+    }
+    if (data && data.offline_reconnecting) {
+        updateConnectionBanner('offline', data.message || '');
+        return true;
+    }
+    if (data && data.db_error) {
+        updateConnectionBanner('db_error', data.message || '');
+        return true;
+    }
+    if (_serverConnectionLost) {
+        updateConnectionBanner('online');
+    }
+    return false;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    initConnectionHealthMonitor();
     initLanguageSystem();
     initNavigation();
     initScannerTab();
@@ -889,10 +1012,9 @@ function switchTab(tabId) {
 
 async function refreshSystemStats() {
     try {
-        const res = await fetch('/api/stats');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.offline_reconnecting) return;
+        const res = await fetch('/api/stats', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (isUnavailableApiResponse(res, data)) return;
         document.getElementById('header-products-count').textContent = (data.products_count || 0).toLocaleString();
         document.getElementById('header-products-badge').textContent = (data.products_count || 0).toLocaleString();
         document.getElementById('header-barcodes-count').textContent = (data.barcodes_count || 0).toLocaleString();
@@ -1445,9 +1567,6 @@ function initScannerTab() {
         if (el) el.value = '';
     });
     document.getElementById('btn-clear-batch')?.addEventListener('click', () => {
-        const el = document.getElementById('field-batch');
-        if (el) el.value = '';
-    });
     ['field-batch', 'modal-edit-batch'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -2961,13 +3080,15 @@ async function handleInvoiceFileUpload(file) {
 
 async function loadActiveDraftInvoice() {
     try {
-        const res = await fetch('/api/invoice/active');
-        const data = await res.json();
+        const res = await fetch('/api/invoice/active', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (isUnavailableApiResponse(res, data)) return;
         if (data.success && data.invoice) {
             renderInvoice(data.invoice);
         }
     } catch (e) {
         console.error('Error fetching active invoice:', e);
+        updateConnectionBanner('offline');
     }
 }
 
@@ -6264,11 +6385,20 @@ function initInvoicesTab() {
 
 async function loadInvoicesList() {
     const tbody = document.getElementById('invoices-list-tbody');
-    tbody.innerHTML = '<tr><td colspan="8" class="py-8 text-center text-slate-400">جاري تحميل الفواتير...</td></tr>';
+    const hadPreviousRows = tbody && tbody.querySelectorAll('tr[data-inv-row="1"]').length > 0;
+    if (!hadPreviousRows && tbody) {
+        tbody.innerHTML = '<tr><td colspan="8" class="py-8 text-center text-slate-400">جاري تحميل الفواتير...</td></tr>';
+    }
 
     try {
-        const res = await fetch('/api/invoices/list');
-        const data = await res.json();
+        const res = await fetch('/api/invoices/list', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (isUnavailableApiResponse(res, data) || data.success === false) {
+            if (!hadPreviousRows && tbody) {
+                tbody.innerHTML = '<tr><td colspan="8" class="py-8 text-center text-amber-600 font-bold">⏳ جاري تجديد الاتصال بالسيرفر المحلي... بياناتك محفوظة بأمان</td></tr>';
+            }
+            return;
+        }
         const invoices = data.invoices || [];
 
         if (invoices.length === 0) {
@@ -6279,6 +6409,7 @@ async function loadInvoicesList() {
         tbody.innerHTML = '';
         invoices.forEach(inv => {
             const tr = document.createElement('tr');
+            tr.setAttribute('data-inv-row', '1');
             tr.className = 'hover:bg-slate-50 transition text-center';
 
             const isConf = (inv.status === 'confirmed');
@@ -7065,8 +7196,11 @@ function openEditStockItemModal(entryId) {
 async function loadStocktakeStores(searchQ = '') {
     try {
         const url = `/api/stock/stores?q=${encodeURIComponent(searchQ)}`;
-        const res = await fetch(url);
-        const data = await res.json();
+        const res = await fetch(url, { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (isUnavailableApiResponse(res, data) || data.success === false) {
+            return;
+        }
 
         // 1. تحديث الشريط الفاصل الأوسط بتفاصيل التكلفة وسعر البيع الكاملة
         const sum = data.summary || {};
@@ -8360,11 +8494,15 @@ async function processStoreScan(rawCode) {
 async function loadCurrentStoreItems(searchQ = '') {
     try {
         const url = `/api/stock/store/details?store_no=${encodeURIComponent(currentActiveStoreNo)}&query=${encodeURIComponent(searchQ)}`;
-        const res = await fetch(url);
-        const data = await res.json();
+        const res = await fetch(url, { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (isUnavailableApiResponse(res, data) || data.success === false) {
+            return;
+        }
         renderCurrentStoreDetails(data);
     } catch (e) {
         console.error('Failed to load store items', e);
+        updateConnectionBanner('offline');
     }
 }
 

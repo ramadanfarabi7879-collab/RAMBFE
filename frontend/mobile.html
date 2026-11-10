@@ -608,10 +608,18 @@
             if (syncPollTimer) clearInterval(syncPollTimer);
             lastSyncTimestamp = Date.now() / 1000;
 
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    loadMobileStores();
+                    loadStoreItems(false);
+                }
+            });
             syncPollTimer = setInterval(async () => {
                 try {
-                    const res = await fetch(`/api/sync/events?since=${lastSyncTimestamp}`);
+                    const res = await fetch(`/api/sync/events?since=${lastSyncTimestamp}`, { cache: 'no-store' });
+                    if (!res.ok) return;
                     const data = await res.json();
+                    if (data.offline_reconnecting || data.db_error) return;
                     if (data.timestamp) lastSyncTimestamp = data.timestamp;
 
                     if (data.events && data.events.length > 0) {
@@ -639,8 +647,9 @@
         // تحميل قائمة المستودعات
         async function loadMobileStores() {
             try {
-                const res = await fetch('/api/stock/stores');
-                const data = await res.json();
+                const res = await fetch('/api/stock/stores', { cache: 'no-store' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.offline_reconnecting || data.db_error || data.success === false) return;
                 const sel = document.getElementById('mobile-sel-store');
                 if (sel && data.created_stores && data.created_stores.length > 0) {
                     const prevVal = currentStoreNo;
@@ -668,8 +677,14 @@
             }
 
             try {
-                const res = await fetch(`/api/stock/store/details?store_no=${encodeURIComponent(currentStoreNo)}`);
-                const data = await res.json();
+                const res = await fetch(`/api/stock/store/details?store_no=${encodeURIComponent(currentStoreNo)}`, { cache: 'no-store' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.offline_reconnecting || data.db_error || data.success === false) {
+                    if (container && (!currentStoreItems || currentStoreItems.length === 0)) {
+                        container.innerHTML = '<div class="text-center py-8 text-amber-400 text-xs font-bold">⏳ جاري تجديد الاتصال بالسيرفر المحلي... بياناتك محفوظة بأمان</div>';
+                    }
+                    return;
+                }
 
                 currentStoreItems = data.items || [];
 

@@ -46,4 +46,6 @@ temp/cloudflare_url.txt
 Thumbs.db
 
 data/
+backups/
+logs/
 product.template*.xlsx

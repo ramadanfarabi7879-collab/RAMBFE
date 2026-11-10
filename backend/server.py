@@ -80,8 +80,30 @@ except (ImportError, ValueError):
 
 try:
     from .catalog_autosync import start_autosync, sync_now as catalog_sync_now, get_status as catalog_sync_status
+    from .db_safety import (
+        DatabaseSafetyError,
+        AUTO_BACKUP_INTERVAL_SECONDS,
+        get_server_logger,
+        check_db_health,
+        checkpoint_wal,
+        create_backup,
+        list_backups,
+        restore_backup,
+        ensure_safe_db_target,
+    )
 except (ImportError, ValueError):
     from backend.catalog_autosync import start_autosync, sync_now as catalog_sync_now, get_status as catalog_sync_status
+    from backend.db_safety import (
+        DatabaseSafetyError,
+        AUTO_BACKUP_INTERVAL_SECONDS,
+        get_server_logger,
+        check_db_health,
+        checkpoint_wal,
+        create_backup,
+        list_backups,
+        restore_backup,
+        ensure_safe_db_target,
+    )
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -345,9 +367,26 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = parse_qs(parsed.query)
 
+        # 0. فحص صحة الخادم وقاعدة البيانات (Health Check)
+        if path == '/api/health':
+            deep = params.get('deep', ['0'])[0] == '1'
+            health = check_db_health(deep=deep)
+            health["cloudflare_url"] = get_cloudflare_url() or None
+            health["success"] = bool(health.get("healthy"))
+            self.send_json(health, status=200 if health["healthy"] else 503)
+            return
+
+        # 0.ب عرض قائمة النسخ الاحتياطية المتوفرة
+        if path == '/api/backup/list':
+            self.send_json({"success": True, "backups": list_backups()})
+            return
+
         # 1. إحصائيات النظام
         if path == '/api/stats':
-            self.send_json(get_stats())
+            try:
+                self.send_json(get_stats())
+            except DatabaseSafetyError as e:
+                self.send_json({"success": False, "db_error": True, "message": str(e)}, 503)
             return
 
         # 1.ب بيانات شبكة الواي فاي ورابط Cloudflare للربط مع الجوال
@@ -738,6 +777,34 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
         body_bytes = self.read_full_body()
         content_type = self.headers.get('Content-Type', '')
+
+        # نقاط نهاية النسخ الاحتياطي والاستعادة
+        if path == '/api/backup/create':
+            res = create_backup(reason="manual")
+            self.send_json(res, status=200 if res.get("success") else 500)
+            return
+
+        if path == '/api/backup/restore':
+            try:
+                data = json.loads(body_bytes.decode('utf-8') or '{}') if body_bytes else {}
+                file_name = os.path.basename(str(data.get('file_name') or '').strip())
+                if not file_name:
+                    self.send_json({"success": False, "message": "يجب تحديد اسم ملف النسخة الاحتياطية."}, 400)
+                    return
+                from backend.db_safety import BACKUP_DIR
+                res = restore_backup(os.path.join(BACKUP_DIR, file_name))
+                self.send_json(res, status=200 if res.get("success") else 400)
+            except Exception as e:
+                self.send_json({"success": False, "message": str(e)}, 400)
+            return
+
+        # حارس الكتابة: إذا تعذر الوصول الآمن لقاعدة البيانات الدائمة، نوقف الحفظ فوراً برسالة واضحة
+        try:
+            ensure_safe_db_target(require_existing_if_populated=True)
+        except DatabaseSafetyError as e:
+            get_server_logger().error(f"Write blocked on {path}: {e}")
+            self.send_json({"success": False, "db_error": True, "message": str(e)}, 503)
+            return
 
         # 0. مزامنة ملف الأصناف المرتبط (product.template.xlsx) يدوياً الآن
         if path == '/api/catalog/auto-sync/run':
@@ -1517,9 +1584,56 @@ def run_server(port=8000, auto_open_browser=True):
         else:
             raise e
 
+    srv_logger = get_server_logger()
+    try:
+        init_db()
+    except Exception as e:
+        srv_logger.error(f"init_db error on startup: {e}")
+
+    health = check_db_health(deep=False)
+    srv_logger.info(
+        f"Server started on port {port} | DB={health.get('db_path')} | "
+        f"healthy={health.get('healthy')} | counts={health.get('counts')}"
+    )
+
+    # إنشاء نسخة احتياطية متسقة فور إقلاع الخادم
+    try:
+        create_backup(reason="startup")
+    except Exception as e:
+        srv_logger.error(f"Startup backup warning: {e}")
+
+    # صيانة دورية في الخلفية: فحص السلامة + دمج WAL + نسخ احتياطي تلقائي كل 4 ساعات
+    def _db_maintenance_loop():
+        last_backup_ts = time.time()
+        while True:
+            time.sleep(900)  # كل 15 دقيقة
+            try:
+                h = check_db_health(deep=False)
+                checkpoint_wal(mode="PASSIVE")
+                if not h.get("healthy"):
+                    srv_logger.error(f"Periodic health check FAILED: {h.get('error')}")
+                if time.time() - last_backup_ts >= AUTO_BACKUP_INTERVAL_SECONDS:
+                    b_res = create_backup(reason="scheduled")
+                    if b_res.get("success"):
+                        last_backup_ts = time.time()
+            except Exception as exc:
+                srv_logger.error(f"Maintenance loop exception: {exc}")
+
+    threading.Thread(target=_db_maintenance_loop, name="db-maintenance", daemon=True).start()
+
+    import atexit
+    def _on_server_exit():
+        try:
+            checkpoint_wal(mode="TRUNCATE")
+            srv_logger.info("Server shutting down cleanly (WAL truncated).")
+        except Exception:
+            pass
+    atexit.register(_on_server_exit)
+
     print(f"===========================================================")
     print(f"  نظام إدارة بطاقات الأصناف والمسح بكود QR وتصدير الإكسيل")
     print(f"  يعمل الآن على الرابط: http://127.0.0.1:{port}")
+    print(f"  قاعدة البيانات الدائمة: {health.get('db_path')}")
     print(f"===========================================================")
 
     # الربط التلقائي لملف الأصناف: يستورد product.template.xlsx عند الإقلاع وكلما تغيّر

@@ -58,6 +58,13 @@ def _safe_print(msg: str) -> None:
         print(msg, flush=True)
     except Exception:
         pass
+    try:
+        from backend.db_safety import get_server_logger
+        clean = msg.strip()
+        if clean and not clean.startswith("="):
+            get_server_logger().info(f"[Tunnel] {clean}")
+    except Exception:
+        pass
 
 
 def _remove_url_file() -> None:
@@ -167,27 +174,31 @@ def _sync_tunnel_to_github_async(tunnel_url: str) -> None:
                     subprocess.run(
                         ["git", "add", "worker.js"],
                         cwd=str(BASE_DIR),
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
                         timeout=15,
                         creationflags=creationflags
                     )
                     subprocess.run(
-                        ["git", "commit", "-m", f"chore(tunnel): auto-update active Cloudflare tunnel URL"],
+                        ["git", "commit", "-m", "chore(tunnel): auto-update active Cloudflare tunnel URL"],
                         cwd=str(BASE_DIR),
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
                         timeout=15,
                         creationflags=creationflags
                     )
-                    subprocess.run(
+                    push_res = subprocess.run(
                         ["git", "push", "origin", "main"],
                         cwd=str(BASE_DIR),
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
                         timeout=30,
                         creationflags=creationflags
                     )
+                    if push_res.returncode != 0:
+                        _safe_print(f"[!] تحذير تحديث GitHub للنفق: {push_res.stderr.strip()}")
+                    else:
+                        _safe_print("[*] تم تحديث رابط النفق في GitHub Worker بنجاح.")
             except Exception:
                 pass
 
@@ -329,8 +340,9 @@ def _tunnel_worker(port: int):
             _safe_print("[!] لم يظهر رابط النفق خلال 45 ثانية، جاري إعادة المحاولة...")
             tunnel_dead.set()
 
-        # المراقبة المستمرة + نبضات التسجيل الدورية + فحص صلاحية النفق الفعلي
+        # المراقبة المستمرة + نبضات التسجيل الدورية + فحص صلاحية النفق الفعلي + اكتشاف الخروج من السكون فوراً
         last_beat = time.time()
+        last_tick = time.time()
         failed_health_checks = 0
         grace_period_until = time.time() + 25  # مهلة أولية لتسجيل النفق في DNS الخاص بـ Cloudflare
 
@@ -346,6 +358,16 @@ def _tunnel_worker(port: int):
                 break
 
             now = time.time()
+            # إذا قفز الوقت بأكثر من 15 ثانية فهذا يعني أن الجهاز استيقظ للتو من سكون مؤقت -> نفحص ونجدد فوراً
+            if now - last_tick > 15:
+                _safe_print(f"[!] تم رصد عودة الجهاز من سكون مؤقت ({int(now - last_tick)}ث) — فحص وتجديد النفق...")
+                if _active_tunnel_url:
+                    register_with_worker(_active_tunnel_url)
+                    if not _check_tunnel_health(_active_tunnel_url):
+                        _safe_print("[!] النفق لم يعد يستجيب بعد الاستيقاظ، جاري إعادة إنشاء النفق فوراً...")
+                        break
+            last_tick = now
+
             if _active_tunnel_url and now - last_beat >= HEARTBEAT_SECONDS:
                 last_beat = now
                 register_with_worker(_active_tunnel_url)

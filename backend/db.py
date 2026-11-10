@@ -1,14 +1,39 @@
 import sqlite3
 import os
 import re
+import json
 import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
-DB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-DB_PATH = os.environ.get("INVENTORY_DB_PATH", os.path.join(DB_DIR, "inventory.db"))
+try:
+    from .db_safety import (
+        BASE_DIR,
+        DATA_DIR as DB_DIR,
+        PERMANENT_DB_PATH,
+        DatabaseSafetyError,
+        get_resolved_db_path,
+        ensure_safe_db_target,
+        is_using_permanent_db,
+        get_server_logger,
+        create_backup,
+    )
+except (ImportError, ValueError):
+    from backend.db_safety import (
+        BASE_DIR,
+        DATA_DIR as DB_DIR,
+        PERMANENT_DB_PATH,
+        DatabaseSafetyError,
+        get_resolved_db_path,
+        ensure_safe_db_target,
+        is_using_permanent_db,
+        get_server_logger,
+        create_backup,
+    )
+
+DB_PATH = get_resolved_db_path()
 
 def get_connection():
-    db_path = os.environ.get("INVENTORY_DB_PATH", DB_PATH)
+    db_path = ensure_safe_db_target(require_existing_if_populated=True)
     if db_path != ":memory:":
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30)
@@ -19,6 +44,8 @@ def get_connection():
         try:
             # WAL يسمح بالقراءة أثناء الكتابة (مثل الاستيراد التلقائي للأصناف أثناء الجرد) دون تعليق
             conn.execute("PRAGMA journal_mode = WAL;")
+            # synchronous=FULL يضمن كتابة المعاملات فعلياً على القرص وعدم فقدانها
+            conn.execute("PRAGMA synchronous = FULL;")
         except sqlite3.DatabaseError:
             pass
     return conn
@@ -1661,6 +1688,11 @@ def get_all_product_barcodes() -> List[Dict[str, str]]:
     return [dict(r) for r in rows]
 
 def clear_catalog():
+    try:
+        if is_using_permanent_db():
+            create_backup(reason="pre_clear_catalog")
+    except Exception:
+        pass
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM products")
@@ -1668,6 +1700,19 @@ def clear_catalog():
     cursor.execute("DELETE FROM product_aliases")
     conn.commit()
     conn.close()
+    # تسجيل التفريغ المتعمد حتى لا تعيد المزامنة التلقائية استيراد product.template.xlsx بعد 20 ثانية
+    try:
+        state_file = os.path.join(DB_DIR, "catalog_autosync.json")
+        state = {}
+        if os.path.exists(state_file):
+            with open(state_file, "r", encoding="utf-8") as f:
+                state = json.load(f) or {}
+        state["catalog_intentionally_cleared"] = True
+        state["cleared_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 def save_alias(invoice_name: str, product_code: str):
     clean_code = clean_numeric_code(product_code)
