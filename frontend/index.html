@@ -5,6 +5,20 @@
 <head>
 
     <meta charset="UTF-8">
+    <script>
+    // تحويل تلقائي لشاشة الموبايل عند الفتح من هاتف (يمكن فتح نسخة الكمبيوتر بإضافة ?desktop=1)
+    (function () {
+        try {
+            var q = location.search;
+            if (/[?&]desktop=1/.test(q)) { sessionStorage.setItem('rambfe_force_desktop', '1'); return; }
+            if (sessionStorage.getItem('rambfe_force_desktop') === '1') return;
+            var ua = navigator.userAgent || '';
+            var isPhone = /Android|iPhone|iPod|Windows Phone|Mobile|Opera Mini|IEMobile/i.test(ua)
+                || (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 768);
+            if (isPhone) location.replace('/mobile' + q);
+        } catch (e) {}
+    })();
+    </script>
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 
@@ -5049,7 +5063,8 @@
 
     <!-- ملف الجافاسكريبت الرئيسي -->
 
-    <script src="app.js?v=20261110_v42_dual_stk_search"></script>
+    <script src="realtime.js?v=1"></script>
+    <script src="app.js?v=20261111_v43_realtime"></script>
 
 </body>
 

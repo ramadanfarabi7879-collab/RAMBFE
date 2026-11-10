@@ -21,9 +21,19 @@ const uid = () => crypto.randomUUID().replaceAll('-', '').slice(0, 8);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const intOr0 = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
 
+export async function pushRealtime(env, evt) {
+    if (!env.SYNC_HUB) return;
+    try {
+        const stub = env.SYNC_HUB.get(env.SYNC_HUB.idFromName('main'));
+        await stub.fetch('https://hub/broadcast', { method: 'POST', body: JSON.stringify(evt) });
+    } catch (_) { }
+}
+
 async function broadcast(env, ctx, type, payload) {
     const evt = { id: uid(), type, payload: payload || {}, timestamp: Date.now() / 1000 };
     const p = (async () => {
+        // إرسال فوري لكل الشاشات المفتوحة عبر WebSocket
+        await pushRealtime(env, evt);
         await run(env.DB, 'INSERT INTO sync_events (id, type, payload, ts) VALUES (?, ?, ?, ?)', [evt.id, type, JSON.stringify(evt.payload), evt.timestamp]);
         // الاحتفاظ بآخر ساعتين فقط من الأحداث
         if (Math.random() < 0.05) await run(env.DB, 'DELETE FROM sync_events WHERE ts < ?', [evt.timestamp - 7200]);
@@ -33,7 +43,7 @@ async function broadcast(env, ctx, type, payload) {
 }
 
 // المسارات المنقولة للسحابة (GET و POST)
-export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health']);
+export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health', '/api/realtime']);
 export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/stock/save-batch-qty', '/api/stock/update-qty', '/api/stock/delete-item',
     '/api/stock/bulk-delete', '/api/stock/edit-item', '/api/stock/clear', '/api/stock/clear-inventory', '/api/stock/settle', '/api/stock/commit-bulk',
     '/api/stock/stores/commit-all', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all']);
@@ -54,6 +64,10 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
     }
     try {
         if (path.startsWith('/api/_admin/')) return await handleAdmin(request, env, path, data);
+        if (path === '/api/realtime') {
+            if (!env.SYNC_HUB) return json({ success: false, message: 'realtime unavailable' }, 503);
+            return env.SYNC_HUB.get(env.SYNC_HUB.idFromName('main')).fetch(request);
+        }
 
         if (method === 'GET') {
             if (path === '/api/cloud/health') {
@@ -212,8 +226,13 @@ async function handleAdmin(request, env, path, data) {
                 stmts.push(db.prepare(`INSERT INTO ${t} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).bind(...cols.map(c => r[c])));
             }
         }
-        if (data.event) stmts.push(db.prepare('INSERT INTO sync_events (id, type, payload, ts) VALUES (?, ?, ?, ?)').bind(uid(), String(data.event), '{}', Date.now() / 1000));
+        let adminEvt = null;
+        if (data.event) {
+            adminEvt = { id: uid(), type: String(data.event), payload: {}, timestamp: Date.now() / 1000 };
+            stmts.push(db.prepare('INSERT INTO sync_events (id, type, payload, ts) VALUES (?, ?, ?, ?)').bind(adminEvt.id, adminEvt.type, '{}', adminEvt.timestamp));
+        }
         if (stmts.length) await db.batch(stmts);
+        if (adminEvt) await pushRealtime(env, adminEvt);
         return json({ success: true, statements: stmts.length });
     }
     // إدراج/تحديث صفوف (مزامنة الأصناف من ملف الكتالوج على الكمبيوتر)

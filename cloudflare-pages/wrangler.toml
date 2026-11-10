@@ -12,3 +12,9 @@ id = "25093de7c2cc4c4695446d99434ed24a"
 binding = "DB"
 database_name = "rambfe-db"
 database_id = "445cfd63-a8d0-4548-88a4-940d096e472e"
+
+# المزامنة اللحظية (WebSocket) عبر Durable Object في الـ Worker الداخلي rambfe-realtime
+[[durable_objects.bindings]]
+name = "SYNC_HUB"
+class_name = "SyncHub"
+script_name = "rambfe-realtime"

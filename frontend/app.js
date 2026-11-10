@@ -4251,59 +4251,77 @@ function initMobileCompanionScanner() {
     startMobileCompanionPolling();
 }
 
+function handleDesktopSyncData(data) {
+    if (data.events && data.events.length > 0) {
+        let shouldReloadStock = false;
+        let shouldReloadInvoice = false;
+        for (const ev of data.events) {
+            const payload = ev.payload || {};
+            if (ev.type.startsWith('stock_') || (ev.type === 'mobile_scan' && payload.target === 'stocktake')) {
+                shouldReloadStock = true;
+            }
+            if (ev.type.startsWith('invoice_') || (ev.type === 'mobile_scan' && payload.target === 'invoice')) {
+                shouldReloadInvoice = true;
+            }
+            if (ev.type === 'mobile_scan') {
+                playAppScannerBeep(payload.success !== false);
+                const prodName = payload.product_name || payload.code || '';
+                showCatalogToast(`📱 جرد فوري من الموبايل: ${prodName}`);
+            } else if (ev.type === 'stock_qty_updated') {
+                showCatalogToast(`⚡ تحديث كمية فوري من الموبايل`);
+            } else if (ev.type === 'stock_item_deleted') {
+                showCatalogToast(`🗑 تم حذف صنف من الجرد`);
+            } else if (ev.type === 'store_created') {
+                showCatalogToast(`🏪 تم إنشاء مستودع جديد من الموبايل: ${payload.store_name || ''}`);
+            }
+        }
+        if (shouldReloadStock) {
+            loadStocktakeStores();
+            loadCurrentStoreItems();
+        }
+        if (shouldReloadInvoice) {
+            loadActiveDraftInvoice();
+        }
+    } else if (data.scans && data.scans.length > 0) {
+        for (const sc of data.scans) {
+            playAppScannerBeep(sc.success);
+            const prodName = sc.product_name || sc.code;
+            showCatalogToast(`📱 مسحة جديدة من الجوال: ${prodName}`);
+
+            if (sc.target === 'stocktake') {
+                loadStocktakeStores();
+                loadCurrentStoreItems();
+            } else {
+                loadActiveDraftInvoice();
+            }
+        }
+    }
+}
+
+// المزامنة اللحظية: اتصال WebSocket دائم (فوري)، والاستعلام الدوري احتياطي فقط أثناء انقطاعه
+let _desktopReloadTimer = null;
+function scheduleDesktopStockReload() {
+    clearTimeout(_desktopReloadTimer);
+    _desktopReloadTimer = setTimeout(() => { loadStocktakeStores(); loadCurrentStoreItems(); }, 120);
+}
+
 function startMobileCompanionPolling() {
     if (mobileCompanionPollTimer) return;
+    if (window.RambfeRealtime) {
+        window.RambfeRealtime.onEvent((evt) => {
+            if (evt.type === '__resync') { scheduleDesktopStockReload(); return; }
+            if (evt.timestamp && evt.timestamp > lastMobilePollTimestamp) lastMobilePollTimestamp = evt.timestamp;
+            handleDesktopSyncData({ events: [evt] });
+        });
+    }
     mobileCompanionPollTimer = setInterval(async () => {
         if (document.hidden) return;
+        if (window.RambfeRealtime && window.RambfeRealtime.connected) return;
         try {
             const res = await fetch(`/api/mobile/poll?since=${lastMobilePollTimestamp}`);
             const data = await res.json();
             if (data.timestamp) lastMobilePollTimestamp = data.timestamp;
-
-            if (data.events && data.events.length > 0) {
-                let shouldReloadStock = false;
-                let shouldReloadInvoice = false;
-                for (const ev of data.events) {
-                    const payload = ev.payload || {};
-                    if (ev.type.startsWith('stock_') || (ev.type === 'mobile_scan' && payload.target === 'stocktake')) {
-                        shouldReloadStock = true;
-                    }
-                    if (ev.type.startsWith('invoice_') || (ev.type === 'mobile_scan' && payload.target === 'invoice')) {
-                        shouldReloadInvoice = true;
-                    }
-                    if (ev.type === 'mobile_scan') {
-                        playAppScannerBeep(payload.success !== false);
-                        const prodName = payload.product_name || payload.code || '';
-                        showCatalogToast(`📱 جرد فوري من الموبايل: ${prodName}`);
-                    } else if (ev.type === 'stock_qty_updated') {
-                        showCatalogToast(`⚡ تحديث كمية فوري من الموبايل`);
-                    } else if (ev.type === 'stock_item_deleted') {
-                        showCatalogToast(`🗑 تم حذف صنف من الجرد`);
-                    } else if (ev.type === 'store_created') {
-                        showCatalogToast(`🏪 تم إنشاء مستودع جديد من الموبايل: ${payload.store_name || ''}`);
-                    }
-                }
-                if (shouldReloadStock) {
-                    loadStocktakeStores();
-                    loadCurrentStoreItems();
-                }
-                if (shouldReloadInvoice) {
-                    loadActiveDraftInvoice();
-                }
-            } else if (data.scans && data.scans.length > 0) {
-                for (const sc of data.scans) {
-                    playAppScannerBeep(sc.success);
-                    const prodName = sc.product_name || sc.code;
-                    showCatalogToast(`📱 مسحة جديدة من الجوال: ${prodName}`);
-
-                    if (sc.target === 'stocktake') {
-                        loadStocktakeStores();
-                        loadCurrentStoreItems();
-                    } else {
-                        loadActiveDraftInvoice();
-                    }
-                }
-            }
+            handleDesktopSyncData(data);
         } catch (e) {
             // silent poll
         }

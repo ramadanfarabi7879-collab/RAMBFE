@@ -1,0 +1,13 @@
+# مركز المزامنة اللحظية (Durable Object) — يُستدعى داخلياً فقط من مشروع rambfe.pages.dev
+name = "rambfe-realtime"
+main = "index.js"
+compatibility_date = "2024-09-23"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "SYNC_HUB"
+class_name = "SyncHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SyncHub"]

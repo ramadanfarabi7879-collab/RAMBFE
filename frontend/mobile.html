@@ -15,6 +15,7 @@
     <!-- Html5-QRCode -->
     <script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/dist/iife/polyfill.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="realtime.js?v=1"></script>
 
     <style>
         body {
@@ -614,32 +615,35 @@
                     loadStoreItems(false);
                 }
             });
-            // كل 3 ثوانٍ وفقط والشاشة ظاهرة: يحافظ على حد الطلبات المجاني في Cloudflare
+            // اتصال لحظي (WebSocket): أي تعديل من الكمبيوتر أو موبايل آخر يظهر فوراً
+            let _mReloadItems = null, _mReloadStores = null;
+            const handleMobileSyncEvents = (events) => {
+                let items = false, stores = false;
+                for (const ev of events) {
+                    const t = String(ev.type || '');
+                    if (t === '__resync' || t.startsWith('stock_') || t === 'mobile_scan' || t.startsWith('inventory_') || t === 'initial_seed') items = true;
+                    if (t === '__resync' || t.startsWith('store_') || t === 'stock_reset' || t === 'stock_settled') stores = true;
+                }
+                if (stores) { clearTimeout(_mReloadStores); _mReloadStores = setTimeout(() => loadMobileStores(), 120); }
+                if (items) { clearTimeout(_mReloadItems); _mReloadItems = setTimeout(() => loadStoreItems(false), 120); }
+            };
+            if (window.RambfeRealtime) {
+                window.RambfeRealtime.onEvent((evt) => {
+                    if (evt.timestamp && evt.timestamp > lastSyncTimestamp) lastSyncTimestamp = evt.timestamp;
+                    handleMobileSyncEvents([evt]);
+                });
+            }
+            // احتياطي فقط أثناء انقطاع الاتصال اللحظي
             syncPollTimer = setInterval(async () => {
                 if (document.hidden) return;
+                if (window.RambfeRealtime && window.RambfeRealtime.connected) return;
                 try {
                     const res = await fetch(`/api/sync/events?since=${lastSyncTimestamp}`, { cache: 'no-store' });
                     if (!res.ok) return;
                     const data = await res.json();
                     if (data.offline_reconnecting || data.db_error) return;
                     if (data.timestamp) lastSyncTimestamp = data.timestamp;
-
-                    if (data.events && data.events.length > 0) {
-                        let shouldReloadItems = false;
-                        let shouldReloadStores = false;
-
-                        for (const ev of data.events) {
-                            if (ev.type.startsWith('stock_') || ev.type === 'mobile_scan') {
-                                shouldReloadItems = true;
-                            }
-                            if (ev.type.startsWith('store_')) {
-                                shouldReloadStores = true;
-                            }
-                        }
-
-                        if (shouldReloadStores) await loadMobileStores();
-                        if (shouldReloadItems) await loadStoreItems(false);
-                    }
+                    if (data.events && data.events.length > 0) handleMobileSyncEvents(data.events);
                 } catch (e) {
                     // silent sync fail
                 }
