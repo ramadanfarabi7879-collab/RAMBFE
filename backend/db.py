@@ -732,7 +732,164 @@ def bulk_delete_products(codes: List[str]) -> int:
     log_audit_event("product", "bulk", "bulk_delete", None, {"count": deleted_count}, f"حذف مجمع لـ {deleted_count} صنف")
     return deleted_count
 
-def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mode: str = "start") -> Dict[str, Any]:
+def _resolve_canonical_product_code_map(cursor: sqlite3.Cursor, raw_pairs: List[Tuple[str, str]]) -> Dict[Tuple[str, str], str]:
+    """مطابقة أكواد/باركودات المخزون والجرد مع كود الصنف الأساسي في جدول products بدقة وسرعة."""
+    mapping: Dict[Tuple[str, str], str] = {}
+    candidate_codes = set()
+    for p_code, _b_code in raw_pairs:
+        c = clean_numeric_code(p_code)
+        if not c:
+            continue
+        candidate_codes.add(c)
+        if c.isdigit():
+            candidate_codes.add(c.zfill(10))
+            candidate_codes.add(c.lstrip('0') or '0')
+
+    found_codes = set()
+    cand_list = list(candidate_codes)
+    for i in range(0, len(cand_list), 500):
+        chunk = cand_list[i:i + 500]
+        placeholders = ",".join(["?"] * len(chunk))
+        cursor.execute(f"SELECT code FROM products WHERE code IN ({placeholders})", tuple(chunk))
+        for r in cursor.fetchall():
+            found_codes.add(r["code"])
+
+    for p_code, b_code in raw_pairs:
+        key = (p_code, b_code)
+        if p_code in found_codes:
+            mapping[key] = p_code
+            continue
+        c = clean_numeric_code(p_code)
+        matched = ""
+        if c:
+            if c in found_codes:
+                matched = c
+            elif c.isdigit():
+                z10 = c.zfill(10)
+                stripped = c.lstrip('0') or '0'
+                if z10 in found_codes:
+                    matched = z10
+                elif stripped in found_codes:
+                    matched = stripped
+        if not matched and b_code:
+            b_clean = clean_barcode_preserve_zeros(b_code)
+            if b_clean:
+                cursor.execute("SELECT code FROM products WHERE barcode = ? OR gtin = ? LIMIT 1", (b_clean, b_clean))
+                row = cursor.fetchone()
+                if not row:
+                    cursor.execute("SELECT product_code AS code FROM product_barcodes WHERE barcode = ? LIMIT 1", (b_clean,))
+                    row = cursor.fetchone()
+                if row:
+                    matched = row["code"]
+        if matched:
+            mapping[key] = matched
+    return mapping
+
+
+def _get_stocktake_eligible_map(cursor: sqlite3.Cursor, store_no: str) -> Tuple[str, Dict[str, Dict[str, Any]]]:
+    """
+    تحديد الأصناف المؤهلة للظهور في بحث شاشة الجرد للمخزن المحدد فقط:
+    1. وجود رصيد دفتري موجب فعلي في inventory_records لنفس store_no (MAX(system_qty) > 0 AND SUM(system_qty) > 0).
+    2. أو وجود سجل للصنف في stocktake_entries لنفس store_no ضمن الجرد الجاري (حالة الاستور 'new' أو 'in_progress')،
+       حتى لو كانت counted_qty = 0.
+    لا يشمل أصناف مخازن أخرى ولا سجلات الجرد القديمة/المنتهية ('completed' أو 'settled').
+    """
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('stock_stores', 'inventory_records', 'stocktake_entries')"
+    )
+    existing_tables = {r["name"] for r in cursor.fetchall()}
+    if not {"stock_stores", "inventory_records", "stocktake_entries"}.issubset(existing_tables):
+        return "", {}
+
+    target_store = str(store_no or "").strip()
+    if target_store and target_store.upper() != "ALL":
+        cursor.execute("SELECT store_no, status FROM stock_stores WHERE store_no = ?", (target_store,))
+        store_row = cursor.fetchone()
+        if not store_row:
+            return "", {}
+    else:
+        cursor.execute("SELECT store_no, status FROM stock_stores ORDER BY id DESC LIMIT 1")
+        store_row = cursor.fetchone()
+        if not store_row:
+            return "", {}
+
+    resolved_store = store_row["store_no"]
+    store_status = str(store_row["status"] or "new").strip().lower()
+    is_active_stocktake = store_status in ("new", "in_progress")
+
+    cursor.execute(
+        "SELECT product_code, COALESCE(barcode, '') AS barcode, COALESCE(system_qty, 0) AS system_qty "
+        "FROM inventory_records WHERE store_no = ?",
+        (resolved_store,)
+    )
+    inv_rows = cursor.fetchall()
+
+    st_rows = []
+    if is_active_stocktake:
+        cursor.execute(
+            "SELECT product_code, COALESCE(barcode, '') AS barcode, COALESCE(counted_qty, 0) AS counted_qty "
+            "FROM stocktake_entries WHERE store_no = ?",
+            (resolved_store,)
+        )
+        st_rows = cursor.fetchall()
+
+    raw_pairs = list({
+        (str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip())
+        for r in inv_rows
+    } | {
+        (str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip())
+        for r in st_rows
+    })
+    if not raw_pairs:
+        return resolved_store, {}
+
+    code_map = _resolve_canonical_product_code_map(cursor, raw_pairs)
+
+    inv_agg: Dict[str, Dict[str, Any]] = {}
+    for r in inv_rows:
+        key = (str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip())
+        canon = code_map.get(key)
+        if not canon:
+            continue
+        qty = float(r["system_qty"] or 0.0)
+        entry = inv_agg.setdefault(canon, {"sum_qty": 0.0, "max_qty": float("-inf"), "batches": 0})
+        entry["sum_qty"] += qty
+        if qty > entry["max_qty"]:
+            entry["max_qty"] = qty
+        entry["batches"] += 1
+
+    st_agg: Dict[str, Dict[str, Any]] = {}
+    if is_active_stocktake:
+        for r in st_rows:
+            key = (str(r["product_code"] or "").strip(), str(r["barcode"] or "").strip())
+            canon = code_map.get(key)
+            if not canon:
+                continue
+            cqty = float(r["counted_qty"] or 0.0)
+            entry = st_agg.setdefault(canon, {"counted_qty": 0.0, "entries": 0})
+            entry["counted_qty"] += cqty
+            entry["entries"] += 1
+
+    eligible: Dict[str, Dict[str, Any]] = {}
+    all_canons = set(inv_agg.keys()) | set(st_agg.keys())
+    for canon in all_canons:
+        inv_info = inv_agg.get(canon)
+        st_info = st_agg.get(canon)
+        has_positive_stock = bool(inv_info and inv_info["max_qty"] > 0 and inv_info["sum_qty"] > 0)
+        in_current_stk = bool(st_info is not None)
+        if not has_positive_stock and not in_current_stk:
+            continue
+        eligible[canon] = {
+            "store_stock_qty": round(inv_info["sum_qty"], 4) if inv_info else 0.0,
+            "store_batch_count": inv_info["batches"] if inv_info else 0,
+            "in_current_stocktake": in_current_stk,
+            "store_counted_qty": round(st_info["counted_qty"], 4) if st_info else 0.0,
+        }
+
+    return resolved_store, eligible
+
+
+def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mode: str = "start", stock_only: bool = False, store_no: str = "") -> Dict[str, Any]:
     """
     البحث في الأصناف بالاسم أو الكود أو الباركود أو GTIN مع دعم:
     - وضع البداية الافتراضي (يبدأ بـ): يبحث عن الكلمة في بداية الاسم أو الكود فقط
@@ -740,18 +897,35 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
     - قاعدة المسطرة / الفصلة (Word Boundary): بمجرد كتابة الكلمة وأخذ مسافة بعدها (مثل "ADOL ") تعتبر الكلمة مكتملة
       ولا يجوز مطابقة أصناف تبدأ بأحرف متصلة بها مثل ADOLIN، وتطابق فقط ما يبدأ بـ ADOL ككلمة مستقلة.
     - تطبيع اللغة وتخطيط لوحة المفاتيح
+    - عند stock_only=True (شاشة الجرد فقط): حصر النتائج على الأصناف ذات الرصيد الفعلي في store_no أو المدرجة في جرده الجاري.
     """
     conn = get_connection()
     cursor = conn.cursor()
+
+    eligible_map: Dict[str, Dict[str, Any]] = {}
+    resolved_store = ""
+    if stock_only:
+        resolved_store, eligible_map = _get_stocktake_eligible_map(cursor, store_no)
+        if not eligible_map:
+            conn.close()
+            return {"items": [], "total": 0, "limit": limit, "offset": offset, "store_no": resolved_store}
+        cursor.execute("CREATE TEMP TABLE IF NOT EXISTS _stk_eligible (code TEXT PRIMARY KEY)")
+        cursor.execute("DELETE FROM _stk_eligible")
+        cursor.executemany(
+            "INSERT OR IGNORE INTO _stk_eligible (code) VALUES (?)",
+            [(c,) for c in eligible_map.keys()]
+        )
+
     raw_q = str(query or "").lstrip()
     has_trailing_space = raw_q.endswith(' ')
     q = raw_q.strip()
     is_contains = str(match_mode or "").lower() in ("contains", "generalized", "all", "true", "1")
-    
+    stk_join_sql = "INNER JOIN _stk_eligible stk_e ON stk_e.code = p.code" if stock_only else ""
+
     if not q:
-        cursor.execute("SELECT COUNT(*) FROM products")
+        cursor.execute(f"SELECT COUNT(*) FROM products p {stk_join_sql}")
         total = cursor.fetchone()[0]
-        cursor.execute("SELECT * FROM products ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
+        cursor.execute(f"SELECT p.* FROM products p {stk_join_sql} ORDER BY p.id DESC LIMIT ? OFFSET ?", (limit, offset))
         rows = cursor.fetchall()
     else:
         from .normalizer import normalize_arabic, normalize_english
@@ -917,8 +1091,9 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
 
         cursor.execute(f"""
             SELECT COUNT(DISTINCT p.id) FROM products p
+            {stk_join_sql}
             LEFT JOIN product_barcodes pb ON p.code = pb.product_code
-            WHERE {where_sql}
+            WHERE ({where_sql})
         """, tuple(params))
         total = cursor.fetchone()[0]
         
@@ -932,8 +1107,9 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
         query_params = list(params) + order_params + [limit, offset]
         cursor.execute(f"""
             SELECT DISTINCT p.* FROM products p
+            {stk_join_sql}
             LEFT JOIN product_barcodes pb ON p.code = pb.product_code
-            WHERE {where_sql}
+            WHERE ({where_sql})
             ORDER BY 
                 CASE
                     WHEN p.code = ? THEN 1
@@ -953,12 +1129,17 @@ def search_products(query: str = "", limit: int = 50, offset: int = 0, match_mod
     conn.close()
     for item in items:
         _attach_product_barcodes(item)
-    return {
+        if stock_only and item.get("code") in eligible_map:
+            item.update(eligible_map[item["code"]])
+    res_payload = {
         "items": items,
         "total": total,
         "limit": limit,
         "offset": offset
     }
+    if stock_only:
+        res_payload["store_no"] = resolved_store
+    return res_payload
 
 # ==================== إدارة الفواتير والمسح الضوئي ====================
 

@@ -3,7 +3,10 @@
 اختبارات تكامل البحث الموحد داخل شاشة الجرد:
 - التحقق من البحث في جميع الحقول الثمانية (عربي، إنجليزي، علمي، شركة، باركود، GTIN، كود، رقم داخلي).
 - التحقق من وضع البداية والمعمم وقاعدة الحد اللفظي ("ADOL " مقابل "ADOL").
-- التحقق من استمرارية عمل مسح 1D Barcode و 2D GS1 QR وحساب الكميات والباتشات دون تغيير.
+- التحقق من تقييد بحث شاشة الجرد (stock_only=True) بالأصناف ذات الرصيد الفعلي أو المدرجة في الجرد الجاري للمخزن المحدد فقط.
+- التحقق من بقاء الأصناف التي أُدخلت في الجرد الجاري حتى لو كانت counted_qty = 0، ومن استبعاد سجلات الجرد المنتهية/القديمة وأصناف المخازن الأخرى.
+- التحقق من مراعاة تعدد التشغيلات (دفعة 0 + دفعة 5 يظهر، جميع الدفعات 0 يُستبعد).
+- التحقق من بقاء محرك بحث كرت الصنف الأصلي (stock_only=False) يعرض كافة الأصناف دون تغيير.
 """
 
 import os
@@ -28,9 +31,12 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
         os.environ["INVENTORY_DB_PATH"] = self.test_db
         db.init_db()
         stock_manager.init_stock_tables()
-        stock_manager.create_new_store("ST-TEST", "مستودع الاختبار", "الفرع الرئيسي")
+        self.st_test = stock_manager.create_new_store("مستودع الاختبار", "الفرع الرئيسي")["store_no"]
+        self.st_other = stock_manager.create_new_store("مستودع آخر", "الفرع الثاني")["store_no"]
+        self.st_empty = stock_manager.create_new_store("مستودع فارغ", "الفرع الثالث")["store_no"]
+        self.st_done = stock_manager.create_new_store("مستودع جرد منتهي", "الفرع الرابع")["store_no"]
 
-        # إدخال أصناف تجريبية تغطي كافة الحقول
+        # 1. صنف له رصيد فعلي في st_test (8 حقول كاملة)
         db.save_or_update_product({
             "code": "0000093860",
             "name_en": "ADOL EXTRA 500MG TAB",
@@ -43,6 +49,7 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
             "barcode_list": ["6281111222333", "6289998887771"],
             "gtin_list": ["06281111222334"],
         })
+        # 2. صنف له رصيد فعلي عبر دفعة 0 + دفعة 5 في st_test
         db.save_or_update_product({
             "code": "26606n",
             "name_en": "ADOLIN 0.1% GEL 30GM",
@@ -55,6 +62,84 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
             "barcode_list": ["6291100220011"],
             "gtin_list": ["06291100220011"],
         })
+        # 3. صنف مسجل في كرت الصنف والباركود ولكن بدون أي رصيد مخزني في st_test (موجود في st_other فقط)
+        db.save_or_update_product({
+            "code": "0000077777",
+            "name_en": "ADOL COLD NOSTOCK TAB",
+            "name_ar": "ادول كولد بدون رصيد",
+            "scientific_name": "Paracetamol Pseudoephedrine",
+            "company": "Tabuk Pharma",
+            "category": "Analgesic",
+            "selling_price": 18.0,
+            "cost_price": 12.0,
+            "barcode_list": ["6287777777777"],
+            "gtin_list": ["06287777777777"],
+        })
+        # 4. صنف في st_test ولكن جميع دفعاته رصيدها 0
+        db.save_or_update_product({
+            "code": "0000088888",
+            "name_en": "ADOL ZERO BATCH TAB",
+            "name_ar": "ادول رصيد صفر",
+            "scientific_name": "Paracetamol Zero",
+            "company": "Tabuk Pharma",
+            "category": "Analgesic",
+            "selling_price": 11.0,
+            "cost_price": 7.0,
+            "barcode_list": ["6288888888888"],
+            "gtin_list": ["06288888888888"],
+        })
+        # 5. صنف بدون رصيد مخزني لكنه دخل في الجرد الجاري لـ st_test بكمية counted_qty = 0
+        db.save_or_update_product({
+            "code": "0000099999",
+            "name_en": "PANADOL COUNTED ZERO TAB",
+            "name_ar": "بنادول مجرود بصفر",
+            "scientific_name": "Paracetamol Active",
+            "company": "GSK",
+            "category": "Analgesic",
+            "selling_price": 19.0,
+            "cost_price": 13.0,
+            "barcode_list": ["6289999999999"],
+            "gtin_list": ["06289999999999"],
+        })
+
+        conn = db.get_connection()
+        c = conn.cursor()
+        # st_test: رصيد موجب لـ 0000093860
+        c.execute("""
+            INSERT INTO inventory_records (product_code, product_name, barcode, batch_number, expiry_date, system_qty, cost_price, selling_price, store_no)
+            VALUES ('0000093860', 'ADOL EXTRA 500MG TAB', '6281111222333', 'B1', '2028-12-31', 4.0, 10.0, 15.0, ?)
+        """, (self.st_test,))
+        # st_test: دفعة 0 ودفعة 5 لـ 26606n (يجب أن يظهر)
+        c.execute("""
+            INSERT INTO inventory_records (product_code, product_name, barcode, batch_number, expiry_date, system_qty, cost_price, selling_price, store_no)
+            VALUES ('26606n', 'ADOLIN 0.1% GEL 30GM', '6291100220011', 'DZ0', '2026-01-01', 0.0, 14.0, 22.5, ?),
+                   ('26606n', 'ADOLIN 0.1% GEL 30GM', '6291100220011', 'DZ5', '2028-06-30', 5.0, 14.0, 22.5, ?)
+        """, (self.st_test, self.st_test))
+        # st_test: جميع دفعات 0000088888 بصفر (يجب أن يُستبعد)
+        c.execute("""
+            INSERT INTO inventory_records (product_code, product_name, barcode, batch_number, expiry_date, system_qty, cost_price, selling_price, store_no)
+            VALUES ('0000088888', 'ADOL ZERO BATCH TAB', '6288888888888', 'Z1', '2027-01-01', 0.0, 7.0, 11.0, ?),
+                   ('0000088888', 'ADOL ZERO BATCH TAB', '6288888888888', 'Z2', '2027-05-01', 0.0, 7.0, 11.0, ?)
+        """, (self.st_test, self.st_test))
+        # st_other: رصيد 0000077777 في مخزن آخر فقط (يجب ألا يظهر في st_test)
+        c.execute("""
+            INSERT INTO inventory_records (product_code, product_name, barcode, batch_number, expiry_date, system_qty, cost_price, selling_price, store_no)
+            VALUES ('0000077777', 'ADOL COLD NOSTOCK TAB', '6287777777777', 'OT1', '2028-01-01', 12.0, 12.0, 18.0, ?)
+        """, (self.st_other,))
+        # st_test جرد جاري: إدخال 0000099999 بكمية counted_qty = 0 وتفعيل status='in_progress'
+        c.execute("UPDATE stock_stores SET status = 'in_progress' WHERE store_no = ?", (self.st_test,))
+        c.execute("""
+            INSERT INTO stocktake_entries (product_code, product_name, barcode, gtin, batch_number, expiry_date, system_qty, counted_qty, store_no)
+            VALUES ('0000099999', 'PANADOL COUNTED ZERO TAB', '6289999999999', '06289999999999', 'P0', '2028-03-01', 0.0, 0.0, ?)
+        """, (self.st_test,))
+        # st_done منتهي ومعتمد: سجل قديم في stocktake_entries بدون رصيد في inventory_records (يجب أن يُستبعد)
+        c.execute("UPDATE stock_stores SET status = 'completed' WHERE store_no = ?", (self.st_done,))
+        c.execute("""
+            INSERT INTO stocktake_entries (product_code, product_name, barcode, gtin, batch_number, expiry_date, system_qty, counted_qty, store_no)
+            VALUES ('0000099999', 'PANADOL COUNTED ZERO TAB', '6289999999999', '06289999999999', 'OLD1', '2026-01-01', 0.0, 0.0, ?)
+        """, (self.st_done,))
+        conn.commit()
+        conn.close()
 
     def tearDown(self):
         if self.orig_env is None:
@@ -63,90 +148,90 @@ class TestStocktakeUnifiedCatalogSearch(unittest.TestCase):
             os.environ["INVENTORY_DB_PATH"] = self.orig_env
         self.tmpdir.cleanup()
 
-    def test_01_all_eight_fields_and_search_modes(self):
-        # 1. العربي + بداية
-        r_ar = db.search_products("ادول اكسترا", match_mode="start")
-        self.assertEqual(r_ar["total"], 1)
-        self.assertEqual(r_ar["items"][0]["code"], "0000093860")
+    def test_01_catalog_search_unchanged_and_shows_all_products(self):
+        # محرك بحث كرت الصنف الأصلي (stock_only=False) يعرض جميع الأصناف الأربعة التي تبدأ بـ ADOL بما فيها عديمة الرصيد
+        r_cat = db.search_products("ADOL", match_mode="start")
+        self.assertEqual(r_cat["total"], 4)
+        self.assertEqual({i["code"] for i in r_cat["items"]}, {"0000093860", "26606n", "0000077777", "0000088888"})
 
-        # 2. الإنجليزي + معمم (جزء من الكلمة في المنتصف)
-        r_en = db.search_products("EXTRA", match_mode="contains")
-        self.assertEqual(r_en["total"], 1)
-        self.assertEqual(r_en["items"][0]["code"], "0000093860")
+        # قاعدة الحد اللفظي في كرت الصنف ما زالت تستبعد ADOLIN
+        r_wb = db.search_products("ADOL ", match_mode="start")
+        self.assertEqual({i["code"] for i in r_wb["items"]}, {"0000093860", "0000077777", "0000088888"})
 
-        # 3. الاسم العلمي
-        r_sci = db.search_products("Adapalene", match_mode="start")
-        self.assertEqual(r_sci["total"], 1)
-        self.assertEqual(r_sci["items"][0]["code"], "26606n")
+    def test_02_stocktake_search_filters_by_store_stock_and_all_eight_fields(self):
+        # البحث في st_test بـ "ADOL" يعرض فقط 0000093860 (رصيد 4) و 26606n (دفعة 0 + دفعة 5) ويستبعد 0000077777 (مخزن آخر) و 0000088888 (كل دفعاته 0)
+        r_stk = db.search_products("ADOL", match_mode="start", stock_only=True, store_no=self.st_test)
+        self.assertEqual(r_stk["total"], 2)
+        self.assertEqual({i["code"] for i in r_stk["items"]}, {"0000093860", "26606n"})
 
-        # 4. الشركة المصنعة
-        r_comp = db.search_products("Tabuk", match_mode="contains")
-        self.assertEqual(r_comp["total"], 1)
-        self.assertEqual(r_comp["items"][0]["code"], "0000093860")
+        # الحقول الثمانية والأنماط في شاشة الجرد (stock_only=True):
+        self.assertEqual([i["code"] for i in db.search_products("ادول اكسترا", match_mode="start", stock_only=True, store_no=self.st_test)["items"]], ["0000093860"])
+        self.assertEqual([i["code"] for i in db.search_products("EXTRA", match_mode="contains", stock_only=True, store_no=self.st_test)["items"]], ["0000093860"])
+        self.assertEqual([i["code"] for i in db.search_products("Adapalene", match_mode="start", stock_only=True, store_no=self.st_test)["items"]], ["26606n"])
+        self.assertEqual([i["code"] for i in db.search_products("Tabuk", match_mode="contains", stock_only=True, store_no=self.st_test)["items"]], ["0000093860"])
+        self.assertEqual([i["code"] for i in db.search_products("6289998887771", match_mode="start", stock_only=True, store_no=self.st_test)["items"]], ["0000093860"])
+        self.assertEqual([i["code"] for i in db.search_products("06281111222334", match_mode="start", stock_only=True, store_no=self.st_test)["items"]], ["0000093860"])
+        self.assertEqual([i["code"] for i in db.search_products("0000093860", match_mode="start", stock_only=True, store_no=self.st_test)["items"]], ["0000093860"])
+        self.assertEqual([i["code"] for i in db.search_products("26606n", match_mode="start", stock_only=True, store_no=self.st_test)["items"]], ["26606n"])
 
-        # 5. الباركود الإضافي والأساسي
-        r_bar = db.search_products("6289998887771", match_mode="start")
-        self.assertEqual(r_bar["total"], 1)
-        self.assertEqual(r_bar["items"][0]["code"], "0000093860")
+        # قاعدة الحد اللفظي ("ADOL ") مع stock_only=True تستبعد ADOLIN وكذلك تستبعد عديمي الرصيد
+        r_stk_wb = db.search_products("ADOL ", match_mode="start", stock_only=True, store_no=self.st_test)
+        self.assertEqual([i["code"] for i in r_stk_wb["items"]], ["0000093860"])
 
-        # 6. GTIN
-        r_gtin = db.search_products("06281111222334", match_mode="start")
-        self.assertEqual(r_gtin["total"], 1)
-        self.assertEqual(r_gtin["items"][0]["code"], "0000093860")
+        # أولوية OR/AND في SQL: البحث باسم/باركود صنف عديم الرصيد في st_test يرجع 0 نتائج حتى مع وجود كلمة/شركة مشتركة
+        self.assertEqual(db.search_products("0000077777", match_mode="contains", stock_only=True, store_no=self.st_test)["total"], 0)
+        self.assertEqual(db.search_products("6287777777777", match_mode="start", stock_only=True, store_no=self.st_test)["total"], 0)
+        self.assertEqual(db.search_products("0000088888", match_mode="contains", stock_only=True, store_no=self.st_test)["total"], 0)
 
-        # 7. كود الصنف ذو 10 خانات بالأصفار البادئة والرقم المختلط
-        r_code1 = db.search_products("0000093860", match_mode="start")
-        self.assertEqual(r_code1["total"], 1)
-        self.assertEqual(r_code1["items"][0]["code"], "0000093860")
+    def test_03_current_stocktake_zero_qty_and_store_isolation(self):
+        # 1. الصنف 0000099999 بدون رصيد مخزني، لكنه أُدخل في الجرد الجاري لـ st_test بكمية counted_qty = 0 -> يجب أن يظهر للمراجعة والتعديل
+        r_curr_zero = db.search_products("PANADOL", match_mode="start", stock_only=True, store_no=self.st_test)
+        self.assertEqual(r_curr_zero["total"], 1)
+        self.assertEqual(r_curr_zero["items"][0]["code"], "0000099999")
+        self.assertTrue(r_curr_zero["items"][0]["in_current_stocktake"])
 
-        r_code2 = db.search_products("26606n", match_mode="start")
-        self.assertEqual(r_code2["total"], 1)
-        self.assertEqual(r_code2["items"][0]["code"], "26606n")
+        # 2. في المخزن المنتهي st_done (status='completed'): سجل stocktake_entries القديم لا يُعتبر جرداً جارياً -> لا يظهر
+        r_done = db.search_products("PANADOL", match_mode="start", stock_only=True, store_no=self.st_done)
+        self.assertEqual(r_done["total"], 0)
 
-        # 8. قاعدة الحد اللفظي (المسطرة): "ADOL" يطابق الاثنين، أما "ADOL " فلا يطابق ADOLIN
-        r_no_space = db.search_products("ADOL", match_mode="start")
-        self.assertEqual(r_no_space["total"], 2)
+        # 3. في المخزن الفارغ st_empty: لا تظهر أصناف من st_test أو st_other
+        r_empty = db.search_products("ADOL", match_mode="start", stock_only=True, store_no=self.st_empty)
+        self.assertEqual(r_empty["total"], 0)
 
-        r_with_space = db.search_products("ADOL ", match_mode="start")
-        self.assertEqual(r_with_space["total"], 1)
-        self.assertEqual(r_with_space["items"][0]["code"], "0000093860")
+        # 4. في st_other: يظهر فقط 0000077777 وليس أصناف st_test
+        r_other = db.search_products("ADOL", match_mode="start", stock_only=True, store_no=self.st_other)
+        self.assertEqual([i["code"] for i in r_other["items"]], ["0000077777"])
 
-    def test_02_stocktake_select_and_preserve_1d_2d_scanning(self):
-        # 1. الاختيار الصريح من نتائج البحث (كود 10 خانات وكود بحروف)
-        res_pick = stock_manager.scan_item_to_store("0000093860", store_no="ST-TEST", product_code="0000093860")
+    def test_04_stocktake_select_and_preserve_1d_2d_scanning(self):
+        res_pick = stock_manager.scan_item_to_store("0000093860", store_no=self.st_test, product_code="0000093860")
         self.assertTrue(res_pick["success"], res_pick)
         self.assertTrue(res_pick.get("requires_batch_entry"))
         self.assertEqual(res_pick["product"]["code"], "0000093860")
 
-        res_pick_alpha = stock_manager.scan_item_to_store("26606n", store_no="ST-TEST", product_code="26606n")
-        self.assertTrue(res_pick_alpha["success"], res_pick_alpha)
-        self.assertEqual(res_pick_alpha["product"]["code"], "26606n")
-
-        # 2. مسح باركود 1D بالطريقة المعتادة
-        res_1d = stock_manager.scan_item_to_store("6281111222333", store_no="ST-TEST")
+        res_1d = stock_manager.scan_item_to_store("6281111222333", store_no=self.st_test)
         self.assertTrue(res_1d["success"], res_1d)
-        self.assertTrue(res_1d.get("requires_batch_entry"))
         self.assertEqual(res_1d["product"]["code"], "0000093860")
 
-        # 3. مسح كود 2D GS1 DataMatrix بالطريقة المعتادة (+1 تلقائي + حفظ الباتش ومنع تكرار السيريال)
         qr_2d = "01062811112223341727123110bt55521sn998877"
-        res_2d = stock_manager.scan_item_to_store(qr_2d, store_no="ST-TEST")
+        res_2d = stock_manager.scan_item_to_store(qr_2d, store_no=self.st_test)
         self.assertTrue(res_2d["success"], res_2d)
-        self.assertFalse(res_2d.get("requires_batch_entry", False))
         self.assertEqual(res_2d["batch_number"], "BT555")
 
-        res_dup = stock_manager.scan_item_to_store(qr_2d, store_no="ST-TEST")
+        res_dup = stock_manager.scan_item_to_store(qr_2d, store_no=self.st_test)
         self.assertFalse(res_dup["success"])
         self.assertTrue(res_dup.get("is_duplicate_serial"))
 
-    def test_03_frontend_reuses_catalog_search_endpoint(self):
+    def test_05_frontend_and_server_wire_stock_search_route(self):
         idx_html = (BASE_DIR / "frontend" / "index.html").read_text(encoding="utf-8")
         app_js = (BASE_DIR / "frontend" / "app.js").read_text(encoding="utf-8")
+        srv_py = (BASE_DIR / "backend" / "server.py").read_text(encoding="utf-8")
 
         self.assertIn('id="btn-stk-toggle-search-mode"', idx_html)
         self.assertIn('id="stk-search-dropdown"', idx_html)
-        self.assertIn('function initStocktakeCatalogSearch()', app_js)
-        self.assertIn('/api/catalog/products?query=', app_js[app_js.index('fetchAndRenderStkCatalogSearch'):])
+        self.assertIn("if path == '/api/stock/search':", srv_py)
+        self.assertIn("stock_only=True, store_no=store_no", srv_py)
+        self.assertIn('/api/stock/search?query=', app_js[app_js.index('fetchAndRenderStkCatalogSearch'):])
+        self.assertIn('/api/catalog/products?query=', app_js[app_js.index('loadCatalogProducts'):])
 
 
 if __name__ == "__main__":

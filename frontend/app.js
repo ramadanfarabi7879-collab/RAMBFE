@@ -7496,6 +7496,8 @@ function selectActiveStockStore(storeNo, storeName) {
     localStorage.setItem('agy_active_store_name', currentActiveStoreName);
     selectedStockEntryIds.clear();
     updateStockSelectionBar();
+    closeStkSearchDropdown();
+    stkSearchResults = [];
 
     const displayEl = document.getElementById('stk-active-store-display');
     const titleEl = document.getElementById('stk-current-counting-title');
@@ -8452,7 +8454,8 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
     const seq = ++stkSearchReqSeq;
     try {
         const mode = isStkGeneralizedSearch ? 'contains' : 'start';
-        const url = `/api/catalog/products?query=${encodeURIComponent(rawQuery)}&mode=${mode}&limit=100&offset=0`;
+        const storeParam = encodeURIComponent(currentActiveStoreNo || '');
+        const url = `/api/stock/search?query=${encodeURIComponent(rawQuery)}&mode=${mode}&store_no=${storeParam}&limit=100&offset=0`;
         const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json().catch(() => ({}));
         if (seq !== stkSearchReqSeq) return;
@@ -8460,6 +8463,7 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
 
         const items = data.items || [];
         const total = data.total ?? items.length;
+        const activeStoreLabel = data.store_no || currentActiveStoreNo || '';
         stkSearchResults = items;
         stkActiveSearchIndex = -1;
 
@@ -8467,7 +8471,7 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
             dd.innerHTML = `
                 <div class="p-4 text-center text-slate-400 font-medium">
                     <div class="text-lg mb-1">🔍</div>
-                    <div class="text-xs">لم يتم العثور على أي صنف في كرت الصنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"</div>
+                    <div class="text-xs">لا توجد أصناف ذات رصيد مخزني متاح أو مدرجة في الجرد الجاري للمخزن (<span class="font-mono font-bold text-slate-600">${escapeHtml(activeStoreLabel)}</span>) تطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"</div>
                 </div>
             `;
             dd.classList.remove('hidden');
@@ -8476,7 +8480,7 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
 
         let html = `
             <div class="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between text-[11px] font-bold text-slate-600">
-                <span>نتائج مطابقة من كرت الصنف: <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})</span>
+                <span>أصناف برصيد/جرد (${escapeHtml(activeStoreLabel)}): <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})</span>
                 <span class="text-[10px] text-slate-400">اضغط على الصنف أو استخدم ↑↓ و Enter لإضافته للجرد</span>
             </div>
             <div id="stk-search-items-list" class="divide-y divide-slate-100 overflow-y-auto max-h-[55vh]">
@@ -8488,10 +8492,19 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
             const sciName = it.scientific_name || '';
             const company = it.company || '';
             const price = parseFloat(it.selling_price || 0).toFixed(2);
+            const stockQty = parseFloat(it.store_stock_qty || 0);
+            const batchCount = parseInt(it.store_batch_count || 0, 10);
+            const inCurrStk = !!it.in_current_stocktake;
             const gList = (it.gtin_list || []).filter(Boolean);
             const bList = (it.barcode_list || []).filter(Boolean);
             const barcodeBadge = bList[0] || it.barcode || '';
             const gtinBadge = gList[0] || it.gtin || '';
+            const stockBadgeHtml = stockQty > 0
+                ? `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-mono text-[10px] font-bold" title="إجمالي الرصيد المتاح في المخزن">رصيد: ${Number.isInteger(stockQty) ? stockQty : stockQty.toFixed(2)}${batchCount > 1 ? ` (${batchCount} دفعات)` : ''}</span>`
+                : '';
+            const stkEntryBadgeHtml = inCurrStk
+                ? `<span class="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[10px] font-bold">بالجرد الجاري</span>`
+                : '';
 
             html += `
                 <div class="stk-search-item p-2.5 px-3 flex items-center justify-between gap-2.5 hover:bg-indigo-50/60 cursor-pointer transition select-none" data-index="${idx}" data-code="${escapeHtml(it.code)}">
@@ -8509,6 +8522,8 @@ async function fetchAndRenderStkCatalogSearch(rawQuery) {
                         </div>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
+                        ${stockBadgeHtml}
+                        ${stkEntryBadgeHtml}
                         <span class="font-mono font-bold text-emerald-700 text-xs">${price} ر.س</span>
                         <button type="button" class="btn-stk-pick-item px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition shadow-xs" data-code="${escapeHtml(it.code)}">
                             ➕ إضافة للجرد

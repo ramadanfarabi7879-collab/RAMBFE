@@ -462,6 +462,18 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self.send_json(search_products(q, limit, offset, match_mode=mode))
             return
 
+        # 3b. بحث شاشة الجرد المحصور بالأصناف ذات الرصيد الفعلي أو الجرد الجاري في المخزن المحدد فقط
+        if path == '/api/stock/search':
+            q = (params.get('query', [''])[0] or params.get('q', [''])[0]).lstrip()
+            mode = params.get('mode', ['start'])[0].strip().lower()
+            store_no = params.get('store_no', [''])[0].strip()
+            limit_str = params.get('limit', ['50'])[0]
+            offset_str = params.get('offset', ['0'])[0]
+            limit = int(limit_str) if limit_str.isdigit() else 50
+            offset = int(offset_str) if offset_str.isdigit() else 0
+            self.send_json(search_products(q, limit, offset, match_mode=mode, stock_only=True, store_no=store_no))
+            return
+
         # 4. جلب صنف واحد بالكود
         if path == '/api/catalog/product':
             code = params.get('code', [''])[0].strip()
