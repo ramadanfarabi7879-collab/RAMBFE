@@ -271,7 +271,9 @@ def _print_banner(url: str) -> None:
     _safe_print(" 🚀 تم تفعيل نفق Cloudflare الحقيقي بنجاح للمزامنة اللحظية (24/7)!")
     _safe_print(f" 🌍 رابط الموبايل عبر النفق:      {url}")
     _safe_print(f" 📱 أو افتح كشف الجرد السريع:     {url}/mobile")
-    _safe_print(" ☁️ رابط Cloudflare الثابت:        https://rambfe.quran-halaqat.workers.dev")
+    pub = os.environ.get("RAMBFE_PUBLIC_URL", "").strip()
+    if pub:
+        _safe_print(f" ☁️ الرابط العام المخصص:         {pub}")
     _safe_print("=" * 68 + "\n")
 
 

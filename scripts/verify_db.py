@@ -4,7 +4,10 @@ import sys
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-conn = sqlite3.connect('data/inventory.db')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from backend.db_safety import get_resolved_db_path
+conn = sqlite3.connect(get_resolved_db_path())
 conn.row_factory = sqlite3.Row
 c = conn.cursor()
 

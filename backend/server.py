@@ -90,6 +90,10 @@ try:
         list_backups,
         restore_backup,
         ensure_safe_db_target,
+        get_or_create_admin_token,
+        is_authorized_admin_request,
+        BACKUP_DIR,
+        EXTERNAL_BACKUP_DIR,
     )
 except (ImportError, ValueError):
     from backend.catalog_autosync import start_autosync, sync_now as catalog_sync_now, get_status as catalog_sync_status
@@ -103,6 +107,10 @@ except (ImportError, ValueError):
         list_backups,
         restore_backup,
         ensure_safe_db_target,
+        get_or_create_admin_token,
+        is_authorized_admin_request,
+        BACKUP_DIR,
+        EXTERNAL_BACKUP_DIR,
     )
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -376,8 +384,13 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self.send_json(health, status=200 if health["healthy"] else 503)
             return
 
-        # 0.ب عرض قائمة النسخ الاحتياطية المتوفرة
+        # 0.ب عرض قائمة النسخ الاحتياطية المتوفرة (محلي أو بتفويض إداري فقط)
         if path == '/api/backup/list':
+            ok_auth, auth_msg = is_authorized_admin_request(self.client_address[0], dict(self.headers), require_token_always=False)
+            if not ok_auth:
+                get_server_logger().warning(f"Unauthorized /api/backup/list attempt from {self.client_address[0]}: {auth_msg}")
+                self.send_json({"success": False, "message": auth_msg}, 403)
+                return
             self.send_json({"success": True, "backups": list_backups()})
             return
 
@@ -778,21 +791,37 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         body_bytes = self.read_full_body()
         content_type = self.headers.get('Content-Type', '')
 
-        # نقاط نهاية النسخ الاحتياطي والاستعادة
+        # نقاط نهاية النسخ الاحتياطي والاستعادة (محمية بالصلاحيات ومنع التراجع للخلف بدون موافقة صريحة)
         if path == '/api/backup/create':
+            ok_auth, auth_msg = is_authorized_admin_request(self.client_address[0], dict(self.headers), require_token_always=False)
+            if not ok_auth:
+                get_server_logger().warning(f"Unauthorized /api/backup/create attempt from {self.client_address[0]}")
+                self.send_json({"success": False, "message": auth_msg}, 403)
+                return
             res = create_backup(reason="manual")
             self.send_json(res, status=200 if res.get("success") else 500)
             return
 
         if path == '/api/backup/restore':
+            ok_auth, auth_msg = is_authorized_admin_request(self.client_address[0], dict(self.headers), require_token_always=True)
+            if not ok_auth:
+                get_server_logger().warning(f"Unauthorized /api/backup/restore attempt from {self.client_address[0]}")
+                self.send_json({"success": False, "message": auth_msg}, 403)
+                return
             try:
                 data = json.loads(body_bytes.decode('utf-8') or '{}') if body_bytes else {}
                 file_name = os.path.basename(str(data.get('file_name') or '').strip())
                 if not file_name:
                     self.send_json({"success": False, "message": "يجب تحديد اسم ملف النسخة الاحتياطية."}, 400)
                     return
-                from backend.db_safety import BACKUP_DIR
-                res = restore_backup(os.path.join(BACKUP_DIR, file_name))
+                confirm_newer = bool(data.get('confirm_overwrite_newer', False))
+                cand_primary = os.path.join(BACKUP_DIR, file_name)
+                cand_ext = os.path.join(EXTERNAL_BACKUP_DIR, file_name)
+                chosen = cand_primary if os.path.isfile(cand_primary) else cand_ext
+                res = restore_backup(chosen, confirm_overwrite_newer=confirm_newer)
+                if res.get("requires_explicit_confirmation"):
+                    self.send_json(res, status=409)
+                    return
                 self.send_json(res, status=200 if res.get("success") else 400)
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, 400)
@@ -1293,6 +1322,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == '/api/stock/reset-all':
+            ok_auth, auth_msg = is_authorized_admin_request(self.client_address[0], dict(self.headers), require_token_always=False)
+            if not ok_auth:
+                get_server_logger().warning(f"Unauthorized /api/stock/reset-all attempt from {self.client_address[0]}")
+                self.send_json({"success": False, "message": auth_msg}, 403)
+                return
             try:
                 res = reset_all_stocktake_test_data()
                 self.send_json(res)
@@ -1585,6 +1619,10 @@ def run_server(port=8000, auto_open_browser=True):
             raise e
 
     srv_logger = get_server_logger()
+    try:
+        get_or_create_admin_token()
+    except Exception:
+        pass
     try:
         init_db()
     except Exception as e:

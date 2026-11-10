@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-اختبارات شاملة لإثبات ثبات مسار قاعدة البيانات، حارس الكتابة، النسخ الاحتياطي والاستعادة،
+اختبارات شاملة لإثبات ثبات مسار قاعدة البيانات، حارس الكتابة، النسخ الاحتياطي المستقل،
+منع استعادة نسخة أقدم فوق قاعدة أحدث، وصلاحيات نقاط الـ API الحساسة،
 وعدم مسح بيانات الواجهة عند انقطاع الاتصال.
 """
 
 import os
 import sys
-import json
-import sqlite3
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -59,7 +59,6 @@ class TestDatabaseSafetyAndStability(unittest.TestCase):
                 db_safety.BACKUP_DIR = os.path.join(tmpdir, "backups")
                 db.init_db()
 
-                # إدخال بيانات تجريبية (صنف + فاتورة + سجل جرد)
                 ok, code, _ = db.save_or_update_product({
                     "code": "TST999",
                     "name_en": "STABILITY TEST ITEM",
@@ -70,17 +69,19 @@ class TestDatabaseSafetyAndStability(unittest.TestCase):
                 self.assertTrue(ok)
                 self.assertEqual(code, "TST999")
 
-                # إنشاء نسخة احتياطية متسقة والتحقق منها
                 b_res = db_safety.create_backup(reason="unit_test")
                 self.assertTrue(b_res["success"], b_res)
                 self.assertEqual(b_res["products_count"], 1)
 
-                # حذف الصنف من القاعدة (محاكاة فقدان غير مقصود)
+                # حذف الصنف -> الآن القاعدة فيها 0 أصناف (أقل من النسخة الاحتياطية)
                 db.delete_product("TST999")
                 self.assertIsNone(db.get_product_by_code("TST999"))
 
-                # الاستعادة من النسخة الاحتياطية
-                r_res = db_safety.restore_backup(b_res["path"], target_db_path=test_db)
+                r_res = db_safety.restore_backup(
+                    b_res["path"],
+                    target_db_path=test_db,
+                    confirm_overwrite_newer=True,
+                )
                 self.assertTrue(r_res["success"], r_res)
 
                 restored = db.get_product_by_code("TST999")
@@ -100,7 +101,6 @@ class TestDatabaseSafetyAndStability(unittest.TestCase):
 
         self.assertIn("function isUnavailableApiResponse", app_js)
         self.assertIn("initConnectionHealthMonitor()", app_js)
-        # التأكد من حماية كل دوال التحميل الأساسية
         for fn_snippet in (
             "async function loadInvoicesList()",
             "async function loadStocktakeStores(",
@@ -112,6 +112,62 @@ class TestDatabaseSafetyAndStability(unittest.TestCase):
             self.assertIn("isUnavailableApiResponse", body_slice, f"{fn_snippet} missing 503 guard")
 
         self.assertIn("data.offline_reconnecting || data.db_error", mob_html)
+
+    def test_05_restore_blocks_older_backup_over_newer_db_without_explicit_confirm(self):
+        """التأكد أن الاستعادة ترفض استبدال قاعدة أحدث بنسخة أقدم ما لم تتوفر موافقة صريحة."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_db = os.path.join(tmpdir, "test_newer.db")
+            orig_env = os.environ.get("INVENTORY_DB_PATH")
+            orig_backup_dir = db_safety.BACKUP_DIR
+            try:
+                os.environ["INVENTORY_DB_PATH"] = test_db
+                db_safety.BACKUP_DIR = os.path.join(tmpdir, "backups")
+                db.init_db()
+                db.save_or_update_product({"code": "OLD1", "name_en": "OLD ITEM"})
+                b_res = db_safety.create_backup(reason="older_snap")
+                self.assertTrue(b_res["success"])
+
+                time.sleep(1.1)
+                db.save_or_update_product({"code": "NEW2", "name_en": "NEWER ITEM"})
+
+                # محاولة الاستعادة بدون موافقة صريحة -> يجب أن تُرفض
+                blocked = db_safety.restore_backup(b_res["path"], target_db_path=test_db, confirm_overwrite_newer=False)
+                self.assertFalse(blocked["success"])
+                self.assertTrue(blocked.get("requires_explicit_confirmation"))
+                self.assertEqual(blocked.get("code"), "NEWER_DATABASE_PROTECTED")
+                self.assertIsNotNone(db.get_product_by_code("NEW2"))
+
+                # مع الموافقة الصريحة -> تنجح
+                allowed = db_safety.restore_backup(b_res["path"], target_db_path=test_db, confirm_overwrite_newer=True)
+                self.assertTrue(allowed["success"])
+                self.assertIsNone(db.get_product_by_code("NEW2"))
+            finally:
+                db_safety.BACKUP_DIR = orig_backup_dir
+                if orig_env is None:
+                    os.environ.pop("INVENTORY_DB_PATH", None)
+                else:
+                    os.environ["INVENTORY_DB_PATH"] = orig_env
+
+    def test_06_admin_authorization_blocks_proxied_and_unauthenticated_restore(self):
+        """التأكد من رفض طلبات Cloudflare الممررة وطلبات الاستعادة بدون X-Admin-Token."""
+        # 1. طلب قادم عبر نفق Cloudflare (يحمل CF-Connecting-IP حتى لو بدا IP محلي) -> مرفوض
+        ok1, _ = db_safety.is_authorized_admin_request(
+            "127.0.0.1", {"CF-Connecting-IP": "198.51.100.1"}, require_token_always=False
+        )
+        self.assertFalse(ok1)
+
+        # 2. طلب استعادة محلي بدون X-Admin-Token -> مرفوض
+        ok2, _ = db_safety.is_authorized_admin_request(
+            "127.0.0.1", {}, require_token_always=True
+        )
+        self.assertFalse(ok2)
+
+        # 3. طلب برمز X-Admin-Token الصحيح -> مسموح
+        tok = db_safety.get_or_create_admin_token()
+        ok3, _ = db_safety.is_authorized_admin_request(
+            "127.0.0.1", {"CF-Connecting-IP": "198.51.100.1", "X-Admin-Token": tok}, require_token_always=True
+        )
+        self.assertTrue(ok3)
 
 
 if __name__ == "__main__":

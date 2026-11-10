@@ -1,6 +1,10 @@
 import sqlite3
 
-conn = sqlite3.connect('data/inventory.db')
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from backend.db_safety import get_resolved_db_path
+conn = sqlite3.connect(get_resolved_db_path())
 c = conn.cursor()
 c.execute("SELECT name FROM sqlite_master WHERE type='table'")
 tables = [r[0] for r in c.fetchall()]

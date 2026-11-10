@@ -1,20 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-نظام حماية وسلامة قاعدة البيانات والنسخ الاحتياطي التلقائي وسجلات الخادم الدائمة.
-
-المسؤوليات:
-1. ضمان ثبات مسار قاعدة البيانات الدائم (<PROJECT_ROOT>/data/inventory.db) ومنع إنشاء قواعد بيانات مؤقتة أو فارغة.
-2. فحص سلامة قاعدة البيانات (PRAGMA quick_check / integrity_check) وفحص وجود الجداول الأساسية.
-3. إيقاف عمليات الكتابة مؤقتاً (Write-Guard) وإرجاع رسالة واضحة إذا تعذر الوصول للقاعدة الأصلية أو حدث خلل.
-4. دمج ملفات WAL بشكل آمن دوري وعند الإغلاق لضمان عدم بقاء المعاملات معلقة.
-5. نسخ احتياطي تلقائي آمن عبر sqlite3.Connection.backup() مع التحقق من سلامة كل نسخة احتياطية وإمكانية الاستعادة.
-6. تسجيل جميع أحداث التشغيل والتوقف والأخطاء والنسخ الاحتياطي في logs/server.log.
+نظام حماية وسلامة قاعدة البيانات والنسخ الاحتياطي التلقائي وسجلات الخادم الدائمة والصلاحيات.
 """
 
 import os
 import sys
 import glob
 import time
+import hmac
+import shutil
+import secrets
 import logging
 import sqlite3
 import threading
@@ -25,9 +20,15 @@ from typing import Dict, Any, List, Optional
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+# مسار مستقل تماماً خارج مجلد المشروع لحماية النسخ الاحتياطية حتى لو تأثر مجلد المشروع
+EXTERNAL_BACKUP_DIR = os.path.join(
+    os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+    "RAMBFE_Backups",
+)
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 SERVER_LOG_FILE = os.path.join(LOGS_DIR, "server.log")
 PERMANENT_DB_PATH = os.path.abspath(os.path.join(DATA_DIR, "inventory.db"))
+ADMIN_TOKEN_FILE = os.path.abspath(os.path.join(DATA_DIR, ".admin_token"))
 
 CORE_TABLES = (
     "products",
@@ -52,6 +53,7 @@ _db_state: Dict[str, Any] = {
     "last_check_at": None,
     "last_backup_at": None,
     "last_backup_path": None,
+    "last_external_backup_path": None,
     "server_started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     "server_pid": os.getpid(),
 }
@@ -90,6 +92,53 @@ def get_server_logger() -> logging.Logger:
     return logger
 
 
+def get_or_create_admin_token() -> str:
+    """جلب أو توليد رمز صلاحيات إداري محلي محفوظ في data/.admin_token (لا يُكشف عبر الشبكة)."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if os.path.isfile(ADMIN_TOKEN_FILE):
+        try:
+            with open(ADMIN_TOKEN_FILE, "r", encoding="utf-8") as f:
+                tok = f.read().strip()
+            if len(tok) >= 32:
+                return tok
+        except Exception:
+            pass
+    tok = secrets.token_urlsafe(32)
+    with open(ADMIN_TOKEN_FILE, "w", encoding="utf-8") as f:
+        f.write(tok)
+    return tok
+
+
+def is_authorized_admin_request(client_ip: str, headers: Dict[str, str], require_token_always: bool = False) -> tuple[bool, str]:
+    """
+    التحقق من صلاحية تنفيذ عمليات خطيرة أو إدارية (مثل استعادة نسخة احتياطية أو إعادة التهيئة):
+    - يرفض أي طلب قادم عبر بروكسي الإنترنت/Cloudflare (وجود CF-Connecting-IP أو CF-Ray أو X-Forwarded-For) ما لم يحمل X-Admin-Token صحيح.
+    - للاستعادة (require_token_always=True)، يشترط إما رمز X-Admin-Token المطابق أو استدعاء محلي مباشر صريح مع تأكيد كتابي.
+    """
+    norm_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    supplied_token = norm_headers.get("x-admin-token", "").strip()
+    auth_hdr = norm_headers.get("authorization", "").strip()
+    if not supplied_token and auth_hdr.lower().startswith("bearer "):
+        supplied_token = auth_hdr[7:].strip()
+
+    expected_token = get_or_create_admin_token()
+    if supplied_token and hmac.compare_digest(supplied_token, expected_token):
+        return True, "authorized_by_admin_token"
+
+    if require_token_always:
+        return False, "ممنوع: تتطلب هذه العملية الحساسة رمز الصلاحية الإداري (X-Admin-Token)."
+
+    # الكشف الصارم عن الطلبات الممررة عبر نفق Cloudflare أو أي بروكسي خارجي
+    proxy_markers = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "cf-visitor")
+    is_proxied = any(h in norm_headers and norm_headers[h].strip() for h in proxy_markers)
+    is_loopback = client_ip in ("127.0.0.1", "::1", "localhost")
+
+    if is_loopback and not is_proxied:
+        return True, "authorized_direct_localhost"
+
+    return False, "غير مصرح: هذه العملية محظورة عبر الاتصال الخارجي وتتطلب رمز الصلاحية الإداري (X-Admin-Token)."
+
+
 def get_resolved_db_path() -> str:
     """إرجاع المسار المطلق الفعلي لقاعدة البيانات مع منع المسارات النسبية العشوائية."""
     env_path = os.environ.get("INVENTORY_DB_PATH", "").strip()
@@ -113,7 +162,6 @@ def ensure_safe_db_target(require_existing_if_populated: bool = True) -> str:
     if db_path == ":memory:":
         return db_path
 
-    # التحقق من عدم استخدام مجلد temp كقاعدة دائمة
     temp_dir = os.path.abspath(os.path.join(BASE_DIR, "temp"))
     if os.path.commonpath([db_path, temp_dir]) == temp_dir:
         raise DatabaseSafetyError(
@@ -127,8 +175,6 @@ def ensure_safe_db_target(require_existing_if_populated: bool = True) -> str:
                 or "تم إيقاف الكتابة مؤقتاً لحماية قاعدة البيانات بعد فشل فحص السلامة."
             )
 
-    # حماية إضافية على القاعدة الدائمة: إذا اختفى ملف inventory.db فجأة رغم وجود نسخ احتياطية سابقة،
-    # نمنع إنشاء قاعدة جديدة فارغة تلقائياً!
     if (
         require_existing_if_populated
         and db_path == PERMANENT_DB_PATH
@@ -172,6 +218,20 @@ def checkpoint_wal(db_path: Optional[str] = None, mode: str = "PASSIVE") -> Dict
                 pass
 
 
+def _read_table_counts(conn: sqlite3.Connection) -> Dict[str, int]:
+    existing_tables = {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    counts: Dict[str, int] = {}
+    for t in CORE_TABLES:
+        if t in existing_tables:
+            counts[t] = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+    return counts
+
+
 def check_db_health(deep: bool = False) -> Dict[str, Any]:
     """فحص شامل لسلامة قاعدة البيانات، المسار الدائم، ملفات WAL/SHM، وعدد السجلات."""
     db_path = get_resolved_db_path()
@@ -183,6 +243,7 @@ def check_db_health(deep: bool = False) -> Dict[str, Any]:
         "write_blocked": False,
         "db_path": db_path,
         "is_permanent_path": is_using_permanent_db(),
+        "external_backup_dir": EXTERNAL_BACKUP_DIR,
         "db_exists": False,
         "db_size_bytes": 0,
         "wal_exists": False,
@@ -194,6 +255,7 @@ def check_db_health(deep: bool = False) -> Dict[str, Any]:
         "last_check_at": now_str,
         "last_backup_at": _db_state.get("last_backup_at"),
         "last_backup_path": _db_state.get("last_backup_path"),
+        "last_external_backup_path": _db_state.get("last_external_backup_path"),
         "server_started_at": _db_state.get("server_started_at"),
         "server_pid": os.getpid(),
         "error": None,
@@ -242,21 +304,9 @@ def check_db_health(deep: bool = False) -> Dict[str, Any]:
         if integrity_val != "ok":
             raise DatabaseSafetyError(f"فشل فحص سلامة SQLite ({pragma_cmd}): {integrity_val}")
 
-        existing_tables = {
-            r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        missing = [t for t in CORE_TABLES if t not in existing_tables]
-        result["missing_tables"] = missing
-
-        counts = {}
-        for t in CORE_TABLES:
-            if t in existing_tables:
-                counts[t] = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        counts = _read_table_counts(conn)
+        result["missing_tables"] = [t for t in CORE_TABLES if t not in counts]
         result["counts"] = counts
-
         result["healthy"] = True
         with _db_guard_lock:
             _db_state["healthy"] = True
@@ -285,31 +335,43 @@ def check_db_health(deep: bool = False) -> Dict[str, Any]:
 
 
 def list_backups() -> List[Dict[str, Any]]:
-    """إرجاع قائمة النسخ الاحتياطية المتوفرة مرتبة من الأحدث للأقدم."""
+    """إرجاع قائمة النسخ الاحتياطية المتوفرة (داخل backups/ ونسخ المجلد المستقل)."""
     os.makedirs(BACKUP_DIR, exist_ok=True)
-    files = sorted(
-        glob.glob(os.path.join(BACKUP_DIR, "inventory_backup_*.db")),
-        key=lambda p: os.path.getmtime(p),
-        reverse=True,
-    )
+    seen_names = set()
     items = []
-    for f in files:
-        try:
-            st = os.stat(f)
-            items.append({
-                "file_name": os.path.basename(f),
-                "path": os.path.abspath(f),
-                "size_bytes": st.st_size,
-                "created_at": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-            })
-        except Exception:
-            pass
+    search_dirs = [BACKUP_DIR]
+    if is_using_permanent_db() and os.path.isdir(EXTERNAL_BACKUP_DIR):
+        search_dirs.append(EXTERNAL_BACKUP_DIR)
+
+    for folder in search_dirs:
+        files = sorted(
+            glob.glob(os.path.join(folder, "inventory_backup_*.db")),
+            key=lambda p: os.path.getmtime(p),
+            reverse=True,
+        )
+        for f in files:
+            name = os.path.basename(f)
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            try:
+                st = os.stat(f)
+                items.append({
+                    "file_name": name,
+                    "path": os.path.abspath(f),
+                    "location": "external_independent" if folder == EXTERNAL_BACKUP_DIR else "project_backups",
+                    "size_bytes": st.st_size,
+                    "created_at": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                })
+            except Exception:
+                pass
+    items.sort(key=lambda x: x["created_at"], reverse=True)
     return items
 
 
-def _prune_old_backups(keep: int = MAX_BACKUPS_TO_KEEP) -> None:
+def _prune_old_backups(folder: str, keep: int = MAX_BACKUPS_TO_KEEP) -> None:
     files = sorted(
-        glob.glob(os.path.join(BACKUP_DIR, "inventory_backup_*.db")),
+        glob.glob(os.path.join(folder, "inventory_backup_*.db")),
         key=lambda p: os.path.getmtime(p),
         reverse=True,
     )
@@ -323,7 +385,7 @@ def _prune_old_backups(keep: int = MAX_BACKUPS_TO_KEEP) -> None:
 def create_backup(reason: str = "auto") -> Dict[str, Any]:
     """
     إنشاء نسخة احتياطية متسقة وآمنة باستخدام sqlite3.Connection.backup()
-    مع التحقق من سلامتها (PRAGMA quick_check) وتطبيق سياسة الاحتفاظ بالنسخ الأخيرة.
+    مع التحقق من سلامتها (PRAGMA quick_check) وحفظ نسخة مطابقة مستقلة في EXTERNAL_BACKUP_DIR.
     """
     db_path = get_resolved_db_path()
     logger = get_server_logger()
@@ -334,13 +396,13 @@ def create_backup(reason: str = "auto") -> Dict[str, Any]:
     os.makedirs(BACKUP_DIR, exist_ok=True)
     safe_reason = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in (reason or "auto"))[:24]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = os.path.abspath(os.path.join(BACKUP_DIR, f"inventory_backup_{ts}_{safe_reason}.db"))
+    file_name = f"inventory_backup_{ts}_{safe_reason}.db"
+    backup_path = os.path.abspath(os.path.join(BACKUP_DIR, file_name))
     tmp_path = backup_path + ".tmp"
 
     src_conn = None
     dst_conn = None
     try:
-        # دمج أي معاملات WAL معلقة قبل أخذ النسخة
         checkpoint_wal(db_path, mode="PASSIVE")
 
         src_conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
@@ -352,7 +414,6 @@ def create_backup(reason: str = "auto") -> Dict[str, Any]:
         src_conn.close()
         src_conn = None
 
-        # التحقق الفعلي من سلامة النسخة الاحتياطية بعد إنشائها
         verify_conn = sqlite3.connect(tmp_path, timeout=15)
         try:
             chk = verify_conn.execute("PRAGMA quick_check;").fetchone()
@@ -363,21 +424,37 @@ def create_backup(reason: str = "auto") -> Dict[str, Any]:
             verify_conn.close()
 
         os.replace(tmp_path, backup_path)
-        _prune_old_backups()
+        _prune_old_backups(BACKUP_DIR)
+
+        ext_path = None
+        if is_using_permanent_db():
+            try:
+                os.makedirs(EXTERNAL_BACKUP_DIR, exist_ok=True)
+                ext_target = os.path.abspath(os.path.join(EXTERNAL_BACKUP_DIR, file_name))
+                ext_tmp = ext_target + ".tmp"
+                shutil.copy2(backup_path, ext_tmp)
+                os.replace(ext_tmp, ext_target)
+                _prune_old_backups(EXTERNAL_BACKUP_DIR)
+                ext_path = ext_target
+            except Exception as ext_err:
+                logger.warning(f"External backup mirror warning: {ext_err}")
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with _db_guard_lock:
             _db_state["last_backup_at"] = now_str
             _db_state["last_backup_path"] = backup_path
+            if ext_path:
+                _db_state["last_external_backup_path"] = ext_path
 
         logger.info(
-            f"Backup created & verified: {os.path.basename(backup_path)} "
-            f"(size={os.path.getsize(backup_path)} bytes, products={prod_cnt}, reason={safe_reason})"
+            f"Backup created & verified: {file_name} "
+            f"(size={os.path.getsize(backup_path)} bytes, products={prod_cnt}, external={ext_path}, reason={safe_reason})"
         )
         return {
             "success": True,
             "path": backup_path,
-            "file_name": os.path.basename(backup_path),
+            "external_path": ext_path,
+            "file_name": file_name,
             "size_bytes": os.path.getsize(backup_path),
             "products_count": prod_cnt,
             "created_at": now_str,
@@ -399,8 +476,16 @@ def create_backup(reason: str = "auto") -> Dict[str, Any]:
                     pass
 
 
-def restore_backup(backup_path: str, target_db_path: Optional[str] = None) -> Dict[str, Any]:
-    """استعادة قاعدة البيانات من نسخة احتياطية بعد التحقق من سلامتها أولاً."""
+def restore_backup(
+    backup_path: str,
+    target_db_path: Optional[str] = None,
+    confirm_overwrite_newer: bool = False,
+) -> Dict[str, Any]:
+    """
+    استعادة قاعدة البيانات من نسخة احتياطية بعد التحقق من سلامتها.
+    يحمي القاعدة الأحدث أو الأكثر بيانات: إذا كانت القاعدة الحالية أحدث زمنياً أو تحتوي على سجلات أكثر
+    من النسخة الاحتياطية، تُرفض الاستعادة تلقائياً ما لم يتم تمرير confirm_overwrite_newer=True صراحةً.
+    """
     logger = get_server_logger()
     target = os.path.abspath(target_db_path or get_resolved_db_path())
     src = os.path.abspath(backup_path)
@@ -408,17 +493,53 @@ def restore_backup(backup_path: str, target_db_path: Optional[str] = None) -> Di
     if not os.path.isfile(src):
         return {"success": False, "message": f"ملف النسخة الاحتياطية غير موجود: {src}"}
 
-    # فحص النسخة الاحتياطية قبل الاستعادة
+    # 1. فحص سلامة النسخة الاحتياطية
     chk_conn = sqlite3.connect(src, timeout=15)
     try:
         chk = chk_conn.execute("PRAGMA quick_check;").fetchone()
         if not chk or chk[0] != "ok":
             return {"success": False, "message": f"النسخة الاحتياطية تالفة ولا يمكن استعادتها: {chk}"}
+        backup_counts = _read_table_counts(chk_conn)
     finally:
         chk_conn.close()
 
-    # أخذ نسخة أمان إضافية من الملف الحالي قبل الاستبدال إن وجد
+    # 2. التحقق الصارم: هل القاعدة الحالية أحدث أو فيها بيانات أكثر؟
     if os.path.isfile(target) and os.path.getsize(target) > 0:
+        try:
+            tgt_conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=15)
+            try:
+                tgt_ok = tgt_conn.execute("PRAGMA quick_check;").fetchone()
+                target_healthy = bool(tgt_ok and tgt_ok[0] == "ok")
+                target_counts = _read_table_counts(tgt_conn) if target_healthy else {}
+            finally:
+                tgt_conn.close()
+
+            if target_healthy:
+                target_mtime = os.path.getmtime(target)
+                backup_mtime = os.path.getmtime(src)
+                target_has_more = any(
+                    target_counts.get(k, 0) > backup_counts.get(k, 0) for k in CORE_TABLES
+                )
+                is_target_newer = target_mtime > backup_mtime + 1.0
+
+                if (is_target_newer or target_has_more) and not confirm_overwrite_newer:
+                    msg = (
+                        "تم رفض الاستعادة تلقائياً: قاعدة البيانات الحالية أحدث أو تحتوي على بيانات أكثر "
+                        "من هذه النسخة الاحتياطية. تتطلب الاستعادة موافقة صريحة (confirm_overwrite_newer=true)."
+                    )
+                    logger.warning(f"Blocked downgrade restore without explicit confirmation: {src} -> {target}")
+                    return {
+                        "success": False,
+                        "requires_explicit_confirmation": True,
+                        "code": "NEWER_DATABASE_PROTECTED",
+                        "message": msg,
+                        "target_counts": target_counts,
+                        "backup_counts": backup_counts,
+                    }
+        except Exception:
+            pass
+
+        # أخذ نسخة أمان إضافية قبل الاستبدال
         try:
             create_backup(reason="pre_restore")
         except Exception:
@@ -443,7 +564,7 @@ def restore_backup(backup_path: str, target_db_path: Optional[str] = None) -> Di
             _db_state["healthy"] = True
             _db_state["last_error"] = None
 
-        logger.warning(f"Database restored successfully from backup: {src} -> {target}")
+        logger.warning(f"Database restored from backup (explicit={confirm_overwrite_newer}): {src} -> {target}")
         return {"success": True, "restored_from": src, "target": target}
     except Exception as e:
         logger.error(f"Database restore failed: {e}")
