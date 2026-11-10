@@ -1,0 +1,9 @@
+# مشروع Cloudflare Pages المستقل للبرنامج: https://rambfe.pages.dev
+# (رابط خاص بالبرنامج ومنفصل تماماً عن نطاق quran-halaqat.workers.dev)
+name = "rambfe"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-09-23"
+
+[[kv_namespaces]]
+binding = "TUNNEL_KV"
+id = "25093de7c2cc4c4695446d99434ed24a"

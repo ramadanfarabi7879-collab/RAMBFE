@@ -1,7 +1,7 @@
 import urllib.request
 import re
 
-url = "https://rambfe.quran-halaqat.workers.dev/"
+url = "https://rambfe.pages.dev/"
 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
 html = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", errors="ignore")
 

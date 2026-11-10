@@ -49,3 +49,4 @@ data/
 backups/
 logs/
 product.template*.xlsx
+.wrangler/

@@ -20,7 +20,7 @@ WORKER_JS_FILE = BASE_DIR / "worker.js"
 # رابط سيرفر Cloudflare Worker الذي يمرر طلبات الموبايل إلى نفق الكمبيوتر
 WORKER_REGISTER_URL = os.environ.get(
     "RAMBFE_WORKER_REGISTER_URL",
-    "https://rambfe.quran-halaqat.workers.dev/api/tunnel/register"
+    "https://rambfe.pages.dev/api/tunnel/register"
 )
 HEARTBEAT_SECONDS = 20
 URL_REGEX = re.compile(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com')

@@ -235,7 +235,9 @@ def get_cloudflare_url() -> str:
             with open(cf_file, "r", encoding="utf-8") as f:
                 url = f.read().strip()
                 if url.startswith("http"):
-                    return url.rstrip('/')
+                    # الرابط الثابت الخاص بالبرنامج (لا يتغير مع تجديد النفق المؤقت)
+                    fixed = os.environ.get("RAMBFE_FIXED_URL", "https://rambfe.pages.dev").strip()
+                    return (fixed or url).rstrip('/')
     except Exception:
         pass
     return ""

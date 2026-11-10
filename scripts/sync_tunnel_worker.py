@@ -17,7 +17,7 @@ for _ in range(15):
 print('Active tunnel:', tunnel_url)
 
 if tunnel_url:
-    reg_url = 'https://rambfe.quran-halaqat.workers.dev/api/tunnel/register'
+    reg_url = 'https://rambfe.pages.dev/api/tunnel/register'
     payload = json.dumps({'tunnel_url': tunnel_url}).encode('utf-8')
     req = urllib.request.Request(reg_url, data=payload, headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'})
     try:
