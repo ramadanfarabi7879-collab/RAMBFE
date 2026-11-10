@@ -119,12 +119,13 @@ export async function bulkDeleteProducts(db, codes) {
     let deleted = 0;
     for (let i = 0; i < clean.length; i += 90) {
         const part = clean.slice(i, i + 90), ph = part.map(() => '?').join(',');
-        const res = await db.batch([
+        // العدد الحقيقي للأصناف المحذوفة (عدّاد D1 يشمل صفوف الباركود والفهرس المحذوفة تلقائياً)
+        deleted += (await first(db, `SELECT COUNT(*) AS c FROM products WHERE code IN (${ph})`, part)).c;
+        await db.batch([
             db.prepare(`DELETE FROM products WHERE code IN (${ph})`).bind(...part),
             db.prepare(`DELETE FROM product_barcodes WHERE product_code IN (${ph})`).bind(...part),
             db.prepare(`DELETE FROM product_aliases WHERE product_code IN (${ph})`).bind(...part),
         ]);
-        deleted += res[0].meta.changes || 0;
     }
     await run(db, "INSERT INTO meta (k, v) VALUES ('products_count', (SELECT COUNT(*) FROM products)) ON CONFLICT(k) DO UPDATE SET v = excluded.v");
     await logCatalogChange(db, clean);

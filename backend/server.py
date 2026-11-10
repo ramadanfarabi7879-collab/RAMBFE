@@ -453,6 +453,16 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self.send_json(cloud_sync.status())
             return
 
+        # نفس محلل الباركود المستخدم في السحابة (يحتاجه استيراد الأصناف في المتصفح)
+        if path == '/cloud-qr.js':
+            js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cloud', 'qr.js'), 'rb').read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(js)))
+            self.end_headers()
+            self.wfile.write(js)
+            return
+
         # 0.ب عرض قائمة النسخ الاحتياطية المتوفرة (محلي أو بتفويض إداري فقط)
         if path == '/api/backup/list':
             ok_auth, auth_msg = is_authorized_admin_request(self.client_address[0], dict(self.headers), require_token_always=False)

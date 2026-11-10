@@ -3,6 +3,7 @@
 import * as S from './stock.js';
 import * as X from './extra.js';
 import { exportData } from './exporter.js';
+import * as CI from './catalog_import.js';
 import { getProductByCode } from './products.js';
 import { extractCleanGtin } from './qr.js';
 import { searchProducts, all, first, run, allIn } from './products.js';
@@ -62,7 +63,8 @@ export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/
     '/api/stock/stores/commit-all', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
     '/api/catalog/save', '/api/catalog/delete', '/api/catalog/parse-gs1', '/api/catalog/parse-gtin', '/api/invoice/new', '/api/invoice/scan', '/api/invoice/delete-serial',
     '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process',
-    '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish', '/api/export/data']);
+    '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish', '/api/export/data',
+    '/api/catalog/import/lookup', '/api/catalog/import/commit', '/api/catalog/import/finish']);
 
 export function isCloudRoute(method, path) {
     if (path.startsWith('/api/_admin/')) return true;
@@ -286,6 +288,15 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 ]);
                 await broadcast(env, ctx, 'profiles_changed', { id, deleted: true }, id);
                 return json({ success: true, message: `تم حذف ${prof.name} وكل بياناتها` });
+            }
+            case '/api/catalog/import/lookup':
+                return json(await CI.importLookup(db, data.codes || [], data.barcodes || []));
+            case '/api/catalog/import/commit':
+                return json(await CI.commitImportChunk(db, Array.isArray(data.items) ? data.items : [], Boolean(data.replace_barcodes)));
+            case '/api/catalog/import/finish': {
+                const r = await CI.finishImport(db, String(data.file_name || ''), intOr0(data.updated_count), intOr0(data.new_count), Boolean(data.replace_barcodes));
+                await bcast('catalog_updated', { imported: intOr0(data.updated_count) + intOr0(data.new_count) });
+                return json(r);
             }
             case '/api/export/data': {
                 const r = await exportData(db, String(data.kind || ''), data.params || {});
