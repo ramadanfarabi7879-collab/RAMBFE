@@ -540,7 +540,7 @@ def get_store_stocktake_details(store_no: str = 'ST-001', search_query: str = ''
         }
     }
 
-def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bool = False) -> Dict[str, Any]:
+def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bool = False, product_code: str = '') -> Dict[str, Any]:
     """
     مسح صنف للاستور:
     - جلب سعر البيع مباشرة من كرت الصنف المربوط به.
@@ -558,30 +558,43 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
     store_no = resolve_valid_store_no(conn, store_no)
     c = conn.cursor()
 
-    parsed = parse_qr_code(raw)
-    pdata = parsed.get("data", {}) if parsed.get("success") else {}
-
-    gtin = pdata.get("gtin", "")
-    serial = str(pdata.get("serial", "") or "").strip().upper()
-    batch = str(pdata.get("batch", "") or "").strip().upper()
-    expiry = pdata.get("expiry", "")
-
-    if not gtin:
-        gtin = extract_clean_gtin(raw) or clean_barcode_preserve_zeros(raw)
-
+    explicit_pcode = str(product_code or "").strip()
     prod = None
-    # 1. إذا كان الكود المدخل أرقاماً قصيرة تطابق كود الصنف الداخلي مباشرة
-    clean_num = clean_numeric_code(raw)
-    if clean_num and len(clean_num) <= 8 and raw.isdigit():
-        prod = get_product_by_code(clean_num)
+    parsed = {}
+    gtin = ""
+    serial = ""
+    batch = ""
+    expiry = ""
 
-    # 2. البحث برقم GTIN أو الباركود
-    if not prod and gtin:
-        prod = find_product_by_gtin_or_barcode(gtin)
-    if not prod:
-        prod = get_product_by_code(clean_numeric_code(raw))
-    if not prod:
-        prod = find_product_by_gtin_or_barcode(clean_barcode_preserve_zeros(raw))
+    if explicit_pcode:
+        # اختيار مباشر من نتائج البحث بكرت الصنف: نطابق الكود الداخلي بدقة دون تأويله كـ QR
+        prod = get_product_by_code(clean_numeric_code(explicit_pcode)) or get_product_by_code(explicit_pcode)
+        if prod:
+            gtin = prod.get("gtin") or prod.get("barcode") or ""
+    else:
+        parsed = parse_qr_code(raw)
+        pdata = parsed.get("data", {}) if parsed.get("success") else {}
+
+        gtin = pdata.get("gtin", "")
+        serial = str(pdata.get("serial", "") or "").strip().upper()
+        batch = str(pdata.get("batch", "") or "").strip().upper()
+        expiry = pdata.get("expiry", "")
+
+        if not gtin:
+            gtin = extract_clean_gtin(raw) or clean_barcode_preserve_zeros(raw)
+
+        # 1. إذا كان الكود المدخل أرقاماً قصيرة تطابق كود الصنف الداخلي مباشرة
+        clean_num = clean_numeric_code(raw)
+        if clean_num and len(clean_num) <= 8 and raw.isdigit():
+            prod = get_product_by_code(clean_num)
+
+        # 2. البحث برقم GTIN أو الباركود
+        if not prod and gtin:
+            prod = find_product_by_gtin_or_barcode(gtin)
+        if not prod:
+            prod = get_product_by_code(clean_numeric_code(raw))
+        if not prod:
+            prod = find_product_by_gtin_or_barcode(clean_barcode_preserve_zeros(raw))
 
     if not prod:
         conn.close()

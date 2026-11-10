@@ -2762,15 +2762,35 @@
 
                             <form id="stk-scan-form" onsubmit="return false;" autocomplete="off" class="relative flex-1">
 
-                                <input type="text" id="stk-scan-input" dir="ltr"
+                                <input type="text" id="stk-scan-input" dir="auto"
 
-                                       enterkeyhint="search"
+                                       enterkeyhint="search" autocomplete="off"
 
-                                       placeholder="امسح كود QR / GS1 DataMatrix أو الباركود هنا (السحب يزيد الكمية +1 تلقائياً مع احتساب التكلفة)..."
+                                       placeholder="ابحث باسم الصنف (عربي / إنجليزي / علمي / شركة) أو امسح الباركود / QR / GTIN / الكود..."
 
-                                       class="w-full pl-10 pr-4 py-2.5 bg-slate-50 border-2 border-indigo-500 rounded-xl text-sm font-mono focus:bg-white focus:border-indigo-700 focus:outline-none transition shadow-inner">
+                                       class="w-full pr-10 pl-28 py-2.5 bg-slate-50 border-2 border-indigo-500 rounded-xl text-sm font-medium focus:bg-white focus:border-indigo-700 focus:outline-none transition shadow-inner">
 
-                                <span class="absolute left-3.5 top-3 text-slate-400 pointer-events-none">🔍</span>
+                                <span class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 pointer-events-none">🔍</span>
+
+                                <button type="button" id="btn-stk-toggle-search-mode"
+
+                                        class="absolute left-1.5 top-1/2 -translate-y-1/2 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 active:scale-95"
+
+                                        title="نمط البحث">
+
+                                    <span id="stk-search-mode-icon" class="text-xs">🔦</span>
+
+                                    <span id="stk-search-mode-text" class="text-[10.5px] font-bold">بداية</span>
+
+                                    <span id="stk-search-mode-switch" class="w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none">
+
+                                        <span id="stk-search-mode-knob" class="w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0"></span>
+
+                                    </span>
+
+                                </button>
+
+                                <div id="stk-search-dropdown" class="hidden absolute top-full right-0 mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 w-full max-h-[65vh] overflow-hidden flex flex-col text-xs"></div>
 
                             </form>
 
@@ -4978,7 +4998,7 @@
 
     <!-- ملف الجافاسكريبت الرئيسي -->
 
-    <script src="app.js?v=20261107_v36_batch_uppercase"></script>
+    <script src="app.js?v=20261110_v38_stk_search"></script>
 
 </body>
 

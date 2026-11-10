@@ -6672,45 +6672,8 @@ function initStocktakeTab() {
         }, 250);
     });
 
-    // 3. مسح أو بحث الصنف برقم الكود أو الباركود (يدعم مفتاح السهم / Enter في الموبايل والكمبيوتر)
-    const handleScanExecute = async () => {
-        let raw = scanInput?.value?.trim() || '';
-        if (!raw) return;
-
-        if (typeof decodeArabicKeyboard === 'function') {
-            raw = decodeArabicKeyboard(raw);
-        }
-
-        scanInput.value = '';
-        await processStoreScan(raw);
-        scanInput.focus();
-    };
-
-    scanInput?.addEventListener('keydown', async (e) => {
-        const isEnterOrArrow = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 ||
-                                e.key === 'Go' || e.key === 'Search' || e.key === 'Next' ||
-                                e.code === 'Enter' || e.code === 'NumpadEnter');
-        if (isEnterOrArrow) {
-            e.preventDefault();
-            e.stopPropagation();
-            await handleScanExecute();
-        }
-    });
-
-    scanInput?.addEventListener('beforeinput', async (e) => {
-        if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
-            e.preventDefault();
-            e.stopPropagation();
-            await handleScanExecute();
-        }
-    });
-
-    document.getElementById('stk-scan-form')?.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        await handleScanExecute();
-        return false;
-    });
+    // 3. البحث الذكي الموحد (نفس محرك كرت الصنف) + مسح الباركود و QR في شاشة الجرد
+    initStocktakeCatalogSearch();
 
     document.getElementById('btn-close-batch-entry-card')?.addEventListener('click', closeBatchEntryCard);
     document.getElementById('btn-add-extra-batch-row')?.addEventListener('click', addExtraBatchRowToCard);
@@ -8412,20 +8375,326 @@ function closeBatchEntryCard(isCommit = false) {
     }
 }
 
+// ==================== محرك البحث الموحد داخل شاشة الجرد (يعتمد 100% على كرت الصنف) ====================
+let isStkGeneralizedSearch = localStorage.getItem('stk_search_mode')
+    ? (localStorage.getItem('stk_search_mode') === 'contains')
+    : (localStorage.getItem('catalog_search_mode') === 'contains');
+let stkSearchDebounceTimer = null;
+let stkSearchResults = [];
+let stkActiveSearchIndex = -1;
+let stkSearchReqSeq = 0;
+
+function updateStkSearchModeUI() {
+    const btn = document.getElementById('btn-stk-toggle-search-mode');
+    const icon = document.getElementById('stk-search-mode-icon');
+    const text = document.getElementById('stk-search-mode-text');
+    const sw = document.getElementById('stk-search-mode-switch');
+    const knob = document.getElementById('stk-search-mode-knob');
+
+    if (isStkGeneralizedSearch) {
+        if (btn) {
+            btn.className = 'absolute left-1.5 top-1/2 -translate-y-1/2 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 active:scale-95';
+            btn.title = 'بحث معمم (يحتوي على)';
+        }
+        if (icon) icon.textContent = '💡';
+        if (text) text.textContent = (typeof currentAppLang !== 'undefined' && currentAppLang === 'en') ? 'Contains' : 'معمم';
+        if (sw) sw.className = 'w-6 h-3 bg-emerald-800 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 -translate-x-3';
+    } else {
+        if (btn) {
+            btn.className = 'absolute left-1.5 top-1/2 -translate-y-1/2 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all duration-200 flex items-center gap-1.5 select-none shadow-xs cursor-pointer border bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300 active:scale-95';
+            btn.title = 'بحث بالبداية (يبدأ بـ)';
+        }
+        if (icon) icon.textContent = '🔦';
+        if (text) text.textContent = (typeof currentAppLang !== 'undefined' && currentAppLang === 'en') ? 'Starts' : 'بداية';
+        if (sw) sw.className = 'w-6 h-3 bg-slate-300 rounded-full relative transition-colors duration-200 inline-flex items-center p-0.5 pointer-events-none';
+        if (knob) knob.className = 'w-2 h-2 bg-white rounded-full shadow-xs transition-transform duration-200 translate-x-0';
+    }
+}
+
+function closeStkSearchDropdown() {
+    const dd = document.getElementById('stk-search-dropdown');
+    if (dd) {
+        dd.innerHTML = '';
+        dd.classList.add('hidden');
+    }
+    stkActiveSearchIndex = -1;
+}
+
+function highlightStkSearchRow() {
+    const container = document.getElementById('stk-search-items-list');
+    if (!container) return;
+    const rows = container.querySelectorAll('.stk-search-item');
+    rows.forEach((el, idx) => {
+        if (idx === stkActiveSearchIndex) {
+            el.classList.add('bg-indigo-50', 'ring-1', 'ring-inset', 'ring-indigo-300');
+            el.scrollIntoView({ block: 'nearest' });
+        } else {
+            el.classList.remove('bg-indigo-50', 'ring-1', 'ring-inset', 'ring-indigo-300');
+        }
+    });
+}
+
+async function selectStocktakeSearchItem(productCode) {
+    const scanInput = document.getElementById('stk-scan-input');
+    closeStkSearchDropdown();
+    stkSearchResults = [];
+    if (scanInput) {
+        scanInput.value = '';
+    }
+    await processStoreScan(productCode, productCode);
+}
+
+async function fetchAndRenderStkCatalogSearch(rawQuery) {
+    const dd = document.getElementById('stk-search-dropdown');
+    if (!dd) return;
+
+    const seq = ++stkSearchReqSeq;
+    try {
+        const mode = isStkGeneralizedSearch ? 'contains' : 'start';
+        const url = `/api/catalog/products?query=${encodeURIComponent(rawQuery)}&mode=${mode}&limit=100&offset=0`;
+        const res = await fetch(url, { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (seq !== stkSearchReqSeq) return;
+        if (typeof isUnavailableApiResponse === 'function' && isUnavailableApiResponse(res, data)) return;
+
+        const items = data.items || [];
+        const total = data.total ?? items.length;
+        stkSearchResults = items;
+        stkActiveSearchIndex = -1;
+
+        if (items.length === 0) {
+            dd.innerHTML = `
+                <div class="p-4 text-center text-slate-400 font-medium">
+                    <div class="text-lg mb-1">🔍</div>
+                    <div class="text-xs">لم يتم العثور على أي صنف في كرت الصنف يطابق "<span class="font-bold text-slate-700">${escapeHtml(rawQuery)}</span>"</div>
+                </div>
+            `;
+            dd.classList.remove('hidden');
+            return;
+        }
+
+        let html = `
+            <div class="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between text-[11px] font-bold text-slate-600">
+                <span>نتائج مطابقة من كرت الصنف: <span class="text-indigo-700 font-mono">${total.toLocaleString()}</span> صنف (عرض ${items.length})</span>
+                <span class="text-[10px] text-slate-400">اضغط على الصنف أو استخدم ↑↓ و Enter لإضافته للجرد</span>
+            </div>
+            <div id="stk-search-items-list" class="divide-y divide-slate-100 overflow-y-auto max-h-[55vh]">
+        `;
+
+        items.forEach((it, idx) => {
+            const engName = it.name_en || it.name || '';
+            const arName = it.name_ar || '';
+            const sciName = it.scientific_name || '';
+            const company = it.company || '';
+            const price = parseFloat(it.selling_price || 0).toFixed(2);
+            const gList = (it.gtin_list || []).filter(Boolean);
+            const bList = (it.barcode_list || []).filter(Boolean);
+            const barcodeBadge = bList[0] || it.barcode || '';
+            const gtinBadge = gList[0] || it.gtin || '';
+
+            html += `
+                <div class="stk-search-item p-2.5 px-3 flex items-center justify-between gap-2.5 hover:bg-indigo-50/60 cursor-pointer transition select-none" data-index="${idx}" data-code="${escapeHtml(it.code)}">
+                    <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                        <span class="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 shrink-0">${escapeHtml(it.code)}</span>
+                        <div class="min-w-0 flex-1">
+                            <div class="font-bold text-slate-900 truncate text-xs leading-tight">${escapeHtml(engName)}</div>
+                            <div class="flex items-center gap-2 text-[10.5px] text-slate-500 mt-0.5 flex-wrap">
+                                ${arName ? `<span class="font-medium text-slate-700 truncate max-w-[200px]">${escapeHtml(arName)}</span>` : ''}
+                                ${sciName ? `<span class="px-1.5 py-0.2 bg-sky-50 text-sky-800 border border-sky-200 rounded text-[9.5px] font-medium">${escapeHtml(sciName)}</span>` : ''}
+                                ${company ? `<span class="px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[9.5px] font-medium">${escapeHtml(company)}</span>` : ''}
+                                ${barcodeBadge ? `<span class="font-mono text-slate-600">باركود: ${escapeHtml(barcodeBadge)}</span>` : ''}
+                                ${gtinBadge ? `<span class="font-mono text-indigo-600">GTIN: ${escapeHtml(gtinBadge)}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <span class="font-mono font-bold text-emerald-700 text-xs">${price} ر.س</span>
+                        <button type="button" class="btn-stk-pick-item px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition shadow-xs" data-code="${escapeHtml(it.code)}">
+                            ➕ إضافة للجرد
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `</div>`;
+        dd.innerHTML = html;
+        dd.classList.remove('hidden');
+
+        dd.querySelectorAll('.stk-search-item').forEach(row => {
+            row.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const code = row.getAttribute('data-code');
+                if (code) selectStocktakeSearchItem(code);
+            });
+        });
+    } catch (err) {
+        console.error('Stocktake catalog search failed:', err);
+    }
+}
+
+function looksLikeDirectBarcodeOrQr(raw) {
+    if (!raw) return false;
+    const decoded = (typeof decodeArabicKeyboard === 'function') ? decodeArabicKeyboard(raw) : raw;
+    if (decoded.startsWith('01') && decoded.length >= 16) return true;
+    if (raw.includes('(01)') || raw.includes('(10)') || raw.includes('(21)')) return true;
+    return false;
+}
+
+function initStocktakeCatalogSearch() {
+    const scanInput = document.getElementById('stk-scan-input');
+    const dropdown = document.getElementById('stk-search-dropdown');
+    const btnToggle = document.getElementById('btn-stk-toggle-search-mode');
+    const form = document.getElementById('stk-scan-form');
+    if (!scanInput || scanInput._stkSearchBound) return;
+    scanInput._stkSearchBound = true;
+
+    updateStkSearchModeUI();
+
+    btnToggle?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isStkGeneralizedSearch = !isStkGeneralizedSearch;
+        localStorage.setItem('stk_search_mode', isStkGeneralizedSearch ? 'contains' : 'start');
+        updateStkSearchModeUI();
+        const q = scanInput.value.replace(/^\s+/, '');
+        if (q && !looksLikeDirectBarcodeOrQr(q)) {
+            fetchAndRenderStkCatalogSearch(q);
+        }
+        scanInput.focus();
+    });
+
+    scanInput.addEventListener('input', () => {
+        clearTimeout(stkSearchDebounceTimer);
+        const q = scanInput.value.replace(/^\s+/, '');
+        if (!q || looksLikeDirectBarcodeOrQr(q)) {
+            closeStkSearchDropdown();
+            stkSearchResults = [];
+            return;
+        }
+        stkSearchDebounceTimer = setTimeout(() => {
+            fetchAndRenderStkCatalogSearch(q);
+        }, 120);
+    });
+
+    const handleEnterOrScan = async () => {
+        if (scanInput._handlingEnter) return;
+        scanInput._handlingEnter = true;
+        try {
+        clearTimeout(stkSearchDebounceTimer);
+        let raw = (scanInput.value || '').replace(/^\s+/, '');
+        if (!raw.trim()) return;
+
+        // 1. إذا اختار المستخدم سطراً بالأسهم من قائمة البحث
+        const isDropdownOpen = dropdown && !dropdown.classList.contains('hidden');
+        if (isDropdownOpen && stkActiveSearchIndex >= 0 && stkSearchResults[stkActiveSearchIndex]) {
+            await selectStocktakeSearchItem(stkSearchResults[stkActiveSearchIndex].code);
+            return;
+        }
+
+        const trimmed = raw.trim();
+        // 2. إذا كان مسح QR ثنائي الأبعاد أو كوداً رقمياً بالكامل: نرسله مباشرة لمحرك المسح
+        if (looksLikeDirectBarcodeOrQr(trimmed) || /^\d+$/.test(trimmed)) {
+            closeStkSearchDropdown();
+            stkSearchResults = [];
+            const decoded = (typeof decodeArabicKeyboard === 'function') ? decodeArabicKeyboard(trimmed) : trimmed;
+            scanInput.value = '';
+            await processStoreScan(decoded);
+            scanInput.focus();
+            return;
+        }
+
+        // 3. إذا كان بحثاً بالاسم/العلمي/الشركة: نجلب النتائج إن لم تكن محملة ثم نضيف أو نعرض القائمة
+        if (!isDropdownOpen || stkSearchResults.length === 0) {
+            await fetchAndRenderStkCatalogSearch(raw);
+        }
+        if (stkSearchResults.length === 1) {
+            await selectStocktakeSearchItem(stkSearchResults[0].code);
+        } else if (stkSearchResults.length > 1) {
+            stkActiveSearchIndex = 0;
+            highlightStkSearchRow();
+        } else {
+            closeStkSearchDropdown();
+            const decoded = (typeof decodeArabicKeyboard === 'function') ? decodeArabicKeyboard(trimmed) : trimmed;
+            scanInput.value = '';
+            await processStoreScan(decoded);
+            scanInput.focus();
+        }
+        } finally {
+            scanInput._handlingEnter = false;
+        }
+    };
+
+    scanInput.addEventListener('keydown', async (e) => {
+        const isDropdownOpen = dropdown && !dropdown.classList.contains('hidden') && stkSearchResults.length > 0;
+        if (e.key === 'ArrowDown' && isDropdownOpen) {
+            e.preventDefault();
+            stkActiveSearchIndex = (stkActiveSearchIndex + 1) % stkSearchResults.length;
+            highlightStkSearchRow();
+            return;
+        }
+        if (e.key === 'ArrowUp' && isDropdownOpen) {
+            e.preventDefault();
+            stkActiveSearchIndex = (stkActiveSearchIndex - 1 + stkSearchResults.length) % stkSearchResults.length;
+            highlightStkSearchRow();
+            return;
+        }
+        if (e.key === 'Escape') {
+            closeStkSearchDropdown();
+            return;
+        }
+        const isEnterOrArrow = (e.key === 'Enter' || e.keyCode === 13 || e.which === 13 ||
+                                e.key === 'Go' || e.key === 'Search' || e.key === 'Next' ||
+                                e.code === 'Enter' || e.code === 'NumpadEnter');
+        if (isEnterOrArrow) {
+            e.preventDefault();
+            e.stopPropagation();
+            await handleEnterOrScan();
+        }
+    });
+
+    scanInput.addEventListener('beforeinput', async (e) => {
+        if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+            e.preventDefault();
+            e.stopPropagation();
+            await handleEnterOrScan();
+        }
+    });
+
+    form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleEnterOrScan();
+        return false;
+    });
+
+    document.addEventListener('click', (e) => {
+        if (dropdown && !dropdown.contains(e.target) && e.target !== scanInput && e.target !== btnToggle && !btnToggle?.contains(e.target)) {
+            closeStkSearchDropdown();
+        }
+    });
+}
+
 // مسح صنف للاستور المختار
-async function processStoreScan(rawCode) {
+async function processStoreScan(rawCode, explicitProductCode = '') {
     const feedbackBox = document.getElementById('stk-scan-feedback');
     const feedbackText = document.getElementById('stk-feedback-text');
     const feedbackDetails = document.getElementById('stk-feedback-details');
 
     try {
+        const payload = {
+            code: rawCode,
+            store_no: currentActiveStoreNo
+        };
+        if (explicitProductCode) {
+            payload.product_code = explicitProductCode;
+        }
         const res = await fetch('/api/stock/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                code: rawCode,
-                store_no: currentActiveStoreNo
-            })
+            body: JSON.stringify(payload)
         });
         const data = await res.json();
 

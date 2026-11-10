@@ -1388,9 +1388,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             try:
                 data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
                 code = str(data.get('code') or data.get('qr_text') or '').strip()
+                product_code = str(data.get('product_code') or '').strip()
                 store_no = str(data.get('store_no') or 'ST-001').strip()
                 force_direct = bool(data.get('force_direct', False))
-                res = scan_item_to_store(code, store_no=store_no, force_direct=force_direct)
+                res = scan_item_to_store(code, store_no=store_no, force_direct=force_direct, product_code=product_code)
                 if res.get("success"):
                     broadcast_sync("stock_scan", {
                         "store_no": store_no,
