@@ -216,7 +216,7 @@ export default {
             return jsonResponse({
                 success: false,
                 offline_reconnecting: true,
-                message: 'جاري تجديد الاتصال التلقائي بالسيرفر المحلي خلال ثوانٍ...'
+                message: activeTunnelUrl ? 'جاري تجديد الاتصال التلقائي بالسيرفر المحلي خلال ثوانٍ...' : 'البرنامج غير متصل حالياً: تأكد أن البرنامج يعمل على كمبيوتر الصيدلية وأنه متصل بالإنترنت.'
             }, 503);
         }
 
