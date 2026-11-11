@@ -9,6 +9,7 @@ import * as AIX from './invoice_ai.js';
 import { getProductByCode } from './products.js';
 import { extractCleanGtin } from './qr.js';
 import { searchProducts, all, first, run, allIn } from './products.js';
+import * as OFF from './offline_support.js';
 
 // بصمة الصنف: نفس التعبير بالضبط في backend/cloud_sync.py (CATALOG_SIG_SQL) — لا تغيّره في مكان واحد فقط
 export const CATALOG_SIG_SQL = `p.id||'|'||ifnull(p.gtin,'')||'|'||ifnull(p.barcode,'')||'|'||ifnull(p.name_ar,'')||'|'||ifnull(p.name_en,'')||'|'||ifnull(p.name,'')||'|'||ifnull(p.category,'')||'|'||ifnull(p.selling_price,'')||'|'||ifnull(p.unit_price,'')||'|'||ifnull(p.cost_price,'')||'|'||ifnull(p.tax_rate,'')||'|'||ifnull(p.unit,'')||'|'||ifnull(p.unit_divisions,'')||'|'||ifnull(p.normalized_name,'')||'|'||ifnull(p.normalized_name_ar,'')||'|'||ifnull(p.normalized_name_en,'')||'|'||ifnull(p.scientific_name,'')||'|'||ifnull(p.company,'')||'|'||ifnull(p.wholesale_price,'')||'|'||ifnull((SELECT group_concat(x, ',') FROM (SELECT barcode||':'||ifnull(barcode_type,'') AS x FROM product_barcodes WHERE product_code = p.code ORDER BY barcode, barcode_type)),'')`;
@@ -31,6 +32,9 @@ class ScopedDB {
     batch(stmts) { return this.d.batch(stmts); }
 }
 
+// كلمة التأكيد المطلوبة لعمليات المسح الكبيرة (لا تُنفّذ بضغطة "موافق" بالخطأ)
+export const CONFIRM_WORD = 'تأكيد';
+const needConfirm = () => ({ success: false, needs_confirm: true, message: `لحماية بياناتك: اكتب كلمة "${CONFIRM_WORD}" لتأكيد هذه العملية.` });
 const uid = () => crypto.randomUUID().replaceAll('-', '').slice(0, 8);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const intOr0 = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
@@ -59,10 +63,11 @@ async function broadcast(env, ctx, type, payload, pid = 1) {
 // المسارات المنقولة للسحابة (GET و POST)
 export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health', '/api/realtime',
     '/api/health', '/api/stats', '/api/network-info', '/api/catalog/product', '/api/catalog/next-code', '/api/stock/uncounted',
-    '/api/stock/preinventory-search', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get', '/api/profiles']);
+    '/api/stock/preinventory-search', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get', '/api/profiles', '/api/stock/trash',
+    '/api/catalog/snapshot', '/api/stock/offline-pack', '/api/cloud/usage']);
 export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/stock/save-batch-qty', '/api/stock/update-qty', '/api/stock/delete-item',
     '/api/stock/bulk-delete', '/api/stock/edit-item', '/api/stock/clear', '/api/stock/clear-inventory', '/api/stock/settle', '/api/stock/commit-bulk',
-    '/api/stock/stores/commit-all', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
+    '/api/stock/stores/commit-all', '/api/stock/trash/restore', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
     '/api/catalog/save', '/api/catalog/delete', '/api/catalog/parse-gs1', '/api/catalog/parse-gtin', '/api/invoice/new', '/api/invoice/scan', '/api/invoice/delete-serial',
     '/api/invoice/delete-line', '/api/invoice/clear-lines', '/api/invoice/clear', '/api/invoice/update-line-qty', '/api/invoice/manual-item', '/api/invoice/confirm', '/api/returns/process',
     '/api/profiles/create', '/api/profiles/rename', '/api/profiles/delete', '/api/stock/upload/detect', '/api/stock/upload/rows', '/api/stock/upload/finish', '/api/export/data',
@@ -75,11 +80,41 @@ export function isCloudRoute(method, path) {
     return method === 'GET' ? CLOUD_GET.has(path) : CLOUD_POST.has(path);
 }
 
+// غلاف يحسب قراءات D1 لكل طلب ويضيف علامة وضع التوفير للاستجابة (الواجهة تتحول للبحث المحلي عندها)
 export async function handleCloudApi(request, env, ctx, url, rawBody) {
+    if (url.pathname === '/api/realtime' || !env.DB) return handleCloudApiInner(request, env, ctx, url, rawBody);
+    const rawDB = env.DB;
+    const scoped = { ...env, DB: OFF.countingDB(rawDB) };
+    try { if (OFF.usageInfo(env).reads_today === 0) await OFF.flushReadCounter(rawDB, true); } catch (_) { }
+    const res = await handleCloudApiInner(request, scoped, ctx, url, rawBody);
+    const flush = OFF.flushReadCounter(rawDB).catch(() => { });
+    if (ctx && ctx.waitUntil) ctx.waitUntil(flush); else await flush;
+    if (res && OFF.isEconomy(env)) { try { res.headers.set('X-Rambfe-Economy', '1'); } catch (_) { } }
+    return res;
+}
+
+async function handleCloudApiInner(request, env, ctx, url, rawBody) {
     // الصيدلية الحالية من رأس الطلب (افتراضياً 1)، مع التحقق من وجودها
     let pid = parseInt(request.headers.get('X-Profile-Id') || url.searchParams.get('profile_id') || '1', 10);
     if (!Number.isFinite(pid) || pid < 1) pid = 1;
-    if (pid !== 1 && !(await first(env.DB, 'SELECT id FROM profiles WHERE id = ?', [pid]))) pid = 1;
+    // مسارات لا تخص صيدلية معينة لا تحتاج قراءة من قاعدة البيانات: تعمل حتى لو حصة القراءة اليومية خلصت
+    // (نسخة الكتالوج تُقدّم من KV)
+    const NO_PROFILE = ['/api/realtime', '/api/catalog/snapshot', '/api/cloud/usage', '/api/health'];
+    if (!url.pathname.startsWith('/api/_admin/') && !NO_PROFILE.includes(url.pathname)) {
+        try {
+            // صيدلية غير موجودة (اتحذفت) تتحول لأول صيدلية موجودة فعلاً — ولا نرجع لصيدلية 1 لو كانت محذوفة
+            // (كان المستخدم يقع على "صيدلية شبح" فارغة غير ظاهرة في القائمة ويظن أن بياناته اتمسحت)
+            if (!(await first(env.DB, 'SELECT id FROM profiles WHERE id = ?', [pid]))) {
+                const f = await first(env.DB, 'SELECT MIN(id) AS id FROM profiles');
+                if (f && f.id) pid = f.id;
+                else { await run(env.DB, "INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'صيدلية 1')"); pid = 1; }
+            }
+        } catch (e) {
+            // لا نرجع لصيدلية 1 بصمت عند عطل القاعدة (كانت الشاشة تعرض صيدلية أخرى فارغة)
+            return json({ success: false, offline_reconnecting: true, db_unavailable: true,
+                message: 'قاعدة البيانات السحابية غير متاحة حالياً: بياناتك محفوظة ولم تُمسح.', error: String(e && e.message || e) }, 503);
+        }
+    }
     const db = new ScopedDB(env.DB, pid);
     const bcast = (type, payload) => broadcast(env, ctx, type, payload, pid);
     const path = url.pathname;
@@ -107,6 +142,12 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 const events = rows.map(r => { const pl = JSON.parse(r.payload || '{}'); const ep = pl.__profile_id || 1; delete pl.__profile_id;
                     return { id: r.id, type: r.type, payload: pl, timestamp: r.ts, profile_id: ep }; }).filter(e => e.profile_id === pid || e.type === 'profiles_changed');
                 return json({ events, scans: events.filter(e => e.type === 'mobile_scan').map(e => e.payload), timestamp: Date.now() / 1000 });
+            }
+            if (path === '/api/cloud/usage') return json({ success: true, ...OFF.usageInfo(env) });
+            if (path === '/api/catalog/snapshot') return await OFF.catalogSnapshot(env, db, ctx, p.get('force') === '1');
+            if (path === '/api/stock/offline-pack') return json(await OFF.offlinePack(db, (p.get('store_no') || '').trim(), S.resolveValidStoreNo));
+            if (path === '/api/catalog/products' && OFF.economyBlocksQuery(env, p.get('query') || p.get('q') || '')) {
+                return json({ items: [], total: 0, limit: 50, offset: 0, economy: true, message: 'وضع التوفير: اكتب 3 حروف على الأقل للبحث (حصة القراءة اليومية قاربت على الانتهاء).' });
             }
             if (path === '/api/catalog/products') {
                 const q = (p.get('query') || p.get('q') || '').replace(/^\s+/, '');
@@ -152,6 +193,7 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                     FROM profiles pr ORDER BY pr.id ASC`);
                 return json({ success: true, profiles: rows, current_profile_id: pid });
             }
+            if (path === '/api/stock/trash') return json(await S.listTrash(db, (p.get('store_no') || '').trim()));
             if (path === '/api/stock/stores') return json(await S.getAllStores(db, (p.get('q') || '').trim() || (p.get('query') || '').trim()));
             if (path === '/api/stock/store/details') {
                 return json(await S.getStoreStocktakeDetails(db, (p.get('store_no') || '').trim() || 'ST-001', (p.get('query') || p.get('q') || '').replace(/^\s+/, '')));
@@ -218,11 +260,14 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 return json(await S.editStocktakeEntry(db, intOr0(data.entry_id || data.id), data.updates || {}, storeNo));
             case '/api/stock/clear-inventory': {
                 const clearAll = Boolean(data.clear_all || storeNo.toUpperCase() === 'ALL');
+                // حذف مخزون كل الاستورات لا يتم إلا بتأكيد مكتوب من الواجهة الجديدة
+                if (clearAll && data.confirm_text !== CONFIRM_WORD) return json(needConfirm(), 400);
                 const res = await S.clearInventoryRecords(db, storeNo, clearAll);
                 if (res.success) await bcast('inventory_cleared', { store_no: storeNo, clear_all: clearAll });
                 return json(res);
             }
             case '/api/stock/clear': {
+                if (data.confirm_text !== CONFIRM_WORD) return json(needConfirm(), 400);
                 const res = await S.clearStoreStocktake(db, storeNo);
                 if (res.success) await bcast('stock_cleared', { store_no: storeNo });
                 return json(res);
@@ -251,6 +296,7 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
                 return json(res);
             }
             case '/api/stock/reset-all': {
+                if (data.confirm_text !== CONFIRM_WORD) return json(needConfirm(), 400);
                 const res = await S.resetAllStocktake(db);
                 if (res.success) await bcast('stock_reset', {});
                 return json(res);
@@ -339,12 +385,17 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
             case '/api/stock/upload/detect':
                 return json({ success: true, ...S.detectStockColumns(Array.isArray(data.rows) ? data.rows : []) });
             case '/api/stock/upload/rows': {
-                const res = await S.uploadStockRows(db, storeNo, Array.isArray(data.rows) ? data.rows : [], data.col_idx || {}, data.replace_existing !== false, Boolean(data.is_first));
+                const res = await S.uploadStockRows(db, storeNo, Array.isArray(data.rows) ? data.rows : [], data.col_idx || {}, data.replace_existing !== false, Boolean(data.is_first), data.upload_id || '');
                 return json(res);
             }
             case '/api/stock/upload/finish': {
-                const res = await S.finishStockUpload(db, storeNo, intOr0(data.total_added));
-                await bcast('inventory_uploaded', { store_no: res.store_details?.store?.store_no || storeNo });
+                const res = await S.finishStockUpload(db, storeNo, intOr0(data.total_added), data.upload_id || '', data.replace_existing !== false);
+                if (res.success) await bcast('inventory_uploaded', { store_no: res.store_details?.store?.store_no || storeNo });
+                return json(res, res.success ? 200 : 400);
+            }
+            case '/api/stock/trash/restore': {
+                const res = await S.restoreTrash(db, storeNo, String(data.batch_id || ''));
+                if (res.success) await bcast('stock_qty_updated', { store_no: storeNo, restored: res.restored_count });
                 return json(res);
             }
             case '/api/catalog/save': {
@@ -403,8 +454,23 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
         }
         return null;
     } catch (e) {
-        return json({ success: false, message: String(e && e.message || e) }, 400);
+        const msg = String(e && e.message || e);
+        // تجاوز حصة D1 اليومية أو عطل مؤقت في قاعدة البيانات: البيانات نفسها سليمة. نرجع 503 برسالة واضحة
+        // حتى لا تعرض الشاشات أصفاراً أو تمسح ما هو معروض (كان المستخدم يظن أن الجرد اتمسح)
+        if (isDbUnavailable(msg)) {
+            return json({ success: false, offline_reconnecting: true, db_unavailable: true,
+                message: /limit|exceed|quota/i.test(msg)
+                    ? 'قاعدة البيانات السحابية وصلت للحد اليومي للقراءة: بياناتك محفوظة ولم تُمسح، وستعود للعمل تلقائياً بعد الساعة 3 فجراً (منتصف الليل UTC).'
+                    : 'قاعدة البيانات السحابية غير متاحة لحظياً: بياناتك محفوظة ولم تُمسح، أعد المحاولة بعد ثوانٍ.',
+                error: msg }, 503);
+        }
+        return json({ success: false, message: msg }, 400);
     }
+}
+
+export function isDbUnavailable(msg) {
+    return /exceeded|row read limit|rows read|daily limit|quota|overloaded|Network connection lost|internal error|storage operation|D1 DB is|reset because|too many requests|timed? ?out/i.test(String(msg || ''))
+        && !/constraint|syntax|no such (table|column)|datatype mismatch/i.test(String(msg || ''));
 }
 
 // ---------- مسارات إدارية محمية لمزامنة الكمبيوتر مع السحابة ----------
@@ -425,6 +491,8 @@ async function handleAdmin(request, env, path, data) {
     }
     // استبدال جداول الجرد بالكامل (بعد رفع ملف مخزون من الكمبيوتر) — دفعة ذرية واحدة
     if (path === '/api/_admin/replace') {
+        // استبدال الجداول بالكامل يمسح أي جرد/فواتير تمت بعد أخذ النسخة: لا يُنفّذ إلا بتأكيد صريح
+        if (data.allow_overwrite !== 'OVERWRITE_CLOUD_DATA') return json({ success: false, message: 'full table replace is disabled to protect stocktake data' }, 403);
         const tables = data.tables || {};
         const stmts = [];
         for (const [t, rows] of Object.entries(tables)) {
@@ -464,6 +532,13 @@ async function handleAdmin(request, env, path, data) {
     // تطبيق تغييرات كتالوج الأصناف القادمة من الكمبيوتر: حذف ثم إدراج (يحافظ على نفس id وترتيب البحث)
     if (path === '/api/_admin/catalog_apply') {
         const del = [...new Set([...(data.delete_codes || []), ...(data.products || []).map(p => p.code)])];
+        // عدد الأصناف بالزيادة/النقصان (إعادة عدّ الجدول كله كانت تقرأ 30 ألف صف مع كل دفعة من الكمبيوتر)
+        let existing = 0;
+        for (let i = 0; i < del.length; i += 90) {
+            const part = del.slice(i, i + 90);
+            existing += (await first(db, `SELECT COUNT(*) AS c FROM products WHERE code IN (${part.map(() => '?').join(',')})`, part)).c;
+        }
+        const delta = (data.delete_only ? 0 : new Set((data.products || []).map(p => p.code)).size) - existing;
         const stmts = [];
         for (let i = 0; i < del.length; i += 90) {
             const part = del.slice(i, i + 90);
@@ -479,8 +554,8 @@ async function handleAdmin(request, env, path, data) {
                     .bind(r.product_code, r.barcode, r.barcode_type || 'barcode', r.created_at || null));
             }
         }
-        stmts.push(db.prepare("INSERT INTO meta (k, v) VALUES ('products_count', (SELECT COUNT(*) FROM products)) ON CONFLICT(k) DO UPDATE SET v = excluded.v"));
-        await db.batch(stmts);
+        if (delta) stmts.push(db.prepare("UPDATE meta SET v = MAX(0, CAST(v AS INTEGER) + (?)) WHERE k = 'products_count'").bind(delta));
+        if (stmts.length) await db.batch(stmts);
         return json({ success: true, statements: stmts.length });
     }
     // بصمة كل صنف (نفس التعبير يُحسب محلياً على الكمبيوتر) لمعرفة ما تغيّر فقط

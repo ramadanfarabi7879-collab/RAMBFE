@@ -15,7 +15,11 @@
     <!-- Html5-QRCode -->
     <script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/dist/iife/polyfill.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    <script src="profile.js?v=2"></script>
+    <!-- تطبيق ويب يشتغل من غير إنترنت (PWA) + وضع عدم الاتصال للجرد -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <script src="/offline.js?v=1"></script>
+    <script src="profile.js?v=3"></script>
     <script src="realtime.js?v=2"></script>
     <script src="excel-export.js?v=1"></script>
 
@@ -557,6 +561,7 @@
     <script>
         let currentTarget = 'stocktake';
         let currentStoreNo = 'ST-001';
+        window.RambfeActiveStore = () => currentStoreNo;
         let isContinuous = true;
         let isTorchOn = false;
         let currentFacingMode = 'environment';
@@ -2062,12 +2067,14 @@
 
         // تصفير الجرد
         document.getElementById('btn-action-clear-store')?.addEventListener('click', async () => {
-            if (!confirm(`تحذير: هل أنت متأكد من تصفير كافة الكميات المجرودة في المستودع ${currentStoreNo}؟`)) return;
+            const confirmText = window.RambfeProfiles.confirmTyped(`تحذير: سيتم تصفير كافة الكميات المجرودة في المستودع ${currentStoreNo}.
+(تُحفظ نسخة في سلة محذوفات الجرد ويمكن استرجاعها)`);
+            if (!confirmText) return;
             try {
                 const res = await fetch('/api/stock/clear', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ store_no: currentStoreNo })
+                    body: JSON.stringify({ store_no: currentStoreNo, confirm_text: confirmText })
                 });
                 const data = await res.json();
                 if (data.success) {

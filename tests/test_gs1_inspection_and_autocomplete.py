@@ -5,6 +5,19 @@ import urllib.parse
 from backend.qr_parser import parse_qr_code, extract_clean_gtin
 from backend.db import get_connection, save_or_update_product, search_products, get_product_by_code, init_db
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from live_server import start_live_server, stop_live_server, base_url
+
+
+def setUpModule():
+    # خادم البرنامج على منفذ فاضي بنسخة مؤقتة من قاعدة البيانات وبدون سحابة
+    start_live_server()
+
+
+def tearDownModule():
+    stop_live_server()
+
 class TestGs1InspectionAndAutocomplete(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -58,7 +71,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
         """
         اختبار واجهة الخادم /api/catalog/parse-gs1
         """
-        url = "http://localhost:8000/api/catalog/parse-gs1"
+        url = base_url() + "/api/catalog/parse-gs1"
         req_data = {
             "raw": "(01)06281001112223(17)261031(10)BT456(21)SN789"
         }
@@ -153,7 +166,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
         self.assertTrue(ok2)
 
         # فحص استعلام Autocomplete لصنف Panadol
-        url1 = "http://localhost:8000/api/catalog/products?query=Panadol%20Unique&limit=10&offset=0"
+        url1 = base_url() + "/api/catalog/products?query=Panadol%20Unique&limit=10&offset=0"
         with urllib.request.urlopen(url1) as resp:
             data1 = json.loads(resp.read().decode("utf-8"))
             items1 = data1.get("items", [])
@@ -161,7 +174,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
             self.assertIn("9988002", codes1)
 
         # فحص استعلام Autocomplete لصنف Augmentin
-        url2 = "http://localhost:8000/api/catalog/products?query=Augmentin%20Unique&limit=10&offset=0"
+        url2 = base_url() + "/api/catalog/products?query=Augmentin%20Unique&limit=10&offset=0"
         with urllib.request.urlopen(url2) as resp:
             data2 = json.loads(resp.read().decode("utf-8"))
             items2 = data2.get("items", [])
@@ -202,7 +215,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
         raw_saudi = "010629110373043521lrn4u0449708qi1727041610c753"
 
         # 1. اختبار استدعاء الخادم لـ parse-gs1
-        url = "http://localhost:8000/api/catalog/parse-gs1"
+        url = base_url() + "/api/catalog/parse-gs1"
         req = urllib.request.Request(
             url,
             data=json.dumps({"raw": raw_saudi}).encode("utf-8"),
@@ -213,8 +226,8 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
             self.assertTrue(data["success"])
             self.assertTrue(data["is_gs1"])
             self.assertEqual(data["gtin"], "06291103730435")
-            self.assertEqual(data["serial"], "lrn4u0449708qi")
-            self.assertEqual(data["batch"], "c753")
+            self.assertEqual(data["serial"], "LRN4U0449708QI")  # السيريال بأحرف كبيرة عمداً (commit 4807039)
+            self.assertEqual(data["batch"], "C753")  # الباتش بأحرف كبيرة عمداً (commit 4807039)
             self.assertEqual(data["expiry"], "2027-04-16")
 
         # 2. التأكد من أن الفلترة النهائية تعتمد GTIN فقط
@@ -234,7 +247,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
         save_or_update_product({"code": "9988022", "name_ar": "بروفين 600 مجم فوار", "name_en": "Brufen 600mg Effervescent", "selling_price": 19.5, "unit_price": 15.0, "tax_rate": 0.0, "barcode_list": ["628022"], "gtin_list": ["06280000000022"]})
 
         # المستخدم بحث عن "Panadol" فظهرت 3 أصناف
-        url_panadol = "http://localhost:8000/api/catalog/products?query=Panadol&limit=10&offset=0"
+        url_panadol = base_url() + "/api/catalog/products?query=Panadol&limit=10&offset=0"
         with urllib.request.urlopen(url_panadol) as resp:
             panadol_results = json.loads(resp.read().decode("utf-8"))["items"]
             self.assertGreaterEqual(len(panadol_results), 3)
@@ -253,7 +266,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
         self.assertNotIn("9988013", accumulated_table)
 
         # تم مسح خانة البحث وبحث المستخدم عن "Brufen"
-        url_brufen = "http://localhost:8000/api/catalog/products?query=Brufen&limit=10&offset=0"
+        url_brufen = base_url() + "/api/catalog/products?query=Brufen&limit=10&offset=0"
         with urllib.request.urlopen(url_brufen) as resp:
             brufen_results = json.loads(resp.read().decode("utf-8"))["items"]
             self.assertGreaterEqual(len(brufen_results), 2)
@@ -295,7 +308,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
         }
 
         # حفظ عبر API الخادم
-        url_save = "http://localhost:8000/api/catalog/save"
+        url_save = base_url() + "/api/catalog/save"
         req = urllib.request.Request(
             url_save,
             data=json.dumps(payload).encode("utf-8"),
@@ -306,7 +319,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
             self.assertTrue(data["success"])
 
         # استرجاع عبر API الخادم
-        url_get = "http://localhost:8000/api/catalog/product?code=9988030"
+        url_get = base_url() + "/api/catalog/product?code=9988030"
         with urllib.request.urlopen(url_get) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(data["success"])
@@ -341,7 +354,7 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
         self.assertEqual(data["prod_date"], "2025-07-01")
 
         # 2. اختبار عبر واجهة الخادم /api/catalog/parse-gs1
-        url = "http://localhost:8000/api/catalog/parse-gs1"
+        url = base_url() + "/api/catalog/parse-gs1"
         req = urllib.request.Request(
             url,
             data=json.dumps({"raw": raw_code}).encode("utf-8"),
@@ -391,14 +404,14 @@ class TestGs1InspectionAndAutocomplete(unittest.TestCase):
             scan_qr_to_invoice(inv_id, "010628512800030710}[03711125070117280701212072049045215")
 
             # 1. اختبار استدعاء /api/invoice/open-excel
-            url_open = f"http://localhost:8000/api/invoice/open-excel?id={inv_id}"
+            url_open = f"{base_url()}/api/invoice/open-excel?id={inv_id}"
             with urllib.request.urlopen(url_open) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 self.assertTrue(data["success"])
                 self.assertIn("Invoice_", data["file_name"])
 
             # 2. اختبار سحب وتصدير الفاتورة عبر /api/invoice/export-excel
-            url_export = f"http://localhost:8000/api/invoice/export-excel?id={inv_id}"
+            url_export = f"{base_url()}/api/invoice/export-excel?id={inv_id}"
             with urllib.request.urlopen(url_export) as resp:
                 self.assertEqual(resp.status, 200)
                 content_type = resp.headers.get("Content-Type", "")

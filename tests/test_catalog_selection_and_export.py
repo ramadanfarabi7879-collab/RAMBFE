@@ -5,11 +5,24 @@ import openpyxl
 import io
 from backend.db import get_or_create_draft_invoice, add_manual_item_to_invoice, clear_invoice_lines
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from live_server import start_live_server, stop_live_server, base_url
+
+
+def setUpModule():
+    # خادم البرنامج على منفذ فاضي بنسخة مؤقتة من قاعدة البيانات وبدون سحابة
+    start_live_server()
+
+
+def tearDownModule():
+    stop_live_server()
+
 class TestCatalogSelectionAndExport(unittest.TestCase):
     def test_export_by_selected_codes_get(self):
         # 1. Test GET with specific codes
         codes = ['94688', '10001']
-        url = f"http://127.0.0.1:8000/api/catalog/export-excel?scope=selected&codes={','.join(codes)}"
+        url = f"{base_url()}/api/catalog/export-excel?scope=selected&codes={','.join(codes)}"
         req = urllib.request.urlopen(url)
         self.assertEqual(req.status, 200)
         content = req.read()
@@ -35,7 +48,7 @@ class TestCatalogSelectionAndExport(unittest.TestCase):
             'codes': ['94688']
         }).encode('utf-8')
         req = urllib.request.Request(
-            'http://127.0.0.1:8000/api/catalog/export-excel',
+            base_url() + '/api/catalog/export-excel',
             data=body,
             headers={'Content-Type': 'application/json'}
         )
@@ -61,7 +74,7 @@ class TestCatalogSelectionAndExport(unittest.TestCase):
         )
         self.assertTrue(res['success'])
 
-        url = f"http://127.0.0.1:8000/api/catalog/export-excel?scope=invoice&invoice_id={inv_id}"
+        url = f"{base_url()}/api/catalog/export-excel?scope=invoice&invoice_id={inv_id}"
         req = urllib.request.urlopen(url)
         self.assertEqual(req.status, 200)
         wb = openpyxl.load_workbook(io.BytesIO(req.read()))

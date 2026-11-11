@@ -5,10 +5,23 @@ import openpyxl
 import io
 from backend.db import get_product_by_code, find_product_by_gtin_or_barcode, save_or_update_product, delete_product
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from live_server import start_live_server, stop_live_server, base_url
+
+
+def setUpModule():
+    # خادم البرنامج على منفذ فاضي بنسخة مؤقتة من قاعدة البيانات وبدون سحابة
+    start_live_server()
+
+
+def tearDownModule():
+    stop_live_server()
+
 class TestExcelUpdateFeature(unittest.TestCase):
     def test_excel_update_and_export(self):
         # 1. Export test
-        req = urllib.request.urlopen('http://127.0.0.1:8000/api/catalog/export-excel')
+        req = urllib.request.urlopen(base_url() + '/api/catalog/export-excel')
         self.assertEqual(req.status, 200)
         excel_bytes = req.read()
         wb_exp = openpyxl.load_workbook(io.BytesIO(excel_bytes))
@@ -17,7 +30,12 @@ class TestExcelUpdateFeature(unittest.TestCase):
         self.assertIn('PRODUCT CODE', headers)
         self.assertIn('SALES PRICE', headers)
         self.assertTrue(any('GTIN' in str(h) for h in headers))
-        self.assertGreater(ws_exp.max_row, 30000)
+        # تصدير الكتالوج كاملاً: صف العناوين + كل أصناف قاعدة الاختبار
+        from backend.db import get_connection
+        with get_connection() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+        self.assertGreaterEqual(total, 2)
+        self.assertEqual(ws_exp.max_row, total + 1)
 
         # 2. Prepare Excel update file
         wb = openpyxl.Workbook()
@@ -40,7 +58,7 @@ class TestExcelUpdateFeature(unittest.TestCase):
             f'Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n'
         ).encode('utf-8') + upload_bytes + f'\r\n--{boundary}--\r\n'.encode('utf-8')
 
-        up_req = urllib.request.Request('http://127.0.0.1:8000/api/catalog/upload-excel', data=body)
+        up_req = urllib.request.Request(base_url() + '/api/catalog/upload-excel', data=body)
         up_req.add_header('Content-Type', f'multipart/form-data; boundary={boundary}')
         res = urllib.request.urlopen(up_req)
         upload_info = json.loads(res.read().decode('utf-8'))
@@ -50,7 +68,7 @@ class TestExcelUpdateFeature(unittest.TestCase):
 
         # 4. Preview
         prev_req = urllib.request.Request(
-            'http://127.0.0.1:8000/api/catalog/preview-import',
+            base_url() + '/api/catalog/preview-import',
             data=json.dumps({'file_id': file_id, 'mapping': mapping}).encode('utf-8'),
             headers={'Content-Type': 'application/json'}
         )
@@ -61,7 +79,7 @@ class TestExcelUpdateFeature(unittest.TestCase):
 
         # 5. Commit
         commit_req = urllib.request.Request(
-            'http://127.0.0.1:8000/api/catalog/commit-import',
+            base_url() + '/api/catalog/commit-import',
             data=json.dumps({'file_id': file_id, 'mapping': mapping}).encode('utf-8'),
             headers={'Content-Type': 'application/json'}
         )

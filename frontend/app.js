@@ -818,11 +818,12 @@ function scheduleReconnectProbe() {
     if (_reconnectHealthTimer) return;
     _reconnectHealthTimer = setInterval(async () => {
         try {
-            const res = await fetch('/api/health', { cache: 'no-store' });
+            const res = await fetchHealthWithTimeout();
             const data = await res.json().catch(() => ({}));
             if (res.ok && data && data.healthy) {
                 clearInterval(_reconnectHealthTimer);
                 _reconnectHealthTimer = null;
+                _healthFailStreak = 0;
                 updateConnectionBanner('online');
             } else if (data && data.db_error) {
                 updateConnectionBanner('db_error', data.message || data.error);
@@ -831,24 +832,48 @@ function scheduleReconnectProbe() {
     }, 3500);
 }
 
-async function checkServerHealthSilent() {
-    try {
-        const res = await fetch('/api/health', { cache: 'no-store' });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data && data.healthy) {
-            if (_serverConnectionLost) updateConnectionBanner('online');
-            return true;
-        }
-        if (data && data.db_error) {
-            updateConnectionBanner('db_error', data.message || data.error);
-        } else {
+// لا نُظهر شريط "جاري تجديد الاتصال" بسبب فشل لحظي واحد (استيقاظ الجهاز من السكون، عملية ثقيلة، تأخر الشبكة):
+// يظهر فقط إذا ظل الخادم غير متاح عبر عدة فحوصات متتالية (حوالي 15 ثانية).
+const HEALTH_FAILS_BEFORE_BANNER = 3;
+const HEALTH_RETRY_MS = 5000;
+let _healthFailStreak = 0;
+let _healthRetryTimer = null;
+let _healthCheckInFlight = null;
+
+function fetchHealthWithTimeout(ms = 15000) {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const t = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
+    return fetch('/api/health', { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+        .finally(() => { if (t) clearTimeout(t); });
+}
+
+function checkServerHealthSilent() {
+    if (_healthCheckInFlight) return _healthCheckInFlight;
+    _healthCheckInFlight = (async () => {
+        let data = {};
+        try {
+            const res = await fetchHealthWithTimeout();
+            data = await res.json().catch(() => ({}));
+            if (res.ok && data && data.healthy) {
+                _healthFailStreak = 0;
+                if (_healthRetryTimer) { clearTimeout(_healthRetryTimer); _healthRetryTimer = null; }
+                if (_serverConnectionLost) updateConnectionBanner('online');
+                return true;
+            }
+            if (data && data.db_error) {
+                updateConnectionBanner('db_error', data.message || data.error);
+                return false;
+            }
+        } catch (_) {}
+        _healthFailStreak++;
+        if (_healthFailStreak >= HEALTH_FAILS_BEFORE_BANNER) {
             updateConnectionBanner('offline', data && data.message ? data.message : '');
+        } else if (!_healthRetryTimer) {
+            _healthRetryTimer = setTimeout(() => { _healthRetryTimer = null; checkServerHealthSilent(); }, HEALTH_RETRY_MS);
         }
         return false;
-    } catch (_) {
-        updateConnectionBanner('offline');
-        return false;
-    }
+    })().finally(() => { _healthCheckInFlight = null; });
+    return _healthCheckInFlight;
 }
 
 function initConnectionHealthMonitor() {
@@ -867,7 +892,8 @@ function initConnectionHealthMonitor() {
 function isUnavailableApiResponse(res, data) {
     if (!res || !res.ok) {
         if (data && data.db_error) updateConnectionBanner('db_error', data.message || data.error);
-        else if (res && res.status === 503) updateConnectionBanner('offline', (data && data.message) || '');
+        else if (res && res.status === 503 && data && data.message) updateConnectionBanner('offline', data.message);
+        else if (res && res.status === 503) checkServerHealthSilent(); // نتأكد أولاً بدل إظهار الشريط فوراً
         return true;
     }
     if (data && data.offline_reconnecting) {
@@ -5483,6 +5509,8 @@ async function openCodesViewerModal(code, type) {
     modal?.classList.remove('hidden');
 }
 
+// السحابة توقف العدّ عند حد معين لتوفير حصة القراءة: العدد عندها "أكثر من ..."
+let catalogTotalIsEstimate = false;
 function renderCatalogItemsTable(items, total, isAccumulated = false) {
     const tbody = document.getElementById('catalog-products-tbody');
     if (!tbody) return;
@@ -5500,7 +5528,7 @@ function renderCatalogItemsTable(items, total, isAccumulated = false) {
         document.getElementById('btn-clear-search-results')?.classList.remove('hidden');
     } else {
         document.getElementById('catalog-pagination-info').textContent =
-            `عرض ${items.length} من أصل ${total.toLocaleString()} صنف`;
+            `عرض ${items.length} من أصل ${(!isAccumulated && catalogTotalIsEstimate) ? 'أكثر من ' + (total - 1).toLocaleString() : total.toLocaleString()} صنف`;
         document.getElementById('btn-catalog-prev').disabled = (catalogOffset === 0);
         document.getElementById('btn-catalog-next').disabled = (catalogOffset + items.length >= total);
         document.getElementById('catalog-search-accumulated-badge')?.classList.add('hidden');
@@ -5734,6 +5762,7 @@ async function loadCatalogProducts() {
         }
         const items = data.items || [];
         const total = data.total || 0;
+        catalogTotalIsEstimate = Boolean(data.total_is_estimate);
 
         currentLoadedCatalogItems = items;
         renderCatalogItemsTable(items, total, false);
@@ -6574,6 +6603,7 @@ async function executeReturnProcess() {
 // =========================================================================
 
 let currentActiveStoreNo = localStorage.getItem('agy_active_store_no') || 'ST-001';
+window.RambfeActiveStore = () => currentActiveStoreNo;
 let currentActiveStoreName = localStorage.getItem('agy_active_store_name') || 'الاستور الرئيسي';
 let stockAudioCtx = null;
 let stockStoresSearchTimer = null;
@@ -6839,8 +6869,12 @@ function initStocktakeTab() {
             return;
         }
 
-        let clearAll = false;
-        if (confirm(`هل تريد أيضاً تصفير وحذف رصيد المخزون لجميع الاستورات بالكامل؟\n\nاضغط [موافق] لحذف المخزون لجميع الاستورات بالكامل\nاضغط [إلغاء] لحذف مخزون استور (${storeName}) فقط.`)) {
+        // سابقاً كان سؤال "كل الاستورات؟" يأتي بعد التأكيد مباشرة، وضغطة [موافق] كانت تصفّر مخزون كل الاستورات.
+        // الآن: الافتراضي هذا الاستور فقط، وكل الاستورات تحتاج كتابة كلمة التأكيد.
+        let clearAll = false, confirmText = '';
+        if (confirm(`هل تريد حذف المخزون الدفتري لكل الاستورات بدلاً من (${storeName}) فقط؟\n\n[إلغاء] = هذا الاستور فقط (الأأمن)\n• الكميات المجرودة لا تُمسح في الحالتين.\n• لا داعي للحذف قبل رفع ملف جديد: الرفع يستبدل مخزون الاستور تلقائياً.`)) {
+            confirmText = window.RambfeProfiles.confirmTyped('سيتم حذف رصيد المخزون الدفتري لكل الاستورات (الكميات المجرودة لن تُمسح).');
+            if (!confirmText) return;
             clearAll = true;
         }
 
@@ -6850,7 +6884,8 @@ function initStocktakeTab() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     store_no: clearAll ? 'ALL' : currentActiveStoreNo,
-                    clear_all: clearAll
+                    clear_all: clearAll,
+                    confirm_text: confirmText
                 })
             });
             const data = await res.json();
@@ -6978,16 +7013,16 @@ function initStocktakeTab() {
 
     // 9. تصفير جرد الاستور
     btnClear?.addEventListener('click', async () => {
-        if (!confirm(`هل أنت متأكد من رغبتك في تصفير جميع الأصناف المسحوبة في الاستور (${currentActiveStoreNo})؟`)) {
-            return;
-        }
+        const confirmText = window.RambfeProfiles.confirmTyped(`سيتم تصفير جميع الأصناف المجرودة في الاستور (${currentActiveStoreNo}).\n(تُحفظ نسخة في سلة محذوفات الجرد ويمكن استرجاعها من شريط الصيدلية)`);
+        if (!confirmText) return;
         try {
             const res = await fetch('/api/stock/clear', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ store_no: currentActiveStoreNo })
+                body: JSON.stringify({ store_no: currentActiveStoreNo, confirm_text: confirmText })
             });
             const data = await res.json();
+            if (!data.success) alert(data.message || 'لم يتم التصفير');
             if (data.success) {
                 await loadStocktakeStores();
                 if (data.store_details) {
@@ -7010,15 +7045,16 @@ function initStocktakeTab() {
 
     // 9.ج مسح وتصفير كافة تجارب وبيانات الجرد بالكامل للبدء من الصفر
     btnResetAll?.addEventListener('click', async () => {
-        if (!confirm('⚠️ تحذير: هل أنت متأكد من تصفير ومسح كافة بيانات وتجارب الجرد والاستورات بالكامل والبدء برفع المخزون الحقيقي؟')) {
-            return;
-        }
+        const confirmText = window.RambfeProfiles.confirmTyped('⚠️ تحذير: سيتم مسح كل الاستورات والمخزون والجرد لهذه الصيدلية بالكامل.\n(الكميات المجرودة تُحفظ في سلة محذوفات الجرد)');
+        if (!confirmText) return;
         try {
             const res = await fetch('/api/stock/reset-all', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirm_text: confirmText })
             });
             const data = await res.json();
+            if (!data.success) alert(data.message || 'لم يتم التنفيذ');
             if (data.success) {
                 alert(data.message || 'تم تصفير تجارب الجرد بنجاح.');
                 currentActiveStoreNo = data.store_no || 'ST-001';

@@ -191,7 +191,10 @@ def init_stock_tables():
                 WHERE store_no NOT IN (SELECT store_no FROM stock_stores)
             """, (act_no,))
     except Exception as e:
-        logger.warning(f"Stock entries auto-repair error: {e}")
+        # قاعدة بيانات جديدة (جدول الأصناف لم يُنشأ بعد) أو خطأ في الإصلاح التلقائي: لا يوقف تشغيل البرنامج
+        # (كان `logger` غير معرّف فيتعطل تشغيل الخادم بالكامل على أي تثبيت جديد)
+        from .db_safety import get_server_logger
+        get_server_logger().warning(f"Stock entries auto-repair skipped: {e}")
 
     conn.commit()
     conn.close()
@@ -932,9 +935,10 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
     b_code = prod.get("barcode", "")
     g_code = gtin or ""
 
+    # الباركود الفاضي كان يطابق كل سطور المخزون اللي من غير باركود (تشغيلات أصناف تانية)
     c.execute("""
         SELECT * FROM inventory_records
-        WHERE (product_code = ? OR product_code = ? OR barcode = ? OR barcode = ?)
+        WHERE (product_code = ? OR product_code = ? OR (barcode != '' AND barcode IN (?, ?)))
           AND store_no = ?
         ORDER BY expiry_date ASC, id ASC
     """, (prod_code, c_pcode, b_code, g_code, store_no))
@@ -943,7 +947,7 @@ def scan_item_to_store(raw_code: str, store_no: str = 'ST-001', force_direct: bo
     if not inv_records:
         c.execute("""
             SELECT * FROM inventory_records
-            WHERE (product_code = ? OR product_code = ? OR barcode = ? OR barcode = ?)
+            WHERE (product_code = ? OR product_code = ? OR (barcode != '' AND barcode IN (?, ?)))
             ORDER BY expiry_date ASC, id ASC
         """, (prod_code, c_pcode, b_code, g_code))
         inv_records = [dict(r) for r in c.fetchall()]

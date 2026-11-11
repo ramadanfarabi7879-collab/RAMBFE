@@ -28,6 +28,10 @@ PORT = int(os.environ.get("RAMBFE_PORT", "8000"))
 HEALTH_URL = f"http://127.0.0.1:{PORT}/api/health"
 CHECK_INTERVAL = 15
 STARTUP_GRACE = 90
+# الخادم متعدد الخيوط: بطء الرد لحظياً أثناء عملية ثقيلة ليس تعليقاً. قتل الخادم المشغول كان هو نفسه
+# سبب ظهور "جاري تجديد الاتصال بالسيرفر المحلي" للمستخدم. لا نعيد التشغيل إلا بعد عدم استجابة كاملة لعدة دقائق.
+PROBE_TIMEOUT = 20
+HUNG_FAILURES = 6
 
 
 def acquire_single_instance_mutex():
@@ -70,7 +74,7 @@ def is_port_listening(port: int) -> bool:
 def probe_server_health() -> dict:
     try:
         req = urllib.request.Request(HEALTH_URL, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
             return {"reachable": True, "status": resp.status, "data": data}
     except urllib.error.HTTPError as he:
@@ -81,6 +85,28 @@ def probe_server_health() -> dict:
         return {"reachable": True, "status": he.code, "data": data}
     except Exception as e:
         return {"reachable": False, "error": str(e)}
+
+
+def kill_port_owner(port: int, logger) -> None:
+    """إيقاف العملية التي تحجز المنفذ (خادم معلّق لم يشغّله المراقب)."""
+    if os.name != "nt":
+        return
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        pids = set()
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[3].upper() == "LISTENING" and parts[1].endswith(f":{port}"):
+                pids.add(parts[4])
+        for pid in pids:
+            if pid.isdigit() and int(pid) not in (0, os.getpid()):
+                logger.warning(f"[Watchdog] Stopping hung server PID {pid} on port {port}")
+                subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], capture_output=True, timeout=15,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        time.sleep(2)
+    except Exception as e:
+        logger.error(f"[Watchdog] Could not stop port owner: {e}")
 
 
 def launch_server_process(logger) -> subprocess.Popen:
@@ -142,9 +168,9 @@ def main():
                 continue
 
             consecutive_failures += 1
-            logger.warning(f"[Watchdog] Health probe failed ({consecutive_failures}/3): {health.get('error')}")
-            if consecutive_failures >= 4:
-                logger.error("[Watchdog] Server hung (3 failed health checks). Terminating hung process & restarting...")
+            logger.warning(f"[Watchdog] Health probe failed ({consecutive_failures}/{HUNG_FAILURES}): {health.get('error')}")
+            if consecutive_failures >= HUNG_FAILURES:
+                logger.error(f"[Watchdog] Server hung ({HUNG_FAILURES} failed health checks). Terminating hung process & restarting...")
                 if server_proc and server_proc.poll() is None:
                     try:
                         server_proc.terminate()
@@ -154,6 +180,9 @@ def main():
                             server_proc.kill()
                         except Exception:
                             pass
+                else:
+                    # الخادم شغّله اختصار سطح المكتب وليس المراقب: نوقف صاحب المنفذ وإلا ستفشل النسخة الجديدة في الربط
+                    kill_port_owner(PORT, logger)
                 server_proc = launch_server_process(logger)
                 launched_at = time.time()
                 consecutive_failures = 0

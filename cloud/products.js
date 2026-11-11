@@ -92,10 +92,12 @@ export async function findProductByGtinOrBarcode(db, val) {
 
     if (pure) {
         const f = ftsFilter([pure]);
-        row = await first(db, `SELECT p.* FROM products p JOIN product_barcodes pb ON p.code = pb.product_code
-            WHERE (pb.barcode LIKE ? OR pb.barcode LIKE ?) ${f.sql ? 'AND ' + f.sql : ''} ORDER BY p.id DESC LIMIT 1`,
-            [`%01${pure}%`, `%${pure}%`, ...f.params]);
-        if (row) { await attachProductBarcodes(db, row); return row; }
+        // المرشحون من فهرس البحث أولاً ثم فحص باركوداتهم فقط (الـ JOIN بـ LIKE كان يقرأ جدول الباركود كاملاً مع كل مسح لكود غير معروف)
+        if (f.sql) {
+            row = await first(db, `SELECT p.* FROM products p WHERE ${f.sql} AND ${PB_EXISTS('pb.barcode LIKE ? OR pb.barcode LIKE ?')} ORDER BY p.id DESC LIMIT 1`,
+                [...f.params, `%01${pure}%`, `%${pure}%`]);
+            if (row) { await attachProductBarcodes(db, row); return row; }
+        }
     }
     for (const c of candidates) {
         const f = ftsFilter([c], 'id');
@@ -107,6 +109,11 @@ export async function findProductByGtinOrBarcode(db, val) {
     }
     return null;
 }
+
+// مطابقة باركودات الصنف الإضافية بدون JOIN على جدول الباركود (62 ألف صف): يُفحص لكل صنف مرشح فقط عبر فهرس product_code
+// الباركودات أرقام: نص قصير أو حروف لا يُفحص في جدول الباركود (كان يُفحص لكل صنف في الجدول مع كل حرف)
+const looksLikeBarcode = (v) => /^\d{4,}$/.test(String(v || ''));
+const PB_EXISTS = (cond) => `EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_code = p.code AND (${cond}))`;
 
 // منقول حرفياً من _build_product_search_where مع إرجاع النصوص اللازمة لمرشح الفهرس
 export function buildProductSearchWhere(rawQuery, matchMode = 'start') {
@@ -137,7 +144,11 @@ export function buildProductSearchWhere(rawQuery, matchMode = 'start') {
             }
             conds.push('(p.code = ? OR p.code LIKE ?)'); params.push(tok, `${tok} %`);
             ftsVariants.push(...tokens);
-            if (qClean) { conds.push('(p.barcode = ? OR p.gtin = ? OR pb.barcode = ?)'); params.push(qClean, qClean, qClean); ftsVariants.push(qClean); }
+            if (qClean) {
+                if (looksLikeBarcode(qClean)) { conds.push(`(p.barcode = ? OR p.gtin = ? OR ${PB_EXISTS('pb.barcode = ?')})`); params.push(qClean, qClean, qClean); }
+                else { conds.push('(p.barcode = ? OR p.gtin = ?)'); params.push(qClean, qClean); }
+                ftsVariants.push(qClean);
+            }
             where.push(`(${conds.join(' OR ')})`);
             const rawDec = decodeArabicKeyboardLayout(rawQ);
             if (rawDec !== rawQ) {
@@ -184,8 +195,9 @@ export function buildProductSearchWhere(rawQuery, matchMode = 'start') {
         where.push('p.code = ?', 'p.code LIKE ?'); params.push(q, qp);
         if (qClean && cleanP && qClean !== q) { where.push('p.code = ?', 'p.code LIKE ?'); params.push(qClean, cleanP); }
         if (qClean && cleanP) {
-            where.push('p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?', 'pb.barcode = ?', 'pb.barcode LIKE ?');
-            params.push(qClean, cleanP, qClean, cleanP, qClean, cleanP);
+            where.push('p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?');
+            params.push(qClean, cleanP, qClean, cleanP);
+            if (looksLikeBarcode(qClean)) { where.push(PB_EXISTS('pb.barcode = ? OR pb.barcode LIKE ?')); params.push(qClean, cleanP); }
             ftsVariants.push(qClean);
             if (isDigitStr(qClean)) {
                 const padded = qClean.padStart(10, '0');
@@ -205,8 +217,9 @@ export function buildProductSearchWhere(rawQuery, matchMode = 'start') {
             const decClean = cleanBarcodePreserveZeros(decodedQ);
             if (decClean) {
                 const dcp = isContains ? `%${decClean}%` : `${decClean}%`;
-                where.push('p.code = ?', 'p.code LIKE ?', 'p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?', 'pb.barcode = ?', 'pb.barcode LIKE ?');
-                params.push(decClean, dcp, decClean, dcp, decClean, dcp, decClean, dcp);
+                where.push('p.code = ?', 'p.code LIKE ?', 'p.barcode = ?', 'p.barcode LIKE ?', 'p.gtin = ?', 'p.gtin LIKE ?');
+                params.push(decClean, dcp, decClean, dcp, decClean, dcp);
+                if (looksLikeBarcode(decClean)) { where.push(PB_EXISTS('pb.barcode = ? OR pb.barcode LIKE ?')); params.push(decClean, dcp); }
                 ftsVariants.push(decClean);
             }
         }
@@ -245,29 +258,39 @@ export async function runProductQuery(db, selectSql, whereSql, params, tailSql =
     return all(db, inlineParams(full, [...params, ...f.params, ...tailParams]));
 }
 
+export const COUNT_CAP = 1000;
+
 export async function searchProducts(db, query = '', limit = 50, offset = 0, matchMode = 'start') {
     const rawQ = String(query || '').replace(/^\s+/, '');
     const q = rawQ.trim();
-    let rows, total;
+    let rows, total, estimated = false;
     if (!q) {
         const m = await first(db, "SELECT v FROM meta WHERE k = 'products_count'");
         total = m ? Number(m.v) : (await first(db, 'SELECT COUNT(*) AS c FROM products')).c;
         rows = await all(db, 'SELECT p.* FROM products p ORDER BY p.id DESC LIMIT ? OFFSET ?', [limit, offset]);
     } else {
         const { whereSql, params, orderParams, ftsVariants } = buildProductSearchWhere(rawQ, matchMode);
-        const from = 'FROM products p LEFT JOIN product_barcodes pb ON p.code = pb.product_code';
+        // بدون JOIN على جدول الباركود: كان كل بحث يقرأ ~123 ألف صف ويستهلك حصة D1 اليومية في ~40 بحث فقط
+        const from = 'FROM products p';
         if (ftsFilter(ftsVariants).sql) {
-            const cnt = await runProductQuery(db, `SELECT COUNT(DISTINCT p.id) AS c ${from}`, whereSql, params, '', [], ftsVariants);
+            // العدد بحد أقصى (العدد الدقيق لكلمة شائعة كان يقرأ كل المرشحين مرة ثانية)
+            const cnt = await runProductQuery(db, `SELECT COUNT(*) AS c FROM (SELECT 1 ${from}`, whereSql, params, `LIMIT ${COUNT_CAP + 1})`, [], ftsVariants);
             total = cnt[0]?.c || 0;
-            rows = await runProductQuery(db, `SELECT DISTINCT p.* ${from}`, whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit, offset], ftsVariants);
+            if (total > COUNT_CAP) estimated = true;
+            rows = await runProductQuery(db, `SELECT p.* ${from}`, whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit, offset], ftsVariants);
         } else {
-            // بحث قصير (أقل من 3 أحرف) بدون فهرس: استعلام واحد بدل اتنين (بدون COUNT منفصل) لتوفير حصة القراءة
-            rows = await runProductQuery(db, `SELECT DISTINCT p.* ${from}`, whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit + 1, offset], ftsVariants);
+            // بحث قصير (حرف أو حرفين) لا يدعمه الفهرس: مطابقة الكود بالضبط أولاً ثم الأحدث فالأقدم مع التوقف فور اكتمال الصفحة
+            // (الترتيب بـ CASE كان يجبر قراءة الجدول كله في كل ضغطة زر)
+            const exact = offset === 0 ? await all(db, 'SELECT p.* FROM products p WHERE p.code = ? LIMIT 1', [cleanNumericCode(q) || q]) : [];
+            const exCode = exact[0]?.code;
+            rows = await all(db, inlineParams(`SELECT p.* ${from} WHERE (${whereSql})${exCode ? ' AND p.code != ?' : ''} ORDER BY p.id DESC LIMIT ? OFFSET ?`,
+                [...params, ...(exCode ? [exCode] : []), limit + 1 - exact.length, offset]));
+            rows = [...exact, ...rows];
             const more = rows.length > limit;
             if (more) rows = rows.slice(0, limit);
             total = offset + rows.length + (more ? 1 : 0);
         }
     }
     await attachBarcodesBulk(db, rows);
-    return { items: rows, total, limit, offset };
+    return { items: rows, total, limit, offset, ...(estimated ? { total_is_estimate: true } : {}) };
 }

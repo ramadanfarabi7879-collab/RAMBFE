@@ -32,10 +32,10 @@ SYNC_TABLES = STOCK_TABLES + INVOICE_TABLES
 CLOUD_GET = {"/api/catalog/products", "/api/stock/stores", "/api/stock/store/details", "/api/stock/store/search",
              "/api/sync/events", "/api/mobile/poll", "/api/stats", "/api/catalog/product", "/api/catalog/next-code",
              "/api/stock/uncounted", "/api/stock/preinventory-search", "/api/invoice/active", "/api/invoices/list", "/api/invoices/get",
-             "/api/profiles"}
+             "/api/profiles", "/api/stock/trash", "/api/catalog/snapshot", "/api/stock/offline-pack", "/api/cloud/usage"}
 CLOUD_POST = {"/api/mobile/scan", "/api/stock/scan", "/api/stock/save-batch-qty", "/api/stock/update-qty", "/api/stock/delete-item",
               "/api/stock/bulk-delete", "/api/stock/edit-item", "/api/stock/clear", "/api/stock/clear-inventory", "/api/stock/settle",
-              "/api/stock/commit-bulk", "/api/stock/stores/commit-all", "/api/stock/stores/create", "/api/stock/stores/update",
+              "/api/stock/commit-bulk", "/api/stock/stores/commit-all", "/api/stock/trash/restore", "/api/stock/stores/create", "/api/stock/stores/update",
               "/api/stock/stores/delete", "/api/stock/reset-all", "/api/stock/populate-all",
               "/api/catalog/save", "/api/catalog/delete", "/api/catalog/parse-gs1", "/api/catalog/parse-gtin", "/api/invoice/new",
               "/api/invoice/scan", "/api/invoice/delete-serial", "/api/invoice/delete-line", "/api/invoice/clear-lines", "/api/invoice/clear",
@@ -184,7 +184,9 @@ def pull_stock_tables(max_age: float = 3.0, tables_list: Optional[List[str]] = N
 
 
 def push_stock_tables(event: str = "inventory_uploaded", tables_list: Optional[List[str]] = None) -> bool:
-    """رفع جداول الجرد المحلية للسحابة (بعد رفع ملف مخزون من الكمبيوتر). دفعة ذرية واحدة."""
+    """(معطّل) كان يستبدل جداول الجرد/الفواتير في السحابة بنسخة الكمبيوتر فيمسح ما أُضيف من الموبايل في الأثناء.
+    السحابة الآن المصدر الوحيد لهذه الجداول ولا تقبل الاستبدال الكامل إلا بتأكيد صريح."""
+    raise RuntimeError("استبدال جداول الجرد في السحابة من الكمبيوتر معطّل لحماية بيانات الجرد")
     global _last_pull
     if not is_enabled() or not admin_token():
         return False
@@ -375,9 +377,7 @@ def initial_sync() -> None:
     meta = _admin("/api/_admin/meta", {})
     m = meta.get("meta", {})
     if m.get("seed_source") == "provisional":
-        if int(meta.get("events") or 0) == 0:
-            push_stock_tables(event="initial_seed")
-            get_server_logger().info("[Cloud] stock tables seeded from this PC (cloud was provisional & unused).")
+        # لا نستبدل جداول الجرد في السحابة بنسخة الكمبيوتر أبداً (السحابة هي المصدر الوحيد للجرد)
         _admin("/api/_admin/meta", {"set": {"seed_source": "pc"}})
     push_catalog(full_compare=_load_state() is None)
 

@@ -5,6 +5,10 @@
 <head>
 
     <meta charset="UTF-8">
+    <!-- تطبيق ويب يشتغل من غير إنترنت (PWA) + وضع عدم الاتصال للجرد -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <script src="/offline.js?v=1"></script>
     <script>
     // تحويل تلقائي لشاشة الموبايل عند الفتح من هاتف (يمكن فتح نسخة الكمبيوتر بإضافة ?desktop=1)
     (function () {
@@ -5071,9 +5075,9 @@
 
     <!-- ملف الجافاسكريبت الرئيسي -->
 
-    <script src="profile.js?v=2"></script>
+    <script src="profile.js?v=3"></script>
     <script src="realtime.js?v=2"></script>
-    <script src="app.js?v=20261111_v45_excel"></script>
+    <script src="app.js?v=20261111_v46_safe_stock"></script>
     <script src="excel-export.js?v=2"></script>
     <script src="catalog-import.js?v=2"></script>
     <script src="invoice-ai.js?v=1"></script>

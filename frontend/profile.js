@@ -22,6 +22,27 @@
         return origFetch(input, init);
     };
 
+    // تأكيد مكتوب لعمليات المسح الكبيرة (السحابة ترفضها بدون هذه الكلمة)
+    const CONFIRM_WORD = 'تأكيد';
+    function confirmTyped(message) {
+        const typed = prompt(`${message}
+
+للتأكيد اكتب كلمة: ${CONFIRM_WORD}`);
+        if (typed === null) return null;
+        if (typed.trim() !== CONFIRM_WORD) { alert('لم يتم التنفيذ: كلمة التأكيد غير صحيحة.'); return null; }
+        return CONFIRM_WORD;
+    }
+    // الاستور المفتوح حالياً في الشاشة (متغير عام في app.js أو mobile.html). كان يُقرأ من window فيرجع فارغاً
+    // فترفع السحابة المخزون في آخر استور تم إنشاؤه بدل الاستور المفتوح.
+    function activeStoreNo() {
+        if (typeof window.RambfeActiveStore === 'function') { try { const v = window.RambfeActiveStore(); if (v) return String(v); } catch (_) { } }
+        try { if (typeof currentActiveStoreNo === 'string' && currentActiveStoreNo) return currentActiveStoreNo; } catch (_) { }
+        return '';
+    }
+    async function restoreLastDeleted(storeNo) {
+        const d = await postJson('/api/stock/trash/restore', { store_no: storeNo || activeStoreNo() });
+        return d;
+    }
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const fmt = (n) => Number(n || 0).toLocaleString('en-US');
 
@@ -80,15 +101,18 @@
         const det = await postJson('/api/stock/upload/detect', { rows: rows.slice(0, 25) });
         const dataRows = rows.slice(det.header_row_idx + 1);
         let total = 0, target = storeNo || '';
+        // رقم رفع واحد لكل الدفعات: السحابة تجمع الصفوف جانباً ولا تستبدل مخزون الاستور إلا بعد وصول الملف كاملاً
+        // (لو انقطع الإنترنت في المنتصف يبقى المخزون القديم كما هو، والكميات المجرودة لا تُمس أبداً)
+        const uploadId = 'up' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         const CH = 700;
         for (let i = 0; i < dataRows.length || i === 0; i += CH) {
             const part = dataRows.slice(i, i + CH);
-            const r = await postJson('/api/stock/upload/rows', { store_no: target, rows: part, col_idx: det.col_idx, replace_existing: true, is_first: i === 0 });
+            const r = await postJson('/api/stock/upload/rows', { store_no: target, rows: part, col_idx: det.col_idx, replace_existing: true, is_first: i === 0, upload_id: uploadId });
             target = r.store_no; total += r.added_count || 0;
             if (onProgress) onProgress(Math.min(dataRows.length, i + CH), dataRows.length);
             if (!dataRows.length) break;
         }
-        return postJson('/api/stock/upload/finish', { store_no: target, total_added: total });
+        return postJson('/api/stock/upload/finish', { store_no: target, total_added: total, upload_id: uploadId, replace_existing: true });
     }
 
     // ---------------- الشريط والنافذة ----------------
@@ -143,9 +167,17 @@
         try {
             const r = await fetch('/api/profiles', { cache: 'no-store' });
             const d = await r.json();
-            if (d && d.profiles) {
+            if (d && d.profiles && d.profiles.length) {
                 profiles = d.profiles;
-                if (!profiles.some(p => p.id === currentId())) { set(KEY, '1'); }
+                // الصيدلية المحفوظة على الجهاز اتحذفت: ننتقل لصيدلية موجودة فعلاً (السيرفر حددها في current_profile_id)
+                // ونعيد تحميل الشاشة حتى لا تُعرض بيانات صيدلية غير موجودة
+                if (!profiles.some(p => p.id === currentId())) {
+                    const next = profiles.some(p => p.id === d.current_profile_id) ? d.current_profile_id : profiles[0].id;
+                    set(KEY, String(next));
+                    set(NAME_KEY, currentName());
+                    location.reload();
+                    return;
+                }
                 set(NAME_KEY, currentName());
             }
         } catch (_) { }
@@ -180,7 +212,11 @@
             <div class="row"><input id="rp-new" placeholder="مثال: صيدلية 2"><button class="rp-btn g" id="rp-create">إنشاء ورفع مخزونها</button></div></div>
           <div class="rp-sec"><div style="font-weight:800">📤 رفع مخزون جديد للصيدلية الحالية: <span id="rp-cur-name"></span></div>
             <div style="font-size:12px;color:#94a3b8;margin-top:4px">يستبدل رصيد المخزون الحالي للاستور المختار بهذا الملف (Excel).</div>
-            <div class="row"><button class="rp-btn b" id="rp-up">اختيار ملف المخزون…</button></div></div>
+            <div class="row"><button class="rp-btn b" id="rp-up">اختيار ملف المخزون…</button></div>
+            <div style="font-size:11px;color:#6ee7b7;margin-top:4px">✅ الكميات المجرودة لا تُمسح عند رفع المخزون، ولا يتأثر أي استور آخر.</div></div>
+          <div class="rp-sec"><div style="font-weight:800">♻️ سلة محذوفات الجرد</div>
+            <div style="font-size:12px;color:#94a3b8;margin-top:4px">أي بنود جرد اتمسحت أو اتصفرت بتتحفظ هنا تلقائياً. استرجع آخر عملية مسح للاستور الحالي:</div>
+            <div class="row"><button class="rp-btn s" id="rp-restore">استرجاع آخر جرد محذوف</button></div></div>
           <div class="rp-sec"><div style="font-weight:800">⚙️ الصيدلية الحالية</div>
             <div class="row"><input id="rp-rename" placeholder="اسم جديد"><button class="rp-btn s" id="rp-do-rename">تغيير الاسم</button></div>
             <div class="row"><button class="rp-btn r" id="rp-delete">حذف هذه الصيدلية وكل بياناتها</button></div>
@@ -189,6 +225,10 @@
         m.addEventListener('click', (e) => { if (e.target === m) closeModal(); });
         m.querySelector('#rp-close').onclick = closeModal;
         m.querySelector('#rp-up').onclick = () => pickAndUpload();
+        m.querySelector('#rp-restore').onclick = async () => {
+            try { const d = await restoreLastDeleted(); msg(d.message || 'تم الاسترجاع'); setTimeout(() => location.reload(), 1200); }
+            catch (e) { msg(e.message, true); }
+        };
         m.querySelector('#rp-create').onclick = async () => {
             const name = m.querySelector('#rp-new').value.trim();
             if (!name) { msg('اكتب اسم الصيدلية الجديدة', true); return; }
@@ -209,7 +249,12 @@
             const name = currentName();
             const typed = prompt(`سيتم حذف "${name}" وكل استوراتها ومخزونها وجردها وفواتيرها نهائياً.\nللتأكيد اكتب اسم الصيدلية بالضبط:`);
             if (typed === null) return;
-            try { await postJson('/api/profiles/delete', { id: currentId(), confirm_name: typed.trim() }); set(KEY, '1'); location.reload(); }
+            try {
+                await postJson('/api/profiles/delete', { id: currentId(), confirm_name: typed.trim() });
+                const rest = profiles.filter(p => p.id !== currentId());
+                set(KEY, String(rest.length ? rest[0].id : 1));
+                location.reload();
+            }
             catch (e) { msg(e.message, true); }
         };
     }
@@ -225,7 +270,7 @@
             document.getElementById('rp-modal').classList.add('open');
             msg(`جاري قراءة ${f.name}…`);
             try {
-                const storeNo = (typeof window.currentActiveStoreNo === 'string' && !reloadAfter) ? window.currentActiveStoreNo : '';
+                const storeNo = reloadAfter ? '' : activeStoreNo();
                 const d = await uploadStockFile(f, storeNo, (done, all) => msg(`جاري رفع المخزون… ${fmt(done)} / ${fmt(all)} سطر`));
                 msg(d.message || 'تم رفع المخزون بنجاح');
                 setTimeout(() => location.reload(), 900);
@@ -244,5 +289,5 @@
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
 
-    window.RambfeProfiles = { currentId, uploadStockFile, open: openModal, reload: loadProfiles };
+    window.RambfeProfiles = { currentId, uploadStockFile, open: openModal, reload: loadProfiles, confirmTyped, restoreLastDeleted, CONFIRM_WORD, activeStoreNo };
 })();

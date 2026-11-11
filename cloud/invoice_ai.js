@@ -111,7 +111,7 @@ async function nameCandidates(db, name) {
     const seen = new Map();
     for (const q of queries) {
         const { whereSql, params, orderParams, ftsVariants } = buildProductSearchWhere(q, 'contains');
-        const rows = await runProductQuery(db, 'SELECT DISTINCT p.* FROM products p LEFT JOIN product_barcodes pb ON p.code = pb.product_code',
+        const rows = await runProductQuery(db, 'SELECT p.* FROM products p',
             whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT 40`, orderParams, ftsVariants);
         for (const r of rows) if (!seen.has(r.code)) seen.set(r.code, r);
     }

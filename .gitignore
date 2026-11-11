@@ -50,3 +50,6 @@ backups/
 logs/
 product.template*.xlsx
 .wrangler/
+
+# حزم Node (wrangler للنشر والاختبارات)
+node_modules/

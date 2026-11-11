@@ -86,6 +86,7 @@ try:
         AUTO_BACKUP_INTERVAL_SECONDS,
         get_server_logger,
         check_db_health,
+        fast_health_status,
         checkpoint_wal,
         create_backup,
         list_backups,
@@ -103,6 +104,7 @@ except (ImportError, ValueError):
         AUTO_BACKUP_INTERVAL_SECONDS,
         get_server_logger,
         check_db_health,
+        fast_health_status,
         checkpoint_wal,
         create_backup,
         list_backups,
@@ -417,7 +419,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         # 0. فحص صحة الخادم وقاعدة البيانات (Health Check)
         if path == '/api/health':
             deep = params.get('deep', ['0'])[0] == '1'
-            health = check_db_health(deep=deep)
+            # الفحص العادي فوري (آخر نتيجة للفحص الدوري) حتى لا يتأخر أثناء الكتابة الثقيلة؛ deep=1 للفحص الكامل
+            health = check_db_health(deep=True) if deep else fast_health_status()
             health["cloudflare_url"] = get_cloudflare_url() or None
             health["cloud"] = cloud_sync.status()
             health["success"] = bool(health.get("healthy"))
@@ -874,6 +877,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
         if os.path.exists(file_path) and os.path.isfile(file_path):
             mime_type, _ = mimetypes.guess_type(file_path)
+            # ملفات تطبيق الويب (PWA) وملفات JS: ويندوز أحياناً لا يعرف نوعها
+            if file_path.endswith('.webmanifest'):
+                mime_type = 'application/manifest+json'
+            elif file_path.endswith('.js'):
+                mime_type = 'application/javascript'
             if not mime_type:
                 mime_type = 'application/octet-stream'
             if mime_type.startswith('text/') or mime_type in ('application/javascript', 'application/json'):
@@ -924,10 +932,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             elif path in cloud_sync.INVOICE_WRITE_POST:
-                if not cloud_sync.pull_stock_tables(max_age=0, tables_list=cloud_sync.INVOICE_TABLES):
-                    self.send_json({"success": False, "message": "تعذر الاتصال بالسحابة: تأكد من الإنترنت ثم أعد المحاولة."}, 503)
-                    return
-                _cloud_after = 'invoices'
+                # كان يستبدل كل جداول الفواتير في السحابة بنسخة الكمبيوتر (يمسح فواتير الموبايل أثناء المعالجة).
+                # قراءة ملفات الفواتير تتم الآن في الصفحة وتُحفظ مباشرة على السحابة.
+                self.send_json({"success": False, "message": "استورد ملف الفاتورة من الصفحة: يُقرأ ويُحفظ مباشرة على السحابة."}, 400)
+                return
             elif path in cloud_sync.CATALOG_WRITE_POST:
                 try:
                     cloud_sync.pull_catalog_changes()
@@ -1722,16 +1730,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 store_no = fields.get('store_no', 'ST-001')
                 replace_existing = fields.get('replace_existing', 'true').lower() in ('true', '1')
                 if cloud_sync.is_enabled():
-                    if not cloud_sync.pull_stock_tables(max_age=0):
-                        self.send_json({"success": False, "message": "تعذر الاتصال بالسحابة: تأكد من الإنترنت ثم أعد رفع الملف."}, 503)
-                        return
+                    # المسار القديم كان يسحب نسخة من السحابة ثم يستبدل كل جداول الجرد بها بعد معالجة الملف،
+                    # فيمسح أي جرد تم من الموبايل أثناء المعالجة. الرفع الآن من الصفحة مباشرة للسحابة (آمن وذري).
+                    self.send_json({"success": False, "message": "ارفع ملف المخزون من زر (رفع مخزون) في الصفحة: يُرفع مباشرة للسحابة بدون مسح أي جرد."}, 400)
+                    return
                 res = upload_inventory_excel(saved_path, store_no=store_no, replace_existing=replace_existing)
-                if res.get("success") and cloud_sync.is_enabled():
-                    try:
-                        cloud_sync.push_stock_tables()
-                    except Exception as push_err:
-                        res["success"] = False
-                        res["message"] = f"تم قراءة الملف لكن تعذر حفظه على السحابة: {push_err}"
                 self.send_json(res)
             except Exception as e:
                 self.send_json({"success": False, "message": f"خطأ أثناء رفع المخزون: {str(e)}"}, 500)

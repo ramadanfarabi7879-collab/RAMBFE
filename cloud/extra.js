@@ -1,5 +1,5 @@
 // منقول من backend/db.py و backend/stock_manager.py: كرت الصنف، الفواتير، البحث قبل الجرد، الأصناف غير المجرودة.
-import { all, first, run, allIn, getProductByCode, findProductByGtinOrBarcode, attachBarcodesBulk, buildProductSearchWhere, PRODUCT_ORDER_SQL } from './products.js';
+import { all, first, run, allIn, getProductByCode, findProductByGtinOrBarcode, attachBarcodesBulk, buildProductSearchWhere, PRODUCT_ORDER_SQL, COUNT_CAP } from './products.js';
 import { resolveValidStoreNo } from './stock.js';
 import {
     parseQrCode, extractCleanGtin, cleanBarcodePreserveZeros, cleanNumericCode, splitBarcodes, normalizeArabic, normalizeEnglish,
@@ -297,9 +297,10 @@ export async function searchPreinventoryProducts(db, query = '', limit = 100, of
         if (fts) core = `(${core} AND ${fts})`;
         let combined = bCodes.length ? `(${core} OR p.code IN (${bCodes.map(lit).join(',')}))` : core;
         if (eligible) combined = `${combined} AND ${eligible}`;
-        const from = 'FROM products p LEFT JOIN product_barcodes pb ON p.code = pb.product_code';
-        total = (await first(db, `SELECT COUNT(DISTINCT p.id) AS c ${from} WHERE ${combined}`)).c;
-        rows = await all(db, inline(`SELECT DISTINCT p.* ${from} WHERE ${combined} ${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit, offset]));
+        // بدون JOIN على جدول الباركود، والعدد بحد أقصى: لتوفير حصة القراءة اليومية في D1
+        const from = 'FROM products p';
+        total = (await first(db, `SELECT COUNT(*) AS c FROM (SELECT 1 ${from} WHERE ${combined} LIMIT ${COUNT_CAP + 1})`)).c;
+        rows = await all(db, inline(`SELECT p.* ${from} WHERE ${combined} ${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit, offset]));
     }
     await attachBarcodesBulk(db, rows);
     for (const it of rows) {

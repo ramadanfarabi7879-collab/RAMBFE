@@ -353,6 +353,38 @@ def check_db_health(deep: bool = False) -> Dict[str, Any]:
                 pass
 
 
+def fast_health_status() -> Dict[str, Any]:
+    """فحص خفيف وفوري لـ /api/health بدون قراءة قاعدة البيانات.
+
+    الفحص الكامل (quick_check + عدّ الجداول) كان يُنفَّذ مع كل طلب صحة من الواجهة والمراقب،
+    وأثناء أي كتابة ثقيلة (استيراد/مزامنة) كان ينتظر القفل حتى 15 ثانية فيظن المراقب أن الخادم معلّق
+    فيقتله، وتظهر للمستخدم رسالة "جاري تجديد الاتصال". الفحص الكامل يعمل دورياً في الخلفية كل 15 دقيقة،
+    وهنا نعيد آخر نتيجة له فقط. إذا كانت آخر نتيجة غير سليمة نعيد الفحص الكامل لاكتشاف التعافي.
+    """
+    try:
+        db_path = get_resolved_db_path()
+    except Exception:
+        return check_db_health(deep=False)
+    with _db_guard_lock:
+        state = dict(_db_state)
+    exists = db_path == ":memory:" or os.path.exists(db_path)
+    if not state.get("healthy") or state.get("write_blocked") or not exists:
+        return check_db_health(deep=False)
+    return {
+        "healthy": True,
+        "write_blocked": False,
+        "mode": "fast",
+        "db_path": db_path,
+        "db_exists": True,
+        "is_permanent_path": is_using_permanent_db(),
+        "last_check_at": state.get("last_check_at"),
+        "last_backup_at": state.get("last_backup_at"),
+        "server_started_at": state.get("server_started_at"),
+        "server_pid": os.getpid(),
+        "error": None,
+    }
+
+
 def list_backups() -> List[Dict[str, Any]]:
     """إرجاع قائمة النسخ الاحتياطية المتوفرة (داخل backups/ ونسخ المجلد المستقل)."""
     os.makedirs(BACKUP_DIR, exist_ok=True)

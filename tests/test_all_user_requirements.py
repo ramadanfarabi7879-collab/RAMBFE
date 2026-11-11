@@ -100,7 +100,8 @@ class TestAllUserRequirements(unittest.TestCase):
         self.assertEqual(scan_res["line_qty"], 1)
         self.assertEqual(scan_res["batch"].lower(), "c753")
         self.assertEqual(scan_res["expiry"], "2027-04-16")
-        self.assertEqual(scan_res["serial"], "lrn4u0449708qi")
+        # السيريال يُحفظ بأحرف كبيرة عمداً منذ commit 4807039 (توحيد الباتش والسيريال لمنع تكرار نفس العبوة)
+        self.assertEqual(scan_res["serial"], "LRN4U0449708QI")
 
         # التحقق من تفاصيل الفاتورة
         details = get_invoice_details(inv_id)

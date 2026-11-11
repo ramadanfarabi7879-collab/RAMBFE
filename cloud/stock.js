@@ -9,6 +9,74 @@ const r4 = (v) => pyRound(num(v), 4);
 const pyf = (v) => { const n = num(v); return Number.isInteger(n) ? n.toFixed(1) : String(n); };
 const up = (v) => String(v ?? '').trim().toUpperCase();
 const pidOf = (db) => Number(db.pid || 1);
+
+// ================= حماية بيانات الجرد من الضياع =================
+// سلة محذوفات الجرد: أي مسح/تصفير/حذف لبنود مجرودة ينسخها هنا أولاً (في نفس الدفعة الذرية) لاسترجاعها في أي وقت.
+// جدول مرحلي لرفع المخزون: الملف يُرفع على دفعات هنا، ثم يُستبدل المخزون مرة واحدة ذرياً في النهاية،
+// فلو انقطع الاتصال في منتصف الرفع يبقى المخزون القديم كما هو بدل أن يتصفر.
+const ENTRY_COLS = ['id', 'product_code', 'product_name', 'barcode', 'gtin', 'batch_number', 'expiry_date', 'system_qty', 'counted_qty',
+    'cost_price', 'selling_price', 'is_new_batch', 'item_type', 'store_no', 'created_at', 'updated_at'];
+const INV_COLS = ['product_code', 'product_name', 'barcode', 'batch_number', 'expiry_date', 'system_qty', 'cost_price', 'selling_price', 'item_type'];
+let safetyTablesReady = false;
+export async function ensureSafetyTables(db) {
+    if (safetyTablesReady) return;
+    await db.batch([
+        `CREATE TABLE IF NOT EXISTS stocktake_trash (trash_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT NOT NULL, reason TEXT, profile_id INTEGER,
+            trashed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, restored INTEGER DEFAULT 0, ${ENTRY_COLS.map(c => `${c === 'id' ? 'entry_id' : c}`).join(', ')})`,
+        'CREATE INDEX IF NOT EXISTS idx_trash_batch ON stocktake_trash(batch_id)',
+        'CREATE INDEX IF NOT EXISTS idx_trash_store ON stocktake_trash(store_no, trashed_at)',
+        `CREATE TABLE IF NOT EXISTS inventory_upload_staging (id INTEGER PRIMARY KEY AUTOINCREMENT, upload_id TEXT NOT NULL, store_no TEXT NOT NULL,
+            ${INV_COLS.join(', ')}, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+        'CREATE INDEX IF NOT EXISTS idx_upload_staging ON inventory_upload_staging(upload_id)',
+    ].map(s => db.prepare(s)));
+    safetyTablesReady = true;
+}
+// جملة تنسخ بنود الجرد المطابقة للشرط إلى السلة (تُضاف لنفس الدفعة قبل جملة الحذف)
+function trashStmt(db, batchId, reason, whereSql, params) {
+    const cols = ENTRY_COLS.map(c => c === 'id' ? 'entry_id' : c).join(', ');
+    return db.prepare(`INSERT INTO stocktake_trash (batch_id, reason, profile_id, ${cols}) SELECT ?, ?, ?, ${ENTRY_COLS.join(', ')}
+        FROM stocktake_entries WHERE (${whereSql}) AND counted_qty > 0`).bind(batchId, reason, pidOf(db), ...params);
+}
+const newBatchId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+// استرجاع بنود جرد محذوفة من السلة (آخر عملية حذف للاستور، أو دفعة محددة)
+export async function restoreTrash(db, storeNo, batchId = '') {
+    await ensureSafetyTables(db);
+    storeNo = await resolveValidStoreNo(db, storeNo);
+    if (!batchId) {
+        const last = await first(db, 'SELECT batch_id FROM stocktake_trash WHERE store_no = ? AND restored = 0 ORDER BY trash_id DESC LIMIT 1', [storeNo]);
+        if (!last) return { success: false, message: 'لا توجد بنود جرد محذوفة لهذا الاستور في سلة المحذوفات.' };
+        batchId = last.batch_id;
+    }
+    const rows = await all(db, 'SELECT * FROM stocktake_trash WHERE batch_id = ? AND store_no = ? AND restored = 0', [batchId, storeNo]);
+    if (!rows.length) return { success: false, message: 'لا توجد بنود لاسترجاعها.' };
+    const stmts = [];
+    for (const r of rows) {
+        // لو البند موجود حالياً (نفس الصنف والتشغيلة) لا نكرره: نرجّع الكمية المجرودة فقط إن كانت صفراً
+        stmts.push(db.prepare(`UPDATE stocktake_entries SET counted_qty = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE store_no = ? AND product_code = ? AND COALESCE(batch_number, '') = ? AND COALESCE(counted_qty, 0) = 0`)
+            .bind(num(r.counted_qty), storeNo, r.product_code, r.batch_number || ''));
+        stmts.push(db.prepare(`INSERT INTO stocktake_entries (product_code, product_name, barcode, gtin, batch_number, expiry_date, system_qty, counted_qty,
+            cost_price, selling_price, is_new_batch, item_type, store_no, created_at, updated_at)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+            WHERE NOT EXISTS (SELECT 1 FROM stocktake_entries WHERE store_no = ? AND product_code = ? AND COALESCE(batch_number, '') = ?)`)
+            .bind(r.product_code, r.product_name || '', r.barcode || '', r.gtin || '', r.batch_number || '', r.expiry_date || '', num(r.system_qty), num(r.counted_qty),
+                num(r.cost_price), num(r.selling_price), r.is_new_batch || 0, r.item_type || 'medicine', storeNo, r.created_at || null,
+                storeNo, r.product_code, r.batch_number || ''));
+    }
+    stmts.push(db.prepare('UPDATE stocktake_trash SET restored = 1 WHERE batch_id = ? AND store_no = ?').bind(batchId, storeNo));
+    stmts.push(db.prepare("UPDATE stock_stores SET status = 'in_progress' WHERE store_no = ? AND status = 'new'").bind(storeNo));
+    for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+    return { success: true, restored_count: rows.length, message: `تم استرجاع ${rows.length} بند جرد محذوف بنجاح.`, store_details: await getStoreStocktakeDetails(db, storeNo) };
+}
+
+export async function listTrash(db, storeNo) {
+    await ensureSafetyTables(db);
+    storeNo = await resolveValidStoreNo(db, storeNo);
+    const batches = await all(db, `SELECT batch_id, reason, MIN(trashed_at) AS trashed_at, COUNT(*) AS items, SUM(counted_qty) AS counted_qty
+        FROM stocktake_trash WHERE store_no = ? AND restored = 0 GROUP BY batch_id ORDER BY MAX(trash_id) DESC LIMIT 20`, [storeNo]);
+    return { success: true, store_no: storeNo, batches };
+}
 // الاستور الرئيسي لكل صيدلية: الصيدلية 1 تحتفظ بالرقم ST-001 كما في النظام الأصلي، والباقي يأخذ الرقم التالي
 async function createMainStore(db) {
     const pid = pidOf(db);
@@ -92,7 +160,9 @@ export async function deleteStore(db, storeNo) {
     storeNo = String(storeNo || '').trim();
     if (!storeNo) return { success: false, message: 'رقم الاستور غير صالح' };
     if (!await ownsStore(db, storeNo)) return { success: false, message: 'هذا الاستور غير موجود في الصيدلية الحالية' };
+    await ensureSafetyTables(db);
     await db.batch([
+        trashStmt(db, newBatchId(), 'حذف الاستور', 'store_no = ?', [storeNo]),
         db.prepare('DELETE FROM stocktake_entries WHERE store_no = ?').bind(storeNo),
         db.prepare('DELETE FROM stocktake_scanned_serials WHERE store_no = ?').bind(storeNo),
         db.prepare('DELETE FROM inventory_records WHERE store_no = ?').bind(storeNo),
@@ -111,7 +181,9 @@ export async function deleteStore(db, storeNo) {
 export async function resetAllStocktake(db) {
     // تصفير جرد الصيدلية الحالية فقط (لا يمس أي صيدلية أخرى)
     const pid = pidOf(db), sub = 'SELECT store_no FROM stock_stores WHERE profile_id = ?';
+    await ensureSafetyTables(db);
     await db.batch([
+        trashStmt(db, newBatchId(), 'تصفير كل الجرد', `store_no IN (${sub})`, [pid]),
         db.prepare(`DELETE FROM inventory_records WHERE store_no IN (${sub})`).bind(pid),
         db.prepare(`DELETE FROM stocktake_entries WHERE store_no IN (${sub})`).bind(pid),
         db.prepare(`DELETE FROM stocktake_scanned_serials WHERE store_no IN (${sub})`).bind(pid),
@@ -243,7 +315,7 @@ export async function searchStoreStocktakeItems(db, storeNo = 'ST-001', query = 
     const matched = {}, ordered = [];
     if (effRaw.trim()) {
         const { whereSql, params, orderParams, ftsVariants } = buildProductSearchWhere(effRaw, matchMode);
-        const prods = await runProductQuery(db, 'SELECT DISTINCT p.* FROM products p LEFT JOIN product_barcodes pb ON p.code = pb.product_code',
+        const prods = await runProductQuery(db, 'SELECT p.* FROM products p',
             whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT 80`, orderParams, ftsVariants);
         await attachBarcodesBulk(db, prods);
         for (const p of prods) if (!matched[p.code]) { matched[p.code] = p; ordered.push(p.code); }
@@ -355,10 +427,13 @@ export async function scanItemToStore(db, rawCode, storeNo = 'ST-001', forceDire
     }
     const cPcode = cleanNumericCode(pCode);
     const gCode = gtin || '';
-    let inv = await all(db, `SELECT * FROM inventory_records WHERE (product_code = ? OR product_code = ? OR barcode = ? OR barcode = ?) AND store_no = ? ORDER BY expiry_date ASC, id ASC`,
-        [pCode, cPcode, pBarcode, gCode, storeNo]);
-    if (!inv.length) inv = await all(db, 'SELECT * FROM inventory_records WHERE (product_code = ? OR product_code = ? OR barcode = ? OR barcode = ?) AND store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?) ORDER BY expiry_date ASC, id ASC',
-        [pCode, cPcode, pBarcode, gCode, pidOf(db)]);
+    // المطابقة بالباركود فقط لو له قيمة: باركود فاضي كان يطابق كل سطور المخزون اللي من غير باركود
+    // فتظهر تشغيلات أصناف تانية في شاشة اختيار التشغيلة
+    const keys = [...new Set([pCode, cPcode].filter(Boolean))], bcs = [...new Set([pBarcode, gCode].map(v => String(v || '').trim()).filter(Boolean))];
+    const invWhere = `(product_code IN (${keys.map(() => '?').join(',')})${bcs.length ? ` OR barcode IN (${bcs.map(() => '?').join(',')})` : ''})`;
+    let inv = await all(db, `SELECT * FROM inventory_records WHERE ${invWhere} AND store_no = ? ORDER BY expiry_date ASC, id ASC`, [...keys, ...bcs, storeNo]);
+    if (!inv.length) inv = await all(db, `SELECT * FROM inventory_records WHERE ${invWhere} AND store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?) ORDER BY expiry_date ASC, id ASC`,
+        [...keys, ...bcs, pidOf(db)]);
     for (const ir of inv) {
         if (costPrice === 0 && ir.cost_price && num(ir.cost_price) > 0) costPrice = num(ir.cost_price);
         if (sellingPrice === 0 && ir.selling_price && num(ir.selling_price) > 0) sellingPrice = num(ir.selling_price);
@@ -510,7 +585,8 @@ export async function updateEntryQuantity(db, entryId, newQty, storeNo) {
 export async function deleteEntryItem(db, entryId, storeNo) {
     storeNo = await resolveValidStoreNo(db, storeNo);
     const r = await first(db, 'SELECT product_code, batch_number FROM stocktake_entries WHERE id = ? AND store_no = ?', [entryId, storeNo]);
-    const stmts = [];
+    await ensureSafetyTables(db);
+    const stmts = [trashStmt(db, newBatchId(), 'حذف بند', 'id = ? AND store_no = ?', [entryId, storeNo])];
     if (r) stmts.push(db.prepare('DELETE FROM stocktake_scanned_serials WHERE product_code = ? AND batch_number = ? AND store_no = ?').bind(r.product_code, r.batch_number, storeNo));
     stmts.push(db.prepare('DELETE FROM stocktake_entries WHERE id = ? AND store_no = ?').bind(entryId, storeNo));
     await db.batch(stmts);
@@ -521,9 +597,12 @@ export async function bulkDeleteEntries(db, ids, storeNo = 'ST-001') {
     if (!ids || !ids.length) return { success: false, message: 'لم يتم تحديد أي أصناف للحذف' };
     storeNo = await resolveValidStoreNo(db, storeNo);
     const rows = await allIn(db, 'SELECT product_code, batch_number FROM stocktake_entries WHERE id IN ({ph}) AND store_no = ?', [], ids, [storeNo]);
+    await ensureSafetyTables(db);
+    const bid = newBatchId();
     const stmts = rows.map(r => db.prepare('DELETE FROM stocktake_scanned_serials WHERE product_code = ? AND batch_number = ? AND store_no = ?').bind(r.product_code, r.batch_number, storeNo));
     for (let i = 0; i < ids.length; i += 90) {
         const part = ids.slice(i, i + 90);
+        stmts.push(trashStmt(db, bid, 'حذف مجموعة بنود', `id IN (${part.map(() => '?').join(',')}) AND store_no = ?`, [...part, storeNo]));
         stmts.push(db.prepare(`DELETE FROM stocktake_entries WHERE id IN (${part.map(() => '?').join(',')}) AND store_no = ?`).bind(...part, storeNo));
     }
     await db.batch(stmts);
@@ -549,28 +628,26 @@ export async function editStocktakeEntry(db, entryId, updates, storeNo = 'ST-001
 }
 
 export async function clearInventoryRecords(db, storeNo = 'ST-001', clearAll = false) {
+    // حذف رصيد المخزون الدفتري فقط (الكميات المجرودة لا تُمس). "كل الاستورات" لا يحدث إلا بطلب صريح،
+    // وكان سابقاً يحدث تلقائياً لو كان الاستور المختار فارغاً فيُصفّر مخزون كل الاستورات بالخطأ.
     const clean = String(storeNo || '').trim();
     const sub = 'SELECT store_no FROM stock_stores WHERE profile_id = ' + pidOf(db);
-    const wipeAll = [`DELETE FROM inventory_records WHERE store_no IN (${sub})`, `UPDATE stocktake_entries SET system_qty = 0 WHERE store_no IN (${sub})`,
-        `DELETE FROM stocktake_entries WHERE store_no IN (${sub}) AND (counted_qty = 0 OR counted_qty IS NULL)`];
     let msg, target;
-    if (clearAll || clean.toUpperCase() === 'ALL') {
-        await db.batch(wipeAll.map(s => db.prepare(s)));
-        msg = 'تم حذف وتصفير رصيد المخزون السابق بالكامل لجميع الاستورات بنجاح.'; target = await resolveValidStoreNo(db, '');
+    if (clearAll) {
+        await db.batch([`DELETE FROM inventory_records WHERE store_no IN (${sub})`, `UPDATE stocktake_entries SET system_qty = 0 WHERE store_no IN (${sub})`,
+            `DELETE FROM stocktake_entries WHERE store_no IN (${sub}) AND (counted_qty = 0 OR counted_qty IS NULL)`].map(q => db.prepare(q)));
+        msg = 'تم حذف رصيد المخزون الدفتري لجميع الاستورات (الكميات المجرودة محفوظة كما هي).'; target = await resolveValidStoreNo(db, '');
     } else {
         target = await resolveValidStoreNo(db, clean);
         const cnt = (await first(db, 'SELECT COUNT(*) AS c FROM inventory_records WHERE store_no = ?', [target])).c;
-        if (cnt === 0) {
-            const total = (await first(db, `SELECT COUNT(*) AS c FROM inventory_records WHERE store_no IN (${sub})`)).c;
-            if (total > 0) { await db.batch(wipeAll.map(s => db.prepare(s))); msg = `تم تصفير وحذف رصيد المخزون العام السابق (${total} صنف) بنجاح.`; }
-            else msg = `رصيد المخزون السابق فارغ بالفعل للاستور (${target}).`;
-        } else {
+        if (cnt === 0) msg = `رصيد المخزون الدفتري فارغ بالفعل للاستور (${target}). لم يتم حذف أي شيء.`;
+        else {
             await db.batch([
                 db.prepare('DELETE FROM inventory_records WHERE store_no = ?').bind(target),
                 db.prepare('UPDATE stocktake_entries SET system_qty = 0 WHERE store_no = ?').bind(target),
                 db.prepare('DELETE FROM stocktake_entries WHERE store_no = ? AND (counted_qty = 0 OR counted_qty IS NULL)').bind(target),
             ]);
-            msg = `تم حذف رصيد المخزون السابق (${cnt} صنف) للاستور (${target}) بنجاح.`;
+            msg = `تم حذف رصيد المخزون الدفتري (${cnt} صنف) للاستور (${target}) فقط. الكميات المجرودة محفوظة كما هي.`;
         }
     }
     return { success: true, message: msg, store_details: await getStoreStocktakeDetails(db, target) };
@@ -578,7 +655,9 @@ export async function clearInventoryRecords(db, storeNo = 'ST-001', clearAll = f
 
 export async function clearStoreStocktake(db, storeNo) {
     if (!await ownsStore(db, storeNo)) storeNo = await resolveValidStoreNo(db, storeNo);
+    await ensureSafetyTables(db);
     await db.batch([
+        trashStmt(db, newBatchId(), 'تصفير جرد الاستور', 'store_no = ?', [storeNo]),
         db.prepare('DELETE FROM stocktake_entries WHERE store_no = ?').bind(storeNo),
         db.prepare('DELETE FROM stocktake_scanned_serials WHERE store_no = ?').bind(storeNo),
         db.prepare("UPDATE stock_stores SET status = 'new' WHERE store_no = ?").bind(storeNo),
@@ -659,10 +738,15 @@ export function detectStockColumns(rows) {
     return { header_row_idx: headerIdx, col_idx: col };
 }
 
-export async function uploadStockRows(db, storeNo, rows, col, replaceExisting, isFirst) {
+export async function uploadStockRows(db, storeNo, rows, col, replaceExisting, isFirst, uploadId = '') {
     storeNo = await resolveValidStoreNo(db, storeNo);
     const stmts = [];
-    if (replaceExisting && isFirst) stmts.push(db.prepare('DELETE FROM inventory_records WHERE store_no = ?').bind(storeNo));
+    uploadId = String(uploadId || '').replace(/[^\w-]/g, '').slice(0, 64);
+    if (uploadId) {
+        // رفع آمن: الصفوف تُجمع في الجدول المرحلي ولا يُمس المخزون الحالي إلا في خطوة الإنهاء (دفعة ذرية واحدة)
+        await ensureSafetyTables(db);
+        if (isFirst) stmts.push(db.prepare("DELETE FROM inventory_upload_staging WHERE upload_id = ? OR created_at < datetime('now', '-1 day')").bind(uploadId));
+    } else if (replaceExisting && isFirst) stmts.push(db.prepare('DELETE FROM inventory_records WHERE store_no = ?').bind(storeNo));
     const cell = (r, k) => (col[k] >= 0 && r[col[k]] !== null && r[col[k]] !== undefined) ? r[col[k]] : null;
     // تحميل الأصناف المطلوبة دفعة واحدة بدلاً من استعلام لكل سطر
     const codes = [...new Set(rows.map(r => cleanNumericCode(cell(r || [], 'code'))).filter(Boolean))];
@@ -694,33 +778,56 @@ export async function uploadStockRows(db, storeNo, rows, col, replaceExisting, i
             if (!sale) sale = num(prod.selling_price || prod.price || prod.unit_price || 0);
             if (!barcode && prod.barcode) barcode = prod.barcode;
         }
-        stmts.push(db.prepare(`INSERT INTO inventory_records (product_code, product_name, barcode, batch_number, expiry_date, system_qty, cost_price, selling_price, item_type, store_no, created_at)
+        if (uploadId) stmts.push(db.prepare(`INSERT INTO inventory_upload_staging (upload_id, store_no, ${INV_COLS.join(', ')}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .bind(uploadId, storeNo, code, name, barcode, batch, expiry, qty, cost, sale, itemType));
+        else stmts.push(db.prepare(`INSERT INTO inventory_records (product_code, product_name, barcode, batch_number, expiry_date, system_qty, cost_price, selling_price, item_type, store_no, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`).bind(code, name, barcode, batch, expiry, qty, cost, sale, itemType, storeNo));
         added++;
     }
     for (let i = 0; i < stmts.length; i += 400) await db.batch(stmts.slice(i, i + 400));
-    return { success: true, added_count: added, store_no: storeNo };
+    return { success: true, added_count: added, store_no: storeNo, upload_id: uploadId || undefined };
 }
 
-// الخطوة الأخيرة بعد كل الدفعات: مطابقة بنود الجرد الممسوحة مع الرصيد الجديد (نفس جملة بايثون، داخل الصيدلية الحالية)
-export async function finishStockUpload(db, storeNo, totalAdded) {
-    storeNo = await resolveValidStoreNo(db, storeNo);
-    const P = 'AND inventory_records.store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?2)';
-    await run(db, `UPDATE stocktake_entries SET
+// الخطوة الأخيرة بعد كل الدفعات: استبدال مخزون الاستور مرة واحدة ذرياً، ثم تحديث الرصيد الدفتري لبنود الجرد.
+// الكميات المجرودة (counted_qty) لا تُمس أبداً، ولا يتأثر أي استور آخر.
+const REFRESH_P = 'AND inventory_records.store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?2)';
+const REFRESH_ENTRIES_SQL = `UPDATE stocktake_entries SET
         product_name = COALESCE((SELECT COALESCE(NULLIF(name_en, ''), name) FROM products WHERE products.code = stocktake_entries.product_code), product_name),
         batch_number = CASE WHEN batch_number = '' OR batch_number IS NULL THEN COALESCE((SELECT batch_number FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code
             AND inventory_records.store_no = stocktake_entries.store_no AND inventory_records.batch_number != '' ORDER BY id DESC LIMIT 1), batch_number) ELSE batch_number END,
         expiry_date = CASE WHEN expiry_date = '' OR expiry_date IS NULL THEN COALESCE((SELECT expiry_date FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code
             AND inventory_records.store_no = stocktake_entries.store_no AND inventory_records.expiry_date != '' ORDER BY id DESC LIMIT 1), expiry_date) ELSE expiry_date END,
         cost_price = CASE WHEN cost_price = 0 OR cost_price IS NULL THEN COALESCE((SELECT cost_price FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code
-            AND inventory_records.cost_price > 0 ${P} LIMIT 1), cost_price) ELSE cost_price END,
+            AND inventory_records.cost_price > 0 ${REFRESH_P} LIMIT 1), cost_price) ELSE cost_price END,
         selling_price = CASE WHEN selling_price = 0 OR selling_price IS NULL THEN COALESCE((SELECT selling_price FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code
-            AND inventory_records.selling_price > 0 ${P} LIMIT 1), selling_price) ELSE selling_price END,
-        system_qty = CASE WHEN system_qty = 0 OR system_qty IS NULL THEN COALESCE((SELECT system_qty FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code
+            AND inventory_records.selling_price > 0 ${REFRESH_P} LIMIT 1), selling_price) ELSE selling_price END,
+        system_qty = COALESCE((SELECT system_qty FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code
             AND inventory_records.store_no = stocktake_entries.store_no AND (inventory_records.batch_number = stocktake_entries.batch_number OR (stocktake_entries.batch_number = '' AND (inventory_records.batch_number IS NULL OR inventory_records.batch_number = ''))) LIMIT 1),
-            (SELECT system_qty FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code AND inventory_records.store_no = stocktake_entries.store_no ORDER BY id DESC LIMIT 1), 0) ELSE system_qty END,
+            (SELECT system_qty FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code AND inventory_records.store_no = stocktake_entries.store_no ORDER BY id DESC LIMIT 1), 0),
         is_new_batch = CASE WHEN EXISTS (SELECT 1 FROM inventory_records WHERE inventory_records.product_code = stocktake_entries.product_code AND inventory_records.store_no = stocktake_entries.store_no
             AND inventory_records.batch_number = stocktake_entries.batch_number) THEN 0 ELSE (CASE WHEN stocktake_entries.batch_number != '' THEN 1 ELSE 0 END) END
-        WHERE store_no = ?1`, [storeNo, pidOf(db)]);
-    return { success: true, added_count: totalAdded, message: `تم رفع واحتساب رصيد المخزون بنجاح (${totalAdded} سجل)`, store_details: await getStoreStocktakeDetails(db, storeNo) };
+        WHERE store_no = ?1`;
+export async function finishStockUpload(db, storeNo, totalAdded, uploadId = '', replaceExisting = true) {
+    storeNo = await resolveValidStoreNo(db, storeNo);
+    uploadId = String(uploadId || '').replace(/[^\w-]/g, '').slice(0, 64);
+    if (uploadId) {
+        await ensureSafetyTables(db);
+        const staged = (await first(db, 'SELECT COUNT(*) AS c FROM inventory_upload_staging WHERE upload_id = ? AND store_no = ?', [uploadId, storeNo])).c;
+        if (!staged) {
+            await run(db, 'DELETE FROM inventory_upload_staging WHERE upload_id = ?', [uploadId]);
+            // ملف بدون صفوف صالحة: لا نمسح المخزون الحالي (كان يتصفر بالكامل)
+            return { success: false, message: 'لم يتم العثور على أي صنف صالح في الملف (تأكد من عمود الكود/الباركود). لم يتم تغيير المخزون الحالي.' };
+        }
+        await db.batch([
+            ...(replaceExisting ? [db.prepare('DELETE FROM inventory_records WHERE store_no = ?').bind(storeNo)] : []),
+            db.prepare(`INSERT INTO inventory_records (${INV_COLS.join(', ')}, store_no, created_at)
+                SELECT ${INV_COLS.join(', ')}, store_no, CURRENT_TIMESTAMP FROM inventory_upload_staging WHERE upload_id = ? AND store_no = ? ORDER BY id ASC`).bind(uploadId, storeNo),
+            db.prepare('DELETE FROM inventory_upload_staging WHERE upload_id = ?').bind(uploadId),
+            db.prepare(REFRESH_ENTRIES_SQL).bind(storeNo, pidOf(db)),
+        ]);
+        totalAdded = staged;
+    } else {
+        await run(db, REFRESH_ENTRIES_SQL, [storeNo, pidOf(db)]);
+    }
+    return { success: true, added_count: totalAdded, message: `تم رفع واحتساب رصيد المخزون بنجاح (${totalAdded} سجل) للاستور (${storeNo}). الكميات المجرودة محفوظة كما هي.`, store_details: await getStoreStocktakeDetails(db, storeNo) };
 }
