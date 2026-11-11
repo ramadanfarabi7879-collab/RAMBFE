@@ -71,3 +71,4 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 
 -- فهرس البحث السريع (trigram) لتقليل القراءات: rowid = products.id
 CREATE VIRTUAL TABLE IF NOT EXISTS product_search USING fts5(txt, tokenize = 'trigram');
+CREATE INDEX IF NOT EXISTS idx_products_numcode ON products(CAST(code AS INTEGER)) WHERE code GLOB '[0-9]*' AND length(code) <= 10;

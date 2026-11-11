@@ -89,7 +89,7 @@ export async function saveOrUpdateProduct(db, p, userName = 'المسؤول') {
     db.prepare('DELETE FROM product_barcodes WHERE product_code = ?').bind(code)];
     for (const g of gtins) stmts.push(db.prepare("INSERT OR IGNORE INTO product_barcodes (product_code, barcode, barcode_type) VALUES (?, ?, 'gtin')").bind(code, g));
     for (const b of barcodes) stmts.push(db.prepare("INSERT OR IGNORE INTO product_barcodes (product_code, barcode, barcode_type) VALUES (?, ?, 'barcode')").bind(code, b));
-    stmts.push(db.prepare("INSERT INTO meta (k, v) VALUES ('products_count', (SELECT COUNT(*) FROM products)) ON CONFLICT(k) DO UPDATE SET v = excluded.v"));
+    if (isNew) stmts.push(db.prepare("UPDATE meta SET v = MAX(0, CAST(v AS INTEGER) + (1)) WHERE k = 'products_count'"));
     await db.batch(stmts);
     const newData = { code, name_ar: nameAr, name_en: nameEn, scientific_name: sci, company, category, selling_price: selling, wholesale_price: wholesale, unit_price: unitPrice, tax_rate: tax, unit, barcode_list: barcodes, gtin_list: gtins };
     await logCatalogChange(db, [code]);
@@ -106,7 +106,7 @@ export async function deleteProduct(db, code) {
         db.prepare('DELETE FROM products WHERE code = ?').bind(clean),
         db.prepare('DELETE FROM product_barcodes WHERE product_code = ?').bind(clean),
         db.prepare('DELETE FROM product_aliases WHERE product_code = ?').bind(clean),
-        db.prepare("INSERT INTO meta (k, v) VALUES ('products_count', (SELECT COUNT(*) FROM products)) ON CONFLICT(k) DO UPDATE SET v = excluded.v"),
+        ...(old ? [db.prepare("UPDATE meta SET v = MAX(0, CAST(v AS INTEGER) + (-1)) WHERE k = 'products_count'")] : []),
     ]);
     await logCatalogChange(db, [clean]);
     if (old) await logAuditEvent(db, 'product', clean, 'delete', old, null, 'حذف بطاقة الصنف');
@@ -127,7 +127,7 @@ export async function bulkDeleteProducts(db, codes) {
             db.prepare(`DELETE FROM product_aliases WHERE product_code IN (${ph})`).bind(...part),
         ]);
     }
-    await run(db, "INSERT INTO meta (k, v) VALUES ('products_count', (SELECT COUNT(*) FROM products)) ON CONFLICT(k) DO UPDATE SET v = excluded.v");
+    if (deleted) await run(db, "UPDATE meta SET v = MAX(0, CAST(v AS INTEGER) + (-?)) WHERE k = 'products_count'", [deleted]);
     await logCatalogChange(db, clean);
     await logAuditEvent(db, 'product', 'bulk', 'bulk_delete', null, { count: deleted }, `حذف مجمع لـ ${deleted} صنف`);
     return deleted;
@@ -284,7 +284,8 @@ export async function searchPreinventoryProducts(db, query = '', limit = 100, of
             }
         }
         const vs = [...new Set(ftsVariants.map(String))];
-        const fts = (vs.length && !vs.some(v => [...v].length < 3)) ? `p.id IN (SELECT rowid FROM product_search WHERE product_search MATCH ${lit(vs.map(ftsPhrase).join(' OR '))})` : '';
+        const longVs = vs.filter(v => [...v].length >= 3);
+        const fts = (longVs.length && [...vs[0]].length >= 3) ? `p.id IN (SELECT rowid FROM product_search WHERE product_search MATCH ${lit(longVs.map(ftsPhrase).join(' OR '))})` : '';
         const bCodes = Object.keys(batchMap);
         let core = inline(`(${whereSql})`, params);
         if (fts) core = `(${core} AND ${fts})`;

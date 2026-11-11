@@ -65,10 +65,12 @@ export async function getProductByCode(db, code) {
 const ftsPhrase = (v) => '"' + String(v).replaceAll('"', '""') + '"';
 
 // مرشح فهرس البحث: يعيد شرط SQL يحصر الأصناف المرشحة، أو '' إذا تعذر (نص قصير جداً)
-function ftsFilter(variants, column = 'p.id') {
+export function ftsFilter(variants, column = 'p.id') {
     const vs = [...new Set(variants.filter(v => v !== null && v !== undefined).map(String))];
-    if (!vs.length || vs.some(v => [...v].length < 3)) return { sql: '', params: [] };
-    return { sql: `${column} IN (SELECT rowid FROM product_search WHERE product_search MATCH ?)`, params: [vs.map(ftsPhrase).join(' OR ')] };
+    // متغيرات أقصر من 3 أحرف (غالباً تحويل لوحة المفاتيح) كانت تلغي الفهرس وتعمل scan كامل للجدول
+    const long = vs.filter(v => [...v].length >= 3);
+    if (!long.length || [...vs[0]].length < 3) return { sql: '', params: [] };
+    return { sql: `${column} IN (SELECT rowid FROM product_search WHERE product_search MATCH ?)`, params: [long.map(ftsPhrase).join(' OR ')] };
 }
 
 export async function findProductByGtinOrBarcode(db, val) {
@@ -254,9 +256,17 @@ export async function searchProducts(db, query = '', limit = 50, offset = 0, mat
     } else {
         const { whereSql, params, orderParams, ftsVariants } = buildProductSearchWhere(rawQ, matchMode);
         const from = 'FROM products p LEFT JOIN product_barcodes pb ON p.code = pb.product_code';
-        const cnt = await runProductQuery(db, `SELECT COUNT(DISTINCT p.id) AS c ${from}`, whereSql, params, '', [], ftsVariants);
-        total = cnt[0]?.c || 0;
-        rows = await runProductQuery(db, `SELECT DISTINCT p.* ${from}`, whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit, offset], ftsVariants);
+        if (ftsFilter(ftsVariants).sql) {
+            const cnt = await runProductQuery(db, `SELECT COUNT(DISTINCT p.id) AS c ${from}`, whereSql, params, '', [], ftsVariants);
+            total = cnt[0]?.c || 0;
+            rows = await runProductQuery(db, `SELECT DISTINCT p.* ${from}`, whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit, offset], ftsVariants);
+        } else {
+            // بحث قصير (أقل من 3 أحرف) بدون فهرس: استعلام واحد بدل اتنين (بدون COUNT منفصل) لتوفير حصة القراءة
+            rows = await runProductQuery(db, `SELECT DISTINCT p.* ${from}`, whereSql, params, `${PRODUCT_ORDER_SQL} LIMIT ? OFFSET ?`, [...orderParams, limit + 1, offset], ftsVariants);
+            const more = rows.length > limit;
+            if (more) rows = rows.slice(0, limit);
+            total = offset + rows.length + (more ? 1 : 0);
+        }
     }
     await attachBarcodesBulk(db, rows);
     return { items: rows, total, limit, offset };

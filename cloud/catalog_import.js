@@ -113,7 +113,7 @@ export async function commitImportChunk(db, items, replaceBarcodes) {
         }
         changed.push(code);
     }
-    stmts.push(db.prepare("INSERT INTO meta (k, v) VALUES ('products_count', (SELECT COUNT(*) FROM products)) ON CONFLICT(k) DO UPDATE SET v = excluded.v"));
+    if (added) stmts.push(db.prepare("UPDATE meta SET v = MAX(0, CAST(v AS INTEGER) + (?)) WHERE k = 'products_count'").bind(added));
     // دفعات D1 ذرية: لو فشل أي جزء لا يُحفظ شيء من هذه الدفعة
     for (let i = 0; i < stmts.length; i += 500) await db.batch(stmts.slice(i, i + 500));
     await logCatalogChange(db, changed);
