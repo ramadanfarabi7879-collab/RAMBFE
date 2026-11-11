@@ -15,8 +15,7 @@
             var ua = navigator.userAgent || '';
             var isPhone = /Android|iPhone|iPod|Windows Phone|Mobile|Opera Mini|IEMobile/i.test(ua)
                 || (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 768);
-            // الموبايل بقى يفتح البرنامج الكامل بكل الأقسام (شريط سفلي)، وماسح الجرد السريع متاح من زر 📷 في الشريط
-            void isPhone;
+            if (isPhone) location.replace('/mobile' + q);
         } catch (e) {}
     })();
     </script>
