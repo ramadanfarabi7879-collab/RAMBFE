@@ -154,10 +154,16 @@ export function parseGs1(raw) {
 
 export async function getStats(db) {
     const r = await first(db, `SELECT (SELECT v FROM meta WHERE k='products_count') AS products_count,
-        (SELECT COUNT(*) FROM product_barcodes) AS barcodes_count,
+        (SELECT v FROM meta WHERE k='barcodes_count') AS barcodes_count, (SELECT v FROM meta WHERE k='barcodes_count_ts') AS bts,
         (SELECT COUNT(*) FROM invoices WHERE status = 'confirmed' AND profile_id = ?1) AS invoices_count,
         (SELECT COUNT(*) FROM scanned_serials WHERE is_confirmed = 1 AND is_returned = 0 AND invoice_id IN (SELECT id FROM invoices WHERE profile_id = ?1)) AS active_serials`, [pidOf(db)]);
-    return { products_count: Number(r.products_count || 0), barcodes_count: r.barcodes_count, invoices_count: r.invoices_count, active_serials: r.active_serials };
+    // عدّ الباركود كان بيقرا ~60 ألف صف في كل فتحة للإحصائيات: بنحسبه مرة كل ساعة بس
+    if (r.barcodes_count === null || Date.now() - Number(r.bts || 0) > 3600000) {
+        r.barcodes_count = (await first(db, 'SELECT COUNT(*) AS c FROM product_barcodes')).c;
+        await db.batch([['barcodes_count', r.barcodes_count], ['barcodes_count_ts', Date.now()]].map(([k, v]) =>
+            db.prepare('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').bind(k, String(v))));
+    }
+    return { products_count: Number(r.products_count || 0), barcodes_count: Number(r.barcodes_count || 0), invoices_count: r.invoices_count, active_serials: r.active_serials };
 }
 
 // ---------------- البحث قبل الجرد ----------------
