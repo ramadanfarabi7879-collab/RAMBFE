@@ -15,7 +15,8 @@
             var ua = navigator.userAgent || '';
             var isPhone = /Android|iPhone|iPod|Windows Phone|Mobile|Opera Mini|IEMobile/i.test(ua)
                 || (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 768);
-            if (isPhone) location.replace('/mobile' + q);
+            // الموبايل بقى يفتح البرنامج الكامل بكل الأقسام (شريط سفلي)، وماسح الجرد السريع متاح من زر 📷 في الشريط
+            void isPhone;
         } catch (e) {}
     })();
     </script>
@@ -96,7 +97,7 @@
 
                         <span class="hidden sm:inline">نظام إدارة الأصناف والمسح بكود QR</span>
 
-                        <span class="sm:hidden font-black">RAMBFE Pro</span>
+                        <span class="hidden">RAMBFE Pro</span>
 
                         <span class="text-[10px] bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 px-1.5 py-0.2 rounded-full font-mono">v2.5</span>
 
@@ -166,9 +167,9 @@
 
                 <!-- زر ملء الشاشة للكمبيوتر واللابتوب -->
 
-                <button type="button" id="btn-toggle-lang" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 border border-amber-300 text-xs font-black transition shadow-sm cursor-pointer select-none" title="تغيير لغة البرنامج / Switch Language (AR / EN)">
+                <button type="button" id="btn-toggle-lang" class="inline-flex items-center gap-1.5 px-2 sm:px-3 py-1 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 border border-amber-300 text-xs font-black transition shadow-sm cursor-pointer select-none" title="تغيير لغة البرنامج / Switch Language (AR / EN)">
                     <span>🌐</span>
-                    <span id="lang-btn-label" data-no-i18n="1">English</span>
+                    <span id="lang-btn-label" data-no-i18n="1" class="hidden sm:inline">English</span>
                 </button>
                 <button type="button" id="btn-toggle-fullscreen" class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition shadow-sm" title="تبديل وضع ملء الشاشة (F11)">
 
@@ -184,7 +185,7 @@
 
                     <span class="hidden sm:inline">مزامنة سحابية لحظية ⚡</span>
 
-                    <span class="sm:hidden font-mono">لحظي ⚡</span>
+                    <span class="hidden">لحظي ⚡</span>
 
                 </div>
 
@@ -5013,7 +5014,7 @@
 
     <nav class="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-1 py-1 shadow-2xl safe-area-pb">
 
-        <div class="grid grid-cols-5 gap-0.5 text-center font-bold">
+        <div class="grid grid-cols-6 gap-0.5 text-center font-bold">
 
             <button type="button" id="mob-nav-scanner" class="mob-tab-btn active flex flex-col items-center justify-center py-1.5 text-indigo-400 transition active:scale-95">
 
@@ -5055,6 +5056,14 @@
 
             </button>
 
+            <a href="/mobile" id="mob-nav-quickscan" class="flex flex-col items-center justify-center py-1.5 text-emerald-400 hover:text-white transition active:scale-95">
+
+                <span class="text-lg">📷</span>
+
+                <span class="text-[10px] mt-0.5 font-bold">ماسح الجرد</span>
+
+            </a>
+
         </div>
 
     </nav>
@@ -5063,7 +5072,7 @@
 
     <!-- ملف الجافاسكريبت الرئيسي -->
 
-    <script src="profile.js?v=1"></script>
+    <script src="profile.js?v=2"></script>
     <script src="realtime.js?v=2"></script>
     <script src="app.js?v=20261111_v45_excel"></script>
     <script src="excel-export.js?v=2"></script>

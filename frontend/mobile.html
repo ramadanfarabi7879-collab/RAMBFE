@@ -15,7 +15,7 @@
     <!-- Html5-QRCode -->
     <script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/dist/iife/polyfill.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    <script src="profile.js?v=1"></script>
+    <script src="profile.js?v=2"></script>
     <script src="realtime.js?v=2"></script>
     <script src="excel-export.js?v=1"></script>
 
@@ -433,7 +433,7 @@
 
     <!-- شريط التنقل السفلي الثابت (Bottom Navigation Bar) -->
     <nav class="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur border-t border-slate-800 px-2 py-1.5 z-40 shadow-2xl">
-        <div class="max-w-md mx-auto grid grid-cols-4 gap-1">
+        <div class="max-w-md mx-auto grid grid-cols-5 gap-1">
             <button type="button" id="nav-btn-scanner" class="nav-tab active flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-indigo-400 font-bold transition">
                 <span class="text-lg">📷</span>
                 <span class="text-[10px] mt-0.5">الماسح</span>
@@ -450,6 +450,10 @@
                 <span class="text-lg">⚙️</span>
                 <span class="text-[10px] mt-0.5">تحكم وترحيل</span>
             </button>
+            <a href="/?desktop=1" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-xl text-emerald-400 font-bold transition">
+                <span class="text-lg">🗂️</span>
+                <span class="text-[10px] mt-0.5">كل الأقسام</span>
+            </a>
         </div>
     </nav>
 

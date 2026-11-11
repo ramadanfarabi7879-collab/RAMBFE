@@ -101,6 +101,13 @@
       background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35)}
     #rp-bar button:hover{background:rgba(255,255,255,.28)}
     #rp-bar .rp-name{font-size:14px;font-weight:900}
+    #rp-bar button,#rp-bar>span{white-space:nowrap}
+    @media (max-width:640px){
+      #rp-bar{gap:6px;padding:4px 6px;font-size:12px}
+      #rp-bar button{padding:2px 9px;gap:4px}
+      #rp-bar .rp-name{font-size:13px;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+      #rp-bar .rp-long{display:none}
+    }
     #rp-modal{position:fixed;inset:0;z-index:9999;display:none;align-items:flex-start;justify-content:center;background:rgba(2,6,23,.6);
       padding:40px 12px;direction:rtl;font:14px/1.5 system-ui,Segoe UI,Tahoma,sans-serif}
     #rp-modal.open{display:flex}
@@ -126,8 +133,8 @@
     function renderBar() {
         const bar = document.getElementById('rp-bar');
         if (!bar) return;
-        bar.innerHTML = `<span>🏥 الصيدلية الحالية:</span>
-          <button id="rp-open" title="تبديل الصيدلية أو إضافة صيدلية جديدة"><span class="rp-name">${esc(currentName())}</span> <span>▾ تبديل / إضافة</span></button>
+        bar.innerHTML = `<span>🏥<span class="rp-long"> الصيدلية الحالية:</span></span>
+          <button id="rp-open" title="تبديل الصيدلية أو إضافة صيدلية جديدة"><span class="rp-name">${esc(currentName())}</span> <span>▾<span class="rp-long"> تبديل / إضافة</span></span></button>
           <button id="rp-upload" title="رفع ملف مخزون جديد لهذه الصيدلية">📤 رفع مخزون</button>`;
         bar.querySelector('#rp-open').onclick = openModal;
         bar.querySelector('#rp-upload').onclick = () => pickAndUpload();
