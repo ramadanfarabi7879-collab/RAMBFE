@@ -6222,6 +6222,8 @@ async function executeImportPreview() {
     }
 
     const replace_barcodes = document.getElementById('rad-barcode-mode-replace')?.checked || false;
+    // الافتراضي: إضافة الأصناف الجديدة فقط، والموجود لا يتغير (إلا لو اخترت تحديث الموجود)
+    const update_existing = document.getElementById('chk-import-update-existing')?.checked || false;
 
     const btn = document.getElementById('btn-preview-import');
     btn.disabled = true;
@@ -6234,7 +6236,8 @@ async function executeImportPreview() {
             body: JSON.stringify({
                 file_id: uploadedImportFileId,
                 mapping,
-                replace_barcodes
+                replace_barcodes,
+                update_existing
             })
         });
         const data = await res.json();
@@ -6373,6 +6376,8 @@ function renderImportPreview(data) {
 async function executeImportCommit() {
     const mapping = getSelectedMapping();
     const replace_barcodes = document.getElementById('rad-barcode-mode-replace')?.checked || false;
+    // الافتراضي: إضافة الأصناف الجديدة فقط، والموجود لا يتغير (إلا لو اخترت تحديث الموجود)
+    const update_existing = document.getElementById('chk-import-update-existing')?.checked || false;
     const btn = document.getElementById('btn-commit-import');
     btn.disabled = true;
     btn.textContent = 'جاري الحفظ والتحديث المجمع في قاعدة البيانات...';
@@ -6384,7 +6389,8 @@ async function executeImportCommit() {
             body: JSON.stringify({
                 file_id: uploadedImportFileId,
                 mapping,
-                replace_barcodes
+                replace_barcodes,
+                update_existing
             })
         });
         const data = await res.json();

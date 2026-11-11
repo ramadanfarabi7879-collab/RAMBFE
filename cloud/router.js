@@ -372,7 +372,7 @@ async function handleCloudApiInner(request, env, ctx, url, rawBody) {
             case '/api/catalog/import/lookup':
                 return json(await CI.importLookup(db, data.codes || [], data.barcodes || []));
             case '/api/catalog/import/commit':
-                return json(await CI.commitImportChunk(db, Array.isArray(data.items) ? data.items : [], Boolean(data.replace_barcodes)));
+                return json(await CI.commitImportChunk(db, Array.isArray(data.items) ? data.items : [], Boolean(data.replace_barcodes), Boolean(data.only_new)));
             case '/api/catalog/import/finish': {
                 const r = await CI.finishImport(db, String(data.file_name || ''), intOr0(data.updated_count), intOr0(data.new_count), Boolean(data.replace_barcodes));
                 await bcast('catalog_updated', { imported: intOr0(data.updated_count) + intOr0(data.new_count) });

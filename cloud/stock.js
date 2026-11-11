@@ -818,8 +818,27 @@ export async function finishStockUpload(db, storeNo, totalAdded, uploadId = '', 
             // ملف بدون صفوف صالحة: لا نمسح المخزون الحالي (كان يتصفر بالكامل)
             return { success: false, message: 'لم يتم العثور على أي صنف صالح في الملف (تأكد من عمود الكود/الباركود). لم يتم تغيير المخزون الحالي.' };
         }
+        if (!replaceExisting) {
+            // وضع الإضافة (الافتراضي): يضيف بس التشغيلات (صنف + تشغيلة) اللي مش موجودة في مخزون الاستور،
+            // والموجود يفضل زي ما هو. صف مكرر داخل نفس الملف يتحسب مرة واحدة.
+            const NEW_ROWS = `FROM inventory_upload_staging s WHERE s.upload_id = ?1 AND s.store_no = ?2
+                AND s.id = (SELECT MIN(s2.id) FROM inventory_upload_staging s2 WHERE s2.upload_id = s.upload_id AND s2.product_code = s.product_code
+                    AND UPPER(TRIM(COALESCE(s2.batch_number, ''))) = UPPER(TRIM(COALESCE(s.batch_number, ''))))
+                AND NOT EXISTS (SELECT 1 FROM inventory_records ir WHERE ir.store_no = s.store_no AND ir.product_code = s.product_code
+                    AND UPPER(TRIM(COALESCE(ir.batch_number, ''))) = UPPER(TRIM(COALESCE(s.batch_number, ''))))`;
+            const added = (await first(db, `SELECT COUNT(*) AS c ${NEW_ROWS}`, [uploadId, storeNo])).c;
+            await db.batch([
+                db.prepare(`INSERT INTO inventory_records (${INV_COLS.join(', ')}, store_no, created_at)
+                    SELECT ${INV_COLS.map(c => 's.' + c).join(', ')}, s.store_no, CURRENT_TIMESTAMP ${NEW_ROWS} ORDER BY s.id ASC`).bind(uploadId, storeNo),
+                db.prepare('DELETE FROM inventory_upload_staging WHERE upload_id = ?').bind(uploadId),
+                db.prepare(REFRESH_ENTRIES_SQL).bind(storeNo, pidOf(db)),
+            ]);
+            return { success: true, added_count: added, skipped_existing_count: staged - added,
+                message: `تمت إضافة ${added} سطر مخزون جديد للاستور (${storeNo}). السطور الموجودة بالفعل (${staged - added}) لم تتغير، والكميات المجرودة محفوظة كما هي.`,
+                store_details: await getStoreStocktakeDetails(db, storeNo) };
+        }
         await db.batch([
-            ...(replaceExisting ? [db.prepare('DELETE FROM inventory_records WHERE store_no = ?').bind(storeNo)] : []),
+            db.prepare('DELETE FROM inventory_records WHERE store_no = ?').bind(storeNo),
             db.prepare(`INSERT INTO inventory_records (${INV_COLS.join(', ')}, store_no, created_at)
                 SELECT ${INV_COLS.join(', ')}, store_no, CURRENT_TIMESTAMP FROM inventory_upload_staging WHERE upload_id = ? AND store_no = ? ORDER BY id ASC`).bind(uploadId, storeNo),
             db.prepare('DELETE FROM inventory_upload_staging WHERE upload_id = ?').bind(uploadId),

@@ -264,7 +264,7 @@
 
     const f = (v) => Number(v || 0);
     function pyFmt0(x) { return pyRound(Math.abs(x), 0).toFixed(0) * (x < 0 ? -1 : 1); }
-    async function preview(df, mapping, replace, maxPreview = 50) {
+    async function preview(df, mapping, replace, maxPreview = 50, onlyNew = false) {
         const { items, skipped, conflicts, total, lookup: L } = await parseAndValidate(df, mapping);
         const dbProds = L.products;
         const next = await (await fetch('/api/catalog/next-code')).json();
@@ -298,28 +298,35 @@
             return pc;
         });
         const upd = items.filter(it => it.code && it.code in dbProds).length;
+        if (onlyNew) {
+            // وضع "إضافة الجديد فقط": الأصناف الموجودة لا تتغير، فتظهر في المعاينة كأصناف ستُتخطى
+            for (const pc of previewItems) if (pc.is_update) { pc.status_label = 'موجود بالفعل (لن يتغير)'; pc.diff = {}; pc.changed_fields_count = 0; }
+        }
         return {
-            success: true, total_file_rows: total, valid_products_count: items.length, valid_count: items.length, updates_count: upd, new_count: items.length - upd,
+            success: true, only_new: onlyNew, existing_count: upd, total_file_rows: total, valid_products_count: items.length, valid_count: items.length,
+            updates_count: onlyNew ? 0 : upd, new_count: items.length - upd,
             conflicts_count: conflicts.length, skipped_count: skipped.length, replace_barcodes: replace, preview_items: previewItems,
             conflicts: conflicts.slice(0, 100), skipped_rows: skipped.slice(0, 100)
         };
     }
-    async function commit(df, mapping, replace, fileName, onProgress) {
+    async function commit(df, mapping, replace, fileName, onProgress, onlyNew = false) {
         const { items, skipped, total } = await parseAndValidate(df, mapping);
         if (!items.length) return { success: false, message: 'لا توجد أصناف صالحة للاستيراد في الملف.', skipped_rows: skipped };
-        let upd = 0, added = 0, bc = 0;
+        let upd = 0, added = 0, bc = 0, skippedExisting = 0;
         const CH = 150;
         for (let i = 0; i < items.length; i += CH) {
             const part = items.slice(i, i + CH).map(it => ({ code: it.code, name_ar: it.name_ar, name_en: it.name_en, name: it.name, scientific_name: it.scientific_name,
                 company: it.company, category: it.category, selling_price: it.selling_price, wholesale_price: it.wholesale_price, unit_price: it.unit_price,
                 tax_rate: it.tax_rate, unit: it.unit, unit_divisions: it.unit_divisions, barcode_list: it.barcode_list, gtin_list: it.gtin_list, mapped_fields: it.mapped_fields }));
-            const r = await api('/api/catalog/import/commit', { items: part, replace_barcodes: replace });
-            upd += r.updated_count; added += r.new_count; bc += r.barcodes_registered_count;
+            const r = await api('/api/catalog/import/commit', { items: part, replace_barcodes: replace, only_new: onlyNew });
+            upd += r.updated_count; added += r.new_count; bc += r.barcodes_registered_count; skippedExisting += r.skipped_existing_count || 0;
             if (onProgress) onProgress(Math.min(items.length, i + CH), items.length);
         }
         await api('/api/catalog/import/finish', { file_name: fileName, updated_count: upd, new_count: added, replace_barcodes: replace });
         return {
-            success: true, message: `تمت معالجة ${items.length} صنف بنجاح (تحديث ${upd} صنف موجود، وإضافة ${added} صنف جديد).`,
+            success: true, skipped_existing_count: skippedExisting, only_new: onlyNew,
+            message: onlyNew ? `تمت إضافة ${added} صنف جديد. الأصناف الموجودة بالفعل (${skippedExisting}) لم تتغير.`
+                : `تمت معالجة ${items.length} صنف بنجاح (تحديث ${upd} صنف موجود، وإضافة ${added} صنف جديد).`,
             imported_count: items.length, updated_count: upd, new_count: added, total_file_rows: total, barcodes_registered_count: bc,
             replace_barcodes: replace, skipped_count: skipped.length, skipped_rows: skipped.slice(0, 100)
         };
@@ -335,7 +342,13 @@
             sample_rows: sample, total_rows: df.rows.length, header_row_index: df.header_row_idx, suggested_mapping: suggestColumnsMapping(df.columns) } };
     }
 
-    root.RambfeCatalogImport = { readDataframe, suggestColumnsMapping, parseTaxRateCell, parseAndValidate, preview, commit, inspect,
+    // ملف كتالوج (مثل product.template.xlsx) اترفع من زر "رفع مخزون": نضيف الأصناف الجديدة فقط بالأعمدة المقترحة تلقائياً
+    async function importNewOnlyFromFile(XLSX, file, onProgress) {
+        if (!Q) { const q = await import('/cloud-qr.js'); Q = q; pyRound = q.pyRound; }
+        const { df, info } = await inspect(XLSX, file);
+        return commit(df, info.suggested_mapping || {}, false, file.name || 'catalog.xlsx', onProgress, true);
+    }
+    root.RambfeCatalogImport = { readDataframe, suggestColumnsMapping, parseTaxRateCell, parseAndValidate, preview, commit, inspect, importNewOnlyFromFile,
         _setDeps(q, pr) { Q = q; if (pr) pyRound = pr; } };
     if (typeof window === 'undefined') return;
 
@@ -397,10 +410,12 @@
                 const fobj = files[d.file_id];
                 if (!fobj) return jsonRes({ success: false, message: 'انتهت صلاحية الملف المرفوع، يرجى رفعه مرة أخرى.' }, 400);
                 const replace = Boolean(d.replace_barcodes);
-                if (path === '/api/catalog/preview-import') return jsonRes(await preview(fobj.df, d.mapping || {}, replace));
+                // الافتراضي: إضافة الأصناف الجديدة فقط بدون تغيير الموجود (إلا لو اخترت تحديث الموجود)
+                const onlyNew = !d.update_existing;
+                if (path === '/api/catalog/preview-import') return jsonRes(await preview(fobj.df, d.mapping || {}, replace, 50, onlyNew));
                 const res = await commit(fobj.df, d.mapping || {}, replace, fobj.name, (done, all) => {
                     const b = document.getElementById('btn-commit-import'); if (b) b.textContent = `جاري الحفظ… ${done} / ${all} صنف`;
-                });
+                }, onlyNew);
                 return jsonRes(res);
             }
         } catch (e) {

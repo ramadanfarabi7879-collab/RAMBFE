@@ -147,11 +147,44 @@ await test('البحث يجد الصنف بالاسم وبالباركود ال�
     assert.equal((await api('GET', '/api/catalog/products?query=br&mode=contains')).data.items[0].code, '10002');
 });
 
+await test('رفع مخزون بوضع الإضافة: الموجود لا يتغير والجديد بس يتضاف', async () => {
+    pid = 1;
+    const prof = (await api('GET', '/api/profiles')).data.current_profile_id;
+    pid = prof;
+    const S2 = (await api('POST', '/api/stock/stores/create', { store_name: 'merge' })).data.store_no;
+    const up2 = async (rows) => {
+        const id = 'm' + Math.random().toString(36).slice(2, 8);
+        const r = await api('POST', '/api/stock/upload/rows', { store_no: S2, rows, col_idx: COL, replace_existing: false, is_first: true, upload_id: id });
+        return api('POST', '/api/stock/upload/finish', { store_no: S2, upload_id: id, replace_existing: false, total_added: r.data.added_count });
+    };
+    let r = await up2([['10001', 'P', 'B1', 10], ['10002', 'B', 'B2', 5]]);
+    assert.equal(r.data.added_count, 2);
+    r = await up2([['10001', 'P', 'B1', 99], ['10001', 'P', 'NEWB', 3], ['10003', 'C', 'C1', 7], ['10003', 'C', 'C1', 7]]);
+    assert.equal(r.data.added_count, 2, JSON.stringify(r.data));
+    assert.equal(r.data.skipped_existing_count, 2);
+    assert.equal((await one("SELECT system_qty FROM inventory_records WHERE store_no = ? AND product_code = '10001' AND batch_number = 'B1'", S2)).system_qty, 10);
+    assert.equal(await invRows(S2), 4);
+});
+await test('استيراد كتالوج بوضع الجديد فقط: الموجود لا يتغير والمكرر بالاسم لا يتضاف', async () => {
+    const before = (await one('SELECT COUNT(*) AS c FROM products')).c;
+    const item = (o) => ({ name_ar: '', name_en: '', scientific_name: '', company: '', category: 'MEDICINE', selling_price: 1, wholesale_price: 0, unit_price: 0,
+        tax_rate: 0, unit: 'علبة', unit_divisions: '', barcode_list: [], gtin_list: [], mapped_fields: ['code', 'name_en', 'selling_price'], ...o });
+    const r = await api('POST', '/api/catalog/import/commit', { only_new: true, items: [
+        item({ code: '10001', name: 'CHANGED', name_en: 'CHANGED', selling_price: 999 }),
+        item({ code: '', name: 'BRUFEN 400', name_en: 'BRUFEN 400' }),
+        item({ code: '', name: 'NEW PRODUCT X', name_en: 'NEW PRODUCT X' }),
+    ] });
+    assert.equal(r.data.new_count, 1, JSON.stringify(r.data));
+    assert.equal(r.data.skipped_existing_count, 2);
+    assert.equal(r.data.updated_count, 0);
+    assert.equal((await one("SELECT name FROM products WHERE code = '10001'")).name, 'PANADOL EXTRA');
+    assert.equal((await one('SELECT COUNT(*) AS c FROM products')).c, before + 1);
+});
 await test('نسخة الكتالوج للأجهزة وحزمة مخزون الاستور تعمل', async () => {
     const r = await R.handleCloudApi(new Request('https://rambfe.test/api/catalog/snapshot'), env, { waitUntil() { } }, new URL('https://rambfe.test/api/catalog/snapshot'), null);
     const snap = await r.json();
-    assert.equal(snap.count, 3);
-    assert.ok(snap.cols.includes('code') && snap.barcodes.length === 3);
+    assert.equal(snap.count, (await one('SELECT COUNT(*) AS c FROM products')).c);
+    assert.ok(snap.cols.includes('code') && snap.barcodes.length === (await one('SELECT COUNT(*) AS c FROM product_barcodes')).c);
     pid = 1;
     const prof = await api('GET', '/api/profiles');
     pid = prof.data.current_profile_id;

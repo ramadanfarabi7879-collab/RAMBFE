@@ -35,12 +35,42 @@ export async function importLookup(db, codes, barcodes) {
     return { success: true, products: prods, barcodes: bmap, max_code: mx ? mx.m : null };
 }
 
+// أسماء الأصناف الموجودة (للأصناف اللي في الملف من غير كود ولا باركود): فهارس تُنشأ مرة واحدة
+let nameIndexesReady = false;
+async function existingByName(db, items) {
+    if (!nameIndexesReady) {
+        await db.batch(['CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)', 'CREATE INDEX IF NOT EXISTS idx_products_name_en ON products(name_en)',
+            'CREATE INDEX IF NOT EXISTS idx_products_name_ar ON products(name_ar)'].map(s => db.prepare(s)));
+        nameIndexesReady = true;
+    }
+    const names = [...new Set(items.flatMap(it => [it.name, it.name_en, it.name_ar]).map(v => String(v || '').trim()).filter(Boolean))];
+    const found = new Set();
+    for (let i = 0; i < names.length; i += 30) {
+        const part = names.slice(i, i + 30), ph = part.map(() => '?').join(',');
+        for (const r of await all(db, `SELECT name, name_en, name_ar FROM products WHERE name IN (${ph}) OR name_en IN (${ph}) OR name_ar IN (${ph})`, [...part, ...part, ...part]))
+            for (const v of [r.name, r.name_en, r.name_ar]) if (v) found.add(String(v).trim());
+    }
+    return found;
+}
+
 // حفظ دفعة من الأصناف (نفس منطق commit_import_catalog لكل صنف)
-export async function commitImportChunk(db, items, replaceBarcodes) {
+// onlyNew: يضيف الأصناف الجديدة فقط ولا يغيّر أي صنف موجود (الأصناف من غير كود تُطابق بالباركود ثم بالاسم حتى لا تتكرر)
+export async function commitImportChunk(db, items, replaceBarcodes, onlyNew = false) {
     const codes = [...new Set(items.map(it => it.code).filter(Boolean))];
     const look = await importLookup(db, codes, []);
     const dbProds = look.products;
     const existing = new Set(Object.keys(dbProds));
+    let skippedExisting = 0;
+    if (onlyNew) {
+        const before = items.length;
+        items = items.filter(it => !(it.code && existing.has(it.code)));
+        const noCode = items.filter(it => !it.code);
+        if (noCode.length) {
+            const byName = await existingByName(db, noCode);
+            items = items.filter(it => it.code || ![it.name, it.name_en, it.name_ar].some(v => v && byName.has(String(v).trim())));
+        }
+        skippedExisting = before - items.length;
+    }
     let currentMax = look.max_code !== null && look.max_code !== undefined ? look.max_code : 10000;
     if (currentMax < 10000) currentMax = 10000;
     const stmts = [], changed = [];
@@ -117,7 +147,7 @@ export async function commitImportChunk(db, items, replaceBarcodes) {
     // دفعات D1 ذرية: لو فشل أي جزء لا يُحفظ شيء من هذه الدفعة
     for (let i = 0; i < stmts.length; i += 500) await db.batch(stmts.slice(i, i + 500));
     await logCatalogChange(db, changed);
-    return { success: true, updated_count: updated, new_count: added, barcodes_registered_count: bcount };
+    return { success: true, updated_count: updated, new_count: added, barcodes_registered_count: bcount, skipped_existing_count: skippedExisting };
 }
 
 export async function finishImport(db, fileName, updated, added, replaceBarcodes) {

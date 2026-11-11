@@ -90,14 +90,49 @@
         return rows;
     }
     async function postJson(url, body) {
-        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        let res;
+        try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+        catch (e) { const err = new Error('مفيش اتصال بالإنترنت'); err.offline = true; throw err; }
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.success === false) throw new Error(data.message || `HTTP ${res.status}`);
+        if (!res.ok || data.success === false) {
+            const err = new Error(data.message || `HTTP ${res.status}`);
+            // السحابة مش متاحة (الحد اليومي أو مفيش نت): الرفع يتأجل بدل ما يفشل
+            err.offline = Boolean(data.offline_mode || data.db_unavailable || data.offline_reconnecting || res.status === 503);
+            throw err;
+        }
         return data;
     }
-    async function uploadStockFile(file, storeNo, onProgress) {
+    // ملف كتالوج أصناف (زي product.template.xlsx) مش ملف مخزون: كود داخلي + اسم + سعر بيع، ومن غير تشغيلة ولا صلاحية
+    function looksLikeCatalog(rows) {
+        for (const r of rows.slice(0, 25)) {
+            const h = (r || []).map(c => String(c ?? '').trim().toLowerCase());
+            const has = (k) => h.some(x => x.includes(k));
+            if (has('internal reference') || (has('quantity on hand') && has('sales price'))) return true;
+            if ((has('code') || has('كود')) && (has('name') || has('اسم')) && !has('batch') && !has('تشغيلة') && !has('expiry') && !has('صلاحية') && rows.length > 2000) return true;
+        }
+        return false;
+    }
+    // رفع ملف (مخزون أو كتالوج). الإضافة فقط: اللي موجود بالفعل مش بيتغير، والجديد بس اللي بيتضاف.
+    // لو السحابة مش متاحة: الملف يتحفظ على الجهاز ويترفع تلقائياً أول ما الاتصال يرجع.
+    async function uploadStockFile(file, storeNo, onProgress, opts = {}) {
+        try {
+            return await uploadNow(file, storeNo, onProgress);
+        } catch (e) {
+            if (e.offline && !opts.fromQueue && window.RambfeOffline && window.RambfeOffline.queueFile) {
+                await window.RambfeOffline.queueFile(file, storeNo);
+                return { success: true, queued: true, message: `📴 السحابة مش متاحة دلوقتي: الملف (${file.name}) اتحفظ على الجهاز وهيترفع تلقائياً أول ما الاتصال يرجع. الموجود مش هيتغير، والجديد بس اللي هيتضاف.` };
+            }
+            throw e;
+        }
+    }
+    async function uploadNow(file, storeNo, onProgress) {
         const rows = await readSheetRows(file);
         if (!rows.length) throw new Error('ملف الإكسيل فارغ');
+        if (looksLikeCatalog(rows) && window.RambfeCatalogImport && window.RambfeCatalogImport.importNewOnlyFromFile) {
+            const r = await window.RambfeCatalogImport.importNewOnlyFromFile(await loadXlsx(), file, onProgress);
+            if (!r.success) { const err = new Error(r.message || 'فشل استيراد الأصناف'); throw err; }
+            return { ...r, success: true, catalog_file: true, message: `الملف ده كتالوج أصناف (مش مخزون): ${r.message}` };
+        }
         const det = await postJson('/api/stock/upload/detect', { rows: rows.slice(0, 25) });
         const dataRows = rows.slice(det.header_row_idx + 1);
         let total = 0, target = storeNo || '';
@@ -107,12 +142,12 @@
         const CH = 700;
         for (let i = 0; i < dataRows.length || i === 0; i += CH) {
             const part = dataRows.slice(i, i + CH);
-            const r = await postJson('/api/stock/upload/rows', { store_no: target, rows: part, col_idx: det.col_idx, replace_existing: true, is_first: i === 0, upload_id: uploadId });
+            const r = await postJson('/api/stock/upload/rows', { store_no: target, rows: part, col_idx: det.col_idx, replace_existing: false, is_first: i === 0, upload_id: uploadId });
             target = r.store_no; total += r.added_count || 0;
             if (onProgress) onProgress(Math.min(dataRows.length, i + CH), dataRows.length);
             if (!dataRows.length) break;
         }
-        return postJson('/api/stock/upload/finish', { store_no: target, total_added: total, upload_id: uploadId, replace_existing: true });
+        return postJson('/api/stock/upload/finish', { store_no: target, total_added: total, upload_id: uploadId, replace_existing: false });
     }
 
     // ---------------- الشريط والنافذة ----------------
@@ -211,9 +246,9 @@
           <div class="rp-sec"><div style="font-weight:800">➕ إضافة صيدلية جديدة</div>
             <div class="row"><input id="rp-new" placeholder="مثال: صيدلية 2"><button class="rp-btn g" id="rp-create">إنشاء ورفع مخزونها</button></div></div>
           <div class="rp-sec"><div style="font-weight:800">📤 رفع مخزون جديد للصيدلية الحالية: <span id="rp-cur-name"></span></div>
-            <div style="font-size:12px;color:#94a3b8;margin-top:4px">يستبدل رصيد المخزون الحالي للاستور المختار بهذا الملف (Excel).</div>
+            <div style="font-size:12px;color:#94a3b8;margin-top:4px">يضيف للاستور المختار السطور الجديدة بس من الملف (Excel). الموجود بالفعل مش بيتغير. ولو الملف كتالوج أصناف بيضيف الأصناف الجديدة.</div>
             <div class="row"><button class="rp-btn b" id="rp-up">اختيار ملف المخزون…</button></div>
-            <div style="font-size:11px;color:#6ee7b7;margin-top:4px">✅ الكميات المجرودة لا تُمسح عند رفع المخزون، ولا يتأثر أي استور آخر.</div></div>
+            <div style="font-size:11px;color:#6ee7b7;margin-top:4px">✅ الكميات المجرودة لا تُمسح عند رفع المخزون، ولا يتأثر أي استور آخر، ولو مفيش اتصال الملف بيترفع تلقائياً بعدين.</div></div>
           <div class="rp-sec"><div style="font-weight:800">♻️ سلة محذوفات الجرد</div>
             <div style="font-size:12px;color:#94a3b8;margin-top:4px">أي بنود جرد اتمسحت أو اتصفرت بتتحفظ هنا تلقائياً. استرجع آخر عملية مسح للاستور الحالي:</div>
             <div class="row"><button class="rp-btn s" id="rp-restore">استرجاع آخر جرد محذوف</button></div></div>

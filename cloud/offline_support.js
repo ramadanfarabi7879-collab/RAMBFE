@@ -43,8 +43,17 @@ export async function catalogSnapshot(env, db, ctx, force = false) {
         ctx && ctx.waitUntil ? ctx.waitUntil(refresh().catch(() => { })) : await refresh().catch(() => { });
         return new Response(cached.value, { headers: { ...headers, 'X-Snapshot-Age': String(Math.round(age / 1000)) } });
     }
-    const body = (await refresh()) || await buildSnapshot(db);
-    return new Response(body, { headers });
+    try {
+        const body = (await refresh()) || await buildSnapshot(db);
+        return new Response(body, { headers });
+    } catch (e) {
+        // قاعدة البيانات واقفة ومفيش نسخة في KV: نرجع الكتالوج الأساسي المدمج مع الموقع
+        if (env.ASSETS) {
+            const base = await env.ASSETS.fetch(new Request('https://assets.local/base-catalog.json'));
+            if (base.ok) return new Response(base.body, { headers: { ...headers, 'X-Snapshot-Source': 'base' } });
+        }
+        throw e;
+    }
 }
 
 export async function offlinePack(db, storeNo, resolveValidStoreNo) {

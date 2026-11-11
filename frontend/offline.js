@@ -101,6 +101,10 @@
     }
     async function refreshPending() { state.pending = (await outboxAll()).length; banner(); }
     function setOffline(v) { if (state.offline !== v) { state.offline = v; banner(); } }
+    function notify(msg) {
+        try { if (typeof window.showCatalogToast === 'function') { window.showCatalogToast(msg); return; } } catch (_) { }
+        try { alert(msg); } catch (_) { }
+    }
 
     // ---------------- دليل الأصناف المحفوظ ----------------
     const norm = (s) => String(s ?? '').toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, ' ').trim();
@@ -137,9 +141,26 @@
             barcode: (b) => byBarcode.get(String(b || '').trim()) || null,
         };
     }
+    // الكتالوج الأساسي المدمج في البرنامج (من product.template.xlsx): ملف ثابت مع الموقع، يشتغل حتى لو السحابة واقفة
+    async function loadBaseCatalog() {
+        try {
+            const res = await origFetch('/base-catalog.json');
+            if (!res.ok) return null;
+            const snap = await res.json();
+            if (!snap || !Array.isArray(snap.products) || !snap.products.length) return null;
+            await kvSet('catalog', snap);
+            await kvSet('catalog_meta', { fetched_at: 0, generated_at: snap.generated_at, count: snap.count, base: true });
+            return snap;
+        } catch (_) { return null; }
+    }
     async function getCatalog() {
         if (catalog) return catalog;
-        if (!catalogP) catalogP = (async () => { const snap = await kvGet('catalog'); if (snap && snap.products) catalog = buildCatalog(snap); return catalog; })().finally(() => { catalogP = null; });
+        if (!catalogP) catalogP = (async () => {
+            let snap = await kvGet('catalog');
+            if (!snap || !snap.products) snap = await loadBaseCatalog();
+            if (snap && snap.products) catalog = buildCatalog(snap);
+            return catalog;
+        })().finally(() => { catalogP = null; });
         return catalogP;
     }
     async function downloadCatalog(force = false) {
@@ -147,13 +168,13 @@
             const meta = await kvGet('catalog_meta');
             if (!force && meta && Date.now() - meta.fetched_at < 20 * 3600 * 1000) return;
             const res = await origFetch('/api/catalog/snapshot', { cache: 'no-store' });
-            if (!res.ok) return;
+            if (!res.ok) { if (!(await kvGet('catalog'))) await getCatalog(); return; }
             const snap = await res.json();
             if (!snap || !Array.isArray(snap.products) || !snap.products.length) return;
             await kvSet('catalog', snap);
             await kvSet('catalog_meta', { fetched_at: Date.now(), generated_at: snap.generated_at, count: snap.count });
             catalog = buildCatalog(snap);
-        } catch (_) { }
+        } catch (_) { if (!(await kvGet('catalog'))) await getCatalog(); }
     }
     function publicProduct(p) { const o = {}; for (const k of Object.keys(p)) o[k] = p[k]; return o; }
     function localSearch(cat, rawQ, mode, limit, offset) {
@@ -363,6 +384,13 @@
             store_details: { store: d.store, items, stats: d.stats } });
     }
 
+    // ملف (مخزون أو كتالوج) اترفع والسحابة مش متاحة: يتحفظ على الجهاز كما هو ويترفع لما الاتصال يرجع
+    async function queueFile(file, storeNo) {
+        await outboxAdd({ kind: 'file-upload', pid: String(pidNow()), file, file_name: file.name || 'file.xlsx', store_no: storeNo || '', ts: Date.now() });
+        setOffline(true);
+        await refreshPending();
+        scheduleFlush(60000);
+    }
     async function queue(pid, path, body, sn) {
         await outboxAdd({ pid: String(pid), path, body, store_no: sn, ts: Date.now() });
         await refreshPending();
@@ -382,6 +410,23 @@
             const touched = new Set();
             let stopped = false;
             for (const op of ops) {
+                if (op.kind === 'file-upload') {
+                    // يترفع بنفس صيدلية وقت الاختيار: لو المستخدم على صيدلية تانية دلوقتي يستنى لحد ما يرجع لها
+                    if (op.pid !== String(pidNow()) || !window.RambfeProfiles || !window.RambfeProfiles.uploadStockFile) continue;
+                    try {
+                        const r = await window.RambfeProfiles.uploadStockFile(op.file, op.store_no, null, { fromQueue: true });
+                        state.lastError = '';
+                        notify(`✅ تم رفع الملف المؤجل (${op.file_name}): ${r && r.message ? r.message : ''}`);
+                    } catch (e) {
+                        if (e && e.offline) { stopped = true; break; }
+                        state.lastError = e && e.message || '';
+                        notify(`⚠️ تعذر رفع الملف المؤجل (${op.file_name}): ${state.lastError}`);
+                    }
+                    await outboxDel(op.seq);
+                    touched.add(`${op.pid}|${op.store_no}`);
+                    state.pending = Math.max(0, state.pending - 1); banner();
+                    continue;
+                }
                 let res, data = null;
                 try {
                     res = await origFetch(op.path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Profile-Id': op.pid }, body: JSON.stringify(op.body) });
@@ -408,6 +453,7 @@
         // تحديث النسخة المحفوظة من السحابة (فيها الأرقام النهائية بعد دمج شغل كل الأجهزة)
         for (const t of touched) {
             const [pid, sn] = t.split('|');
+            if (!sn) continue;
             try {
                 const res = await origFetch(`/api/stock/store/details?store_no=${encodeURIComponent(sn)}`, { headers: { 'X-Profile-Id': pid }, cache: 'no-store' });
                 if (res.ok) await saveDetails(pid, sn, await res.json());
@@ -558,7 +604,7 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 
     window.RambfeOffline = {
-        flush, state, pending: () => state.pending, downloadCatalog: () => downloadCatalog(true),
+        flush, state, queueFile, pending: () => state.pending, downloadCatalog: () => downloadCatalog(true),
         // للاختبارات فقط
         _test: { localSearch, buildCatalog, getCatalog, kvGet, kvSet, outboxAll, handleOffline },
     };

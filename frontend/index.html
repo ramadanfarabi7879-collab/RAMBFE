@@ -8,7 +8,7 @@
     <!-- تطبيق ويب يشتغل من غير إنترنت (PWA) + وضع عدم الاتصال للجرد -->
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/icon-192.png">
-    <script src="/offline.js?v=1"></script>
+    <script src="/offline.js?v=2"></script>
     <script>
     // تحويل تلقائي لشاشة الموبايل عند الفتح من هاتف (يمكن فتح نسخة الكمبيوتر بإضافة ?desktop=1)
     (function () {
@@ -1643,6 +1643,13 @@
                     <!-- وضع تحديث الباركودات و GTINs في الأصناف الموجودة -->
 
                     <div class="bg-indigo-50/70 p-4 rounded-xl border border-indigo-200 space-y-2">
+
+                        <div class="mb-3 p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs">
+                        <div class="font-extrabold text-emerald-900">✅ الافتراضي: إضافة الأصناف الجديدة فقط</div>
+                        <div class="text-[11px] text-emerald-800 mt-0.5">الأصناف الموجودة بالفعل في البرنامج مش هتتغير. الأصناف اللي من غير كود بتتطابق بالباركود ثم بالاسم عشان متتكررش.</div>
+                        <label class="flex items-center gap-2 mt-2 cursor-pointer"><input type="checkbox" id="chk-import-update-existing" class="cursor-pointer">
+                            <span class="font-bold text-slate-700">تحديث بيانات الأصناف الموجودة كمان (الأسعار والأسماء والباركود)</span></label>
+                    </div>
 
                         <label class="block text-xs font-bold text-indigo-950 flex items-center gap-1.5">
 
@@ -5075,11 +5082,11 @@
 
     <!-- ملف الجافاسكريبت الرئيسي -->
 
-    <script src="profile.js?v=3"></script>
+    <script src="profile.js?v=4"></script>
     <script src="realtime.js?v=2"></script>
-    <script src="app.js?v=20261111_v46_safe_stock"></script>
+    <script src="app.js?v=20261111_v47_add_only"></script>
     <script src="excel-export.js?v=2"></script>
-    <script src="catalog-import.js?v=2"></script>
+    <script src="catalog-import.js?v=3"></script>
     <script src="invoice-ai.js?v=1"></script>
 
 </body>

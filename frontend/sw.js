@@ -2,8 +2,8 @@
 // - الصفحات (HTML): من الشبكة أولاً (عشان أي تحديث ينزل فوراً)، ولو مفيش نت من النسخة المحفوظة.
 // - ملفات الواجهة والمكتبات (JS/CSS/خطوط): من النسخة المحفوظة فوراً مع تحديثها في الخلفية.
 // - طلبات /api لا يلمسها هنا: وضع عدم الاتصال للبيانات في offline.js.
-const CACHE = 'rambfe-shell-v1';
-const CORE = ['/', '/mobile', '/offline.js?v=1', '/profile.js?v=3', '/cloud-qr.js', '/manifest.webmanifest', '/icon-192.png'];
+const CACHE = 'rambfe-shell-v2';
+const CORE = ['/', '/mobile', '/offline.js?v=2', '/profile.js?v=4', '/cloud-qr.js', '/manifest.webmanifest', '/icon-192.png'];
 
 self.addEventListener('install', (e) => {
     e.waitUntil(caches.open(CACHE).then(c => Promise.all(CORE.map(u => c.add(u).catch(() => { })))).then(() => self.skipWaiting()));
@@ -38,7 +38,8 @@ self.addEventListener('fetch', (e) => {
     if (req.method !== 'GET') return;
     const url = new URL(req.url);
     if (isApi(url) || url.protocol.startsWith('chrome-extension')) return;
-    if (url.pathname === '/sw.js') return;
+    // الكتالوج الأساسي (7 ميجا) بيتحفظ في IndexedDB من offline.js: مش محتاج نسخة تانية هنا
+    if (url.pathname === '/sw.js' || url.pathname === '/base-catalog.json') return;
 
     if (req.mode === 'navigate') {
         e.respondWith((async () => {
