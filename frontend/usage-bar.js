@@ -1,7 +1,8 @@
 /**
  * شريط الحد اليومي للسحابة (Cloudflare D1): قراءات وكتابات اليوم من الحد المجاني
  * - بيتحدث لحظياً من رأس X-Rambfe-Usage اللي راجع مع كل عملية (offline.js بيبعته كحدث rambfe:usage)
- * - لو مفيش عمليات بيسأل /api/cloud/usage كل شوية والصفحة ظاهرة بس
+ * - ومن الاتصال اللحظي (مركز المزامنة) أول ما الصفحة تفتح ومع أي استهلاك من أي جهاز
+ * الشريط نفسه مبيعملش أي طلب للسحابة خالص: صفر استهلاك
  */
 (function () {
     'use strict';
@@ -10,7 +11,6 @@
 
     const LS_KEY = 'rambfe_usage_v1';
     const READS_PER_SCAN = 35; // متوسط قراءات عملية المسح الواحدة بعد التحسينات
-    const IDLE_POLL_MS = 90 * 1000, OPEN_POLL_MS = 30 * 1000;
     let data = null, lastTs = 0, open = false, offline = false, shown = { r: 0, w: 0 };
     let els = null;
 
@@ -133,7 +133,6 @@
             open = v;
             box.classList.toggle('open', open);
             row.setAttribute('aria-expanded', String(open));
-            if (open && Date.now() - lastTs > 20000) poll();
         };
         const toggle = () => setOpen(!open);
         row.addEventListener('click', toggle);
@@ -189,7 +188,8 @@
 
     function render(pulse) {
         if (!els) return;
-        const fresh = lastTs && Date.now() - lastTs < 3 * 60 * 1000 && !offline;
+        const rt = window.RambfeRealtime;
+        const fresh = !offline && (rt ? rt.connected : (lastTs && Date.now() - lastTs < 3 * 60 * 1000));
         els.live.classList.toggle('on', !!fresh);
         els.liveT.textContent = offline ? 'غير متصل' : fresh ? 'مباشر' : 'آخر قراءة';
         els.ago.textContent = agoText();
@@ -228,20 +228,6 @@
         render(pulse && changed);
     }
 
-    let polling = false;
-    async function poll() {
-        if (polling) return;
-        polling = true;
-        try {
-            const res = await fetch('/api/cloud/usage', { cache: 'no-store' });
-            const j = await res.json().catch(() => null);
-            // offline.js بيبعت الحدث من رأس الاستجابة؛ ده احتياطي لو الرأس مش موجود
-            if (j && j.success && Date.now() - lastTs > 2000) {
-                accept({ reads: j.reads_today, readLimit: j.daily_limit, writes: j.writes_today, writeLimit: j.daily_write_limit, resetsAt: j.resets_at }, true);
-            }
-        } catch (_) { offline = true; render(false); } finally { polling = false; }
-    }
-
     function start() {
         if (!mount()) return;
         try {
@@ -249,14 +235,9 @@
             if (c && c.resetsAt > Date.now()) { data = c; lastTs = c.ts || 0; shown = { r: c.reads, w: c.writes, main: pct(Math.max(c.reads / c.readLimit, c.writes / c.writeLimit), 1) }; }
         } catch (_) { }
         render(false);
-        poll();
-        setInterval(() => {
-            render(false);
-            if (document.visibilityState !== 'visible') return;
-            if (Date.now() - lastTs > (open ? OPEN_POLL_MS : IDLE_POLL_MS)) poll();
-        }, 5000);
-        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - lastTs > 20000) poll(); });
-        window.addEventListener('online', () => poll());
+        // تحديث العدّ التنازلي وحالة الاتصال بس (على الجهاز، من غير أي طلب)
+        setInterval(() => render(false), 5000);
+        window.addEventListener('online', () => { offline = false; render(false); });
         window.addEventListener('offline', () => { offline = true; render(false); });
     }
 

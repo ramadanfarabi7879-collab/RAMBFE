@@ -89,6 +89,39 @@
 
     // ---------------- الحالة والشريط ----------------
     const state = { offline: false, economyUntil: 0, pending: 0, syncing: false, lastError: '' };
+
+    // ---------------- رقم نسخة البيانات: الريفرش يفتح من الجهاز لو مفيش أي تعديل حصل ----------------
+    // مركز المزامنة بيزوّد الرقم مع كل تعديل من أي جهاز (من غير قاعدة البيانات). الجهاز بيحفظ آخر رد لكل صفحة
+    // ومعاه الرقم وقتها، ولو الرقم لسه زي ما هو بيرجّع النسخة المحفوظة: صفر قراءات من قاعدة البيانات.
+    const VER = { v: null, at: 0, p: null };
+    function setVer(v) { v = Number(v); if (v) { VER.v = v; VER.at = Date.now(); } }
+    window.addEventListener('rambfe:ver', (e) => setVer(e.detail && e.detail.ver));
+    const rtLive = () => !!(window.RambfeRealtime && window.RambfeRealtime.connected);
+    async function currentVer() {
+        if (VER.v && (rtLive() || Date.now() - VER.at < 10000)) return VER.v;
+        if (navigator.onLine === false) return null;
+        if (!VER.p) {
+            VER.p = (async () => {
+                try {
+                    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 2500);
+                    const r = await origFetch('/api/sync/version', { cache: 'no-store', signal: ctl.signal });
+                    clearTimeout(t);
+                    noteEconomy(r);
+                    const j = await r.json().catch(() => null);
+                    if (j && j.ver) setVer(j.ver);
+                } catch (_) { }
+                return VER.v;
+            })().finally(() => { VER.p = null; });
+        }
+        return VER.p;
+    }
+    const VERSIONED = new Set(['/api/stats', '/api/profiles', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get',
+        '/api/stock/uncounted', '/api/stock/trash', '/api/stock/stores', '/api/stock/store/details']);
+    function versionedKey(pid, u) {
+        if (!VERSIONED.has(u.pathname)) return null;
+        if ((u.pathname === '/api/stock/stores' || u.pathname === '/api/stock/store/details') && (u.searchParams.get('q') || u.searchParams.get('query'))) return null;
+        return `vc:${pid}:${u.pathname}${u.search}`;
+    }
     const economy = () => Date.now() < state.economyUntil;
     function banner() {
         let el = document.getElementById('rambfe-offline-pill');
@@ -576,6 +609,8 @@
                 const was = economy(); state.economyUntil = Date.now() + 10 * 60 * 1000; if (!was) banner();
             }
         } catch (_) { }
+        // تعديل من الجهاز ده: رقم النسخة الجديد جاي في الرد
+        try { const v = res && res.headers && res.headers.get('X-Rambfe-Ver'); if (v) setVer(v); } catch (_) { }
         // استهلاك الحد اليومي للسحابة جاي مع كل استجابة: شريط الاستهلاك بيتحدث لحظياً
         try {
             const h = res && res.headers && res.headers.get('X-Rambfe-Usage');
@@ -678,6 +713,13 @@
             const sn = u.searchParams.get('store_no') || await lastStore(pid);
             if (sn && isFresh(pid, sn)) { const d = await getDetails(pid, sn); if (d) return jsonRes({ ...d, from_device: true }); }
         }
+        // ريفرش أو إعادة تحميل ومفيش أي تعديل حصل من آخر مرة: من النسخة المحفوظة على الجهاز
+        const vKey = method === 'GET' ? versionedKey(pid, u) : null;
+        let vAt = null;
+        if (vKey) {
+            vAt = await currentVer();
+            if (vAt) { const c = await kvGet(vKey); if (c && c.ver === vAt && c.body != null) return jsonRes(c.body); }
+        }
         // عمليات الجرد تتبعت بالترتيب: لو فيه عمليات قديمة في الطابور نزامنها الأول
         if (method === 'POST' && QUEUEABLE.has(path) && state.pending) {
             await flush();
@@ -709,6 +751,7 @@
         if (res.ok) {
             if (state.offline) { setOffline(false); if (state.pending) scheduleFlush(500); }
             learn(pid, u, method, body, res.clone());
+            if (vKey && vAt) res.clone().json().then((b) => kvSet(vKey, { ver: vAt, body: b })).catch(() => { });
         }
         return res;
     };

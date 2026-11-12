@@ -64,7 +64,7 @@ async function broadcast(env, ctx, type, payload, pid = 1) {
 export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health', '/api/realtime',
     '/api/health', '/api/stats', '/api/network-info', '/api/catalog/product', '/api/catalog/next-code', '/api/stock/uncounted',
     '/api/stock/preinventory-search', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get', '/api/profiles', '/api/stock/trash',
-    '/api/catalog/snapshot', '/api/catalog/changes', '/api/stock/offline-pack', '/api/cloud/usage']);
+    '/api/catalog/snapshot', '/api/catalog/changes', '/api/stock/offline-pack', '/api/cloud/usage', '/api/sync/version']);
 export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/stock/save-batch-qty', '/api/stock/update-qty', '/api/stock/delete-item',
     '/api/stock/bulk-delete', '/api/stock/edit-item', '/api/stock/clear', '/api/stock/clear-inventory', '/api/stock/settle', '/api/stock/commit-bulk',
     '/api/stock/stores/commit-all', '/api/stock/trash/restore', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
@@ -74,6 +74,10 @@ export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/
     '/api/catalog/import/lookup', '/api/catalog/import/commit', '/api/catalog/import/finish',
     '/api/invoice/import/rows', '/api/invoice/import/finish',
     '/api/invoice/ai/extract', '/api/invoice/ai/match', '/api/invoice/ai/commit']);
+
+// طلبات POST بتقرا بس (مش بتغير بيانات): مش بتزود رقم النسخة
+const READ_ONLY_POST = new Set(['/api/catalog/parse-gs1', '/api/catalog/parse-gtin', '/api/catalog/import/lookup', '/api/stock/upload/detect',
+    '/api/export/data', '/api/invoice/ai/extract', '/api/invoice/ai/match']);
 
 export function isCloudRoute(method, path) {
     if (path.startsWith('/api/_admin/')) return true;
@@ -85,12 +89,25 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
     if (url.pathname === '/api/realtime' || !env.DB) return handleCloudApiInner(request, env, ctx, url, rawBody);
     const rawDB = env.DB;
     const scoped = { ...env, DB: OFF.countingDB(rawDB) };
-    try { if (OFF.counterStale()) await OFF.flushReadCounter(rawDB, true); } catch (_) { }
-    // شريط الحد اليومي بيسأل كل دقيقة لو مفيش عمليات: نحفظ العدّاد الأول عشان الرقم يبقى إجمالي كل الأجهزة
-    if (url.pathname === '/api/cloud/usage') { try { await OFF.flushReadCounter(rawDB); } catch (_) { } }
+    // الاستهلاك ورقم نسخة البيانات من مركز المزامنة: صفر قراءات من قاعدة البيانات
+    if (url.pathname === '/api/cloud/usage' || url.pathname === '/api/sync/version') {
+        let ver = null;
+        try { ver = await OFF.syncHub(env, rawDB, { force: true }); } catch (_) { }
+        const r = json({ success: true, ver: ver || OFF.dataVersion(), ...OFF.usageInfo(env) });
+        r.headers.set('X-Rambfe-Usage', OFF.usageHeader(env));
+        return r;
+    }
+    try { if (OFF.counterStale()) await OFF.syncHub(env, rawDB, { force: true }); } catch (_) { }
     const res = await handleCloudApiInner(request, scoped, ctx, url, rawBody);
-    const flush = OFF.flushReadCounter(rawDB).catch(() => { });
-    if (ctx && ctx.waitUntil) ctx.waitUntil(flush); else await flush;
+    if (request.method !== 'GET' && !READ_ONLY_POST.has(url.pathname)) {
+        // تعديل: رقم النسخة يزيد (الأجهزة التانية تعرف لحظياً) ويرجع للجهاز ده في الرد
+        let ver = null;
+        try { ver = await OFF.syncHub(env, rawDB, { touch: true }); } catch (_) { }
+        if (res && ver) { try { res.headers.set('X-Rambfe-Ver', String(ver)); } catch (_) { } }
+    } else {
+        const flush = OFF.syncHub(env, rawDB).catch(() => { });
+        if (ctx && ctx.waitUntil) ctx.waitUntil(flush); else await flush;
+    }
     if (res) {
         try { res.headers.set('X-Rambfe-Usage', OFF.usageHeader(env)); } catch (_) { }
         if (OFF.isEconomy(env)) { try { res.headers.set('X-Rambfe-Economy', '1'); } catch (_) { } }

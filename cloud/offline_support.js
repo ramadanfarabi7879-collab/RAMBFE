@@ -118,6 +118,38 @@ export async function flushReadCounter(raw, force = false) {
     return state.today;
 }
 
+// العدّاد ورقم نسخة البيانات في مركز المزامنة (Durable Object) بدل قاعدة البيانات: صفر قراءة وصفر كتابة من D1.
+// touch = حصل تعديل (الأجهزة تعرف إن نسختها المحفوظة قدمت). بيرجع رقم النسخة الجديد.
+const hubOf = (env) => (env && env.SYNC_HUB ? env.SYNC_HUB.get(env.SYNC_HUB.idFromName('main')) : null);
+export async function syncHub(env, rawDB, { force = false, touch = false } = {}) {
+    const hub = hubOf(env);
+    if (!hub) { await flushReadCounter(rawDB, force); return null; } // بدون مركز المزامنة (اختبارات/تشغيل محلي)
+    const day = utcDay();
+    if (state.day !== day) { state.day = day; state.today = null; state.todayW = 0; }
+    if (!touch && !force && Date.now() - state.lastFlush < 30000 && state.today !== null) return null;
+    state.lastFlush = Date.now();
+    const add = state.pending, addW = state.pendingW; state.pending = 0; state.pendingW = 0;
+    const post = (p, body) => hub.fetch(`https://hub${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+    try {
+        let j = await post('/sync', { day, r: add, w: addW, touch, rl: dailyLimit(env), wl: dailyWriteLimit(env) });
+        if (j.need_seed && rawDB) {
+            // مرة واحدة في اليوم: اللي اتسجل في قاعدة البيانات قبل نقل العدّاد (قراءتين بس)
+            let r0 = 0, w0 = 0;
+            try {
+                const rows = (await rawDB.prepare(`SELECT k, v FROM meta WHERE k IN (?, ?)`).bind(`reads_${day}`, `writes_${day}`).all()).results || [];
+                const get = (k) => Number((rows.find(x => x.k === k) || {}).v) || 0;
+                r0 = get(`reads_${day}`); w0 = get(`writes_${day}`);
+            } catch (_) { }
+            j = await post('/seed', { day, r: r0, w: w0 });
+        }
+        state.today = Number(j.usage && j.usage.r) || 0;
+        state.todayW = Number(j.usage && j.usage.w) || 0;
+        state.ver = j.ver || null;
+        return state.ver;
+    } catch (_) { state.pending += add; state.pendingW += addW; return null; }
+}
+export function dataVersion() { return state.ver || null; }
+
 export function isEconomy(env) {
     const lim = dailyLimit(env);
     if (!lim || state.today === null) return false;

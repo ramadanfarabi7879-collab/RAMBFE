@@ -2,8 +2,8 @@
 // - الصفحات (HTML): من الشبكة أولاً (عشان أي تحديث ينزل فوراً)، ولو مفيش نت من النسخة المحفوظة.
 // - ملفات الواجهة والمكتبات (JS/CSS/خطوط): من النسخة المحفوظة فوراً مع تحديثها في الخلفية.
 // - طلبات /api لا يلمسها هنا: وضع عدم الاتصال للبيانات في offline.js.
-const CACHE = 'rambfe-shell-v5';
-const CORE = ['/', '/mobile', '/offline.js?v=5', '/usage-bar.js?v=1', '/profile.js?v=4', '/cloud-qr.js', '/manifest.webmanifest', '/icon-192.png'];
+const CACHE = 'rambfe-shell-v6';
+const CORE = ['/', '/mobile', '/offline.js?v=6', '/usage-bar.js?v=2', '/profile.js?v=4', '/cloud-qr.js', '/manifest.webmanifest', '/icon-192.png'];
 
 self.addEventListener('install', (e) => {
     e.waitUntil(caches.open(CACHE).then(c => Promise.all(CORE.map(u => c.add(u).catch(() => { })))).then(() => self.skipWaiting()));

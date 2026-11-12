@@ -34,7 +34,17 @@
             };
             ws.onmessage = (m) => {
                 if (m.data === 'pong') return;
-                try { this._emit(JSON.parse(m.data)); } catch (_) { }
+                let evt; try { evt = JSON.parse(m.data); } catch (_) { return; }
+                // رقم نسخة البيانات واستهلاك اليوم (من مركز المزامنة، من غير أي قراءة من قاعدة البيانات)
+                if (evt && evt.type === '__meta') {
+                    try {
+                        if (evt.ver) window.dispatchEvent(new CustomEvent('rambfe:ver', { detail: { ver: evt.ver } }));
+                        const u = evt.usage;
+                        if (u) window.dispatchEvent(new CustomEvent('rambfe:usage', { detail: { reads: u.r, readLimit: u.rl, writes: u.w, writeLimit: u.wl, resetsAt: u.resets_at, ts: Date.now() } }));
+                    } catch (_) { }
+                    return;
+                }
+                this._emit(evt);
             };
             ws.onclose = () => { this.connected = false; clearInterval(this._pingTimer); this._schedule(); };
             ws.onerror = () => { try { ws.close(); } catch (_) { } };
