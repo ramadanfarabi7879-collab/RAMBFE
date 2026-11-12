@@ -85,11 +85,16 @@ export async function handleCloudApi(request, env, ctx, url, rawBody) {
     if (url.pathname === '/api/realtime' || !env.DB) return handleCloudApiInner(request, env, ctx, url, rawBody);
     const rawDB = env.DB;
     const scoped = { ...env, DB: OFF.countingDB(rawDB) };
-    try { if (OFF.usageInfo(env).reads_today === 0) await OFF.flushReadCounter(rawDB, true); } catch (_) { }
+    try { if (OFF.counterStale()) await OFF.flushReadCounter(rawDB, true); } catch (_) { }
+    // شريط الحد اليومي بيسأل كل دقيقة لو مفيش عمليات: نحفظ العدّاد الأول عشان الرقم يبقى إجمالي كل الأجهزة
+    if (url.pathname === '/api/cloud/usage') { try { await OFF.flushReadCounter(rawDB); } catch (_) { } }
     const res = await handleCloudApiInner(request, scoped, ctx, url, rawBody);
     const flush = OFF.flushReadCounter(rawDB).catch(() => { });
     if (ctx && ctx.waitUntil) ctx.waitUntil(flush); else await flush;
-    if (res && OFF.isEconomy(env)) { try { res.headers.set('X-Rambfe-Economy', '1'); } catch (_) { } }
+    if (res) {
+        try { res.headers.set('X-Rambfe-Usage', OFF.usageHeader(env)); } catch (_) { }
+        if (OFF.isEconomy(env)) { try { res.headers.set('X-Rambfe-Economy', '1'); } catch (_) { } }
+    }
     return res;
 }
 

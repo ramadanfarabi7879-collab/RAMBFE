@@ -52,17 +52,29 @@ export async function offlinePack(db, storeNo, resolveValidStoreNo) {
 
 // ---------------- عدّاد القراءات اليومي ووضع التوفير ----------------
 const DEFAULT_DAILY_LIMIT = 5000000;
-const state = { pending: 0, day: '', today: null, lastFlush: 0 };
+const DEFAULT_DAILY_WRITE_LIMIT = 100000; // حد الكتابة اليومي في الخطة المجانية
+const state = { pending: 0, pendingW: 0, day: '', today: null, todayW: 0, lastFlush: 0 };
 const utcDay = () => new Date().toISOString().slice(0, 10);
 
 export function dailyLimit(env) {
     const v = parseInt(env.D1_DAILY_READ_LIMIT || '', 10);
     return Number.isFinite(v) ? v : DEFAULT_DAILY_LIMIT; // 0 = بدون حد (الخطة المدفوعة)
 }
+export function dailyWriteLimit(env) {
+    const v = parseInt(env.D1_DAILY_WRITE_LIMIT || '', 10);
+    return Number.isFinite(v) ? v : DEFAULT_DAILY_WRITE_LIMIT;
+}
+// أول طلب في النسخة دي من الـ Worker، أو يوم جديد بدأ (الحد بيتجدد 12 بالليل بتوقيت UTC)
+export function counterStale() { return state.today === null || state.day !== utcDay(); }
 
 // قاعدة بيانات تحسب rows_read لكل استعلام (نفس واجهة D1)
 export function countingDB(raw) {
-    const add = (r) => { const n = r && r.meta && r.meta.rows_read; if (n) state.pending += n; return r; };
+    const add = (r) => {
+        const m = r && r.meta;
+        if (m && m.rows_read) state.pending += m.rows_read;
+        if (m && m.rows_written) state.pendingW += m.rows_written;
+        return r;
+    };
     const wrap = (st) => ({
         __raw: st,
         bind: (...a) => wrap(st.bind(...a)),
@@ -87,15 +99,22 @@ export function countingDB(raw) {
 // حفظ ما تم قراءته في meta (مرة كل 30 ثانية كحد أقصى لكل نسخة من الـ Worker) وقراءة إجمالي اليوم
 export async function flushReadCounter(raw, force = false) {
     const day = utcDay();
-    if (state.day !== day) { state.day = day; state.today = null; }
+    if (state.day !== day) { state.day = day; state.today = null; state.todayW = 0; }
     if (!force && Date.now() - state.lastFlush < 30000 && state.today !== null) return state.today;
     state.lastFlush = Date.now();
-    const add = state.pending; state.pending = 0;
+    const add = state.pending, addW = state.pendingW; state.pending = 0; state.pendingW = 0;
+    const UPSERT = `INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = CAST(v AS INTEGER) + CAST(excluded.v AS INTEGER)`;
     try {
-        const r = await raw.prepare(`INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = CAST(v AS INTEGER) + CAST(excluded.v AS INTEGER) RETURNING v`)
-            .bind(`reads_${day}`, String(add)).first();
-        state.today = Number(r && r.v) || add;
-    } catch (_) { state.pending += add; }
+        // بنكتب العدّاد اللي زاد بس (مفيش استهلاك جديد = صفر كتابة)، وبعدين نقرا إجمالي اليوم من كل الأجهزة
+        const stmts = [];
+        if (add) stmts.push(raw.prepare(UPSERT).bind(`reads_${day}`, String(add)));
+        if (addW) stmts.push(raw.prepare(UPSERT).bind(`writes_${day}`, String(addW)));
+        stmts.push(raw.prepare(`SELECT k, v FROM meta WHERE k IN (?, ?)`).bind(`reads_${day}`, `writes_${day}`));
+        const rs = await raw.batch(stmts);
+        const rows = (rs[rs.length - 1] && rs[rs.length - 1].results) || [];
+        const get = (k) => Number((rows.find(x => x.k === k) || {}).v) || 0;
+        state.today = get(`reads_${day}`); state.todayW = get(`writes_${day}`);
+    } catch (_) { state.pending += add; state.pendingW += addW; }
     return state.today;
 }
 
@@ -106,9 +125,17 @@ export function isEconomy(env) {
 }
 
 export function usageInfo(env) {
-    const lim = dailyLimit(env);
-    const used = (state.today || 0) + state.pending;
-    return { day: state.day || utcDay(), reads_today: used, daily_limit: lim, percent: lim ? Math.round(used * 100 / lim) : 0, economy: isEconomy(env) };
+    const lim = dailyLimit(env), wlim = dailyWriteLimit(env);
+    const used = (state.today || 0) + state.pending, usedW = (state.todayW || 0) + state.pendingW;
+    return { day: state.day || utcDay(), reads_today: used, daily_limit: lim, percent: lim ? Math.round(used * 100 / lim) : 0,
+        writes_today: usedW, daily_write_limit: wlim, write_percent: wlim ? Math.round(usedW * 100 / wlim) : 0,
+        resets_at: Date.UTC(...(state.day || utcDay()).split('-').map((x, i) => i === 1 ? Number(x) - 1 : Number(x))) + 86400000,
+        economy: isEconomy(env) };
+}
+// الاستهلاك مختصر في رأس كل استجابة (قراءات/حد/كتابات/حد): الشريط في الموقع بيتحدث مع كل عملية من غير أي طلب زيادة
+export function usageHeader(env) {
+    const u = usageInfo(env);
+    return `${u.reads_today}/${u.daily_limit}/${u.writes_today}/${u.daily_write_limit}/${u.resets_at}`;
 }
 
 // في وضع التوفير: البحث بحرف أو حرفين (مش رقم كود/باركود) يقرأ آلاف الصفوف، فنوقفه ونطلب 3 حروف

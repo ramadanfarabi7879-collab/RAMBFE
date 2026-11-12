@@ -559,6 +559,7 @@
             if (!sn) continue;
             try {
                 const res = await origFetch(`/api/stock/store/details?store_no=${encodeURIComponent(sn)}`, { headers: { 'X-Profile-Id': pid }, cache: 'no-store' });
+                noteEconomy(res);
                 if (res.ok) await saveDetails(pid, sn, await res.json());
             } catch (_) { }
         }
@@ -575,8 +576,16 @@
                 const was = economy(); state.economyUntil = Date.now() + 10 * 60 * 1000; if (!was) banner();
             }
         } catch (_) { }
+        // استهلاك الحد اليومي للسحابة جاي مع كل استجابة: شريط الاستهلاك بيتحدث لحظياً
+        try {
+            const h = res && res.headers && res.headers.get('X-Rambfe-Usage');
+            if (h) {
+                const [r, rl, w, wl, at] = h.split('/').map(Number);
+                window.dispatchEvent(new CustomEvent('rambfe:usage', { detail: { reads: r, readLimit: rl, writes: w, writeLimit: wl, resetsAt: at, ts: Date.now() } }));
+            }
+        } catch (_) { }
     }
-    const GENERIC_GET = new Set(['/api/stats', '/api/profiles', '/api/invoice/active', '/api/invoices/list', '/api/stock/uncounted', '/api/stock/trash', '/api/network-info']);
+    const GENERIC_GET =new Set(['/api/stats', '/api/profiles', '/api/invoice/active', '/api/invoices/list', '/api/stock/uncounted', '/api/stock/trash', '/api/network-info']);
     async function learn(pid, u, method, body, res) {
         try {
             const path = u.pathname;
