@@ -1644,11 +1644,19 @@
 
                     <div class="bg-indigo-50/70 p-4 rounded-xl border border-indigo-200 space-y-2">
 
-                        <div class="mb-3 p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs">
-                        <div class="font-extrabold text-emerald-900">✅ الافتراضي: إضافة الأصناف الجديدة فقط</div>
-                        <div class="text-[11px] text-emerald-800 mt-0.5">الأصناف الموجودة بالفعل في البرنامج مش هتتغير. الأصناف اللي من غير كود بتتطابق بالباركود ثم بالاسم عشان متتكررش.</div>
-                        <label class="flex items-center gap-2 mt-2 cursor-pointer"><input type="checkbox" id="chk-import-update-existing" class="cursor-pointer">
-                            <span class="font-bold text-slate-700">تحديث بيانات الأصناف الموجودة كمان (الأسعار والأسماء والباركود)</span></label>
+                        <div class="mb-3 p-3 bg-emerald-50 border-2 border-emerald-400 rounded-xl text-xs space-y-2">
+                        <div class="font-extrabold text-emerald-900 text-sm">📦 طريقة رفع ملف كارت الصنف (مفيش أي صنف بيتمسح في الحالتين):</div>
+                        <label class="flex items-start gap-2 p-2.5 bg-white rounded-lg border border-emerald-300 cursor-pointer">
+                            <input type="radio" name="import_catalog_mode" id="rad-import-add-only" value="add" checked class="mt-0.5 cursor-pointer">
+                            <span><strong class="text-emerald-800">إضافة الأصناف الجديدة فقط (الافتراضي)</strong>
+                                <span class="block text-[11px] text-slate-600 mt-0.5">الأصناف الجديدة في الملف بتتضاف على كارت الصنف، والموجود بيفضل زي ما هو بالظبط.
+                                مثال: الكارت فيه 1000 صنف وملفك فيه 100 صنف جديد ← الكارت يبقى 1100.</span></span>
+                        </label>
+                        <label class="flex items-start gap-2 p-2.5 bg-white rounded-lg border border-slate-300 cursor-pointer">
+                            <input type="radio" name="import_catalog_mode" id="chk-import-update-existing" value="update" class="mt-0.5 cursor-pointer">
+                            <span><strong class="text-slate-800">إضافة الجديد + تحديث بيانات الأصناف الموجودة</strong>
+                                <span class="block text-[11px] text-slate-600 mt-0.5">زي الأول، وكمان الأصناف الموجودة في الملف بتتحدث أسعارها وأسماؤها وباركودها من الملف.</span></span>
+                        </label>
                     </div>
 
                         <label class="block text-xs font-bold text-indigo-950 flex items-center gap-1.5">
@@ -1779,7 +1787,7 @@
 
                         <div class="bg-blue-50 p-3 rounded-xl border border-blue-200">
 
-                            <p class="text-[11px] text-blue-700">تحديث أصناف موجودة</p>
+                            <p id="prev-updates-label" class="text-[11px] text-blue-700">تحديث أصناف موجودة</p>
 
                             <p id="prev-updates-count" class="text-base font-bold text-blue-800 font-mono">0</p>
 
@@ -2226,6 +2234,7 @@
 
 
                         <input type="file" id="stk-upload-excel-file" accept=".xlsx, .xls" class="hidden">
+                        <p class="text-[10px] text-emerald-700 font-bold leading-snug mb-1">📌 المخزون المرفوع بيفضل محفوظ لحد ما تمسحه انت بزرار الحذف. رفع ملف جديد بيضيف السطور الجديدة بس، والموجود والكميات المجرودة مبيتغيروش.</p>
 
                         <button type="button" id="btn-stk-upload-excel"
 
@@ -2235,7 +2244,7 @@
 
                                 <span>📥</span>
 
-                                <span>رفع رصيد المخزون (Excel)</span>
+                                <span>رفع ملف المخزون (بيتضاف ويتحفظ)</span>
 
                             </span>
 
@@ -5084,9 +5093,9 @@
 
     <script src="profile.js?v=4"></script>
     <script src="realtime.js?v=2"></script>
-    <script src="app.js?v=20261111_v47_add_only"></script>
+    <script src="app.js?v=20261112_v48_clear_add"></script>
     <script src="excel-export.js?v=2"></script>
-    <script src="catalog-import.js?v=3"></script>
+    <script src="catalog-import.js?v=4"></script>
     <script src="invoice-ai.js?v=1"></script>
 
 </body>

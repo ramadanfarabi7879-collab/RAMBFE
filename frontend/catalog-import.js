@@ -313,6 +313,9 @@
         const { items, skipped, total } = await parseAndValidate(df, mapping);
         if (!items.length) return { success: false, message: 'لا توجد أصناف صالحة للاستيراد في الملف.', skipped_rows: skipped };
         let upd = 0, added = 0, bc = 0, skippedExisting = 0;
+        // عدد أصناف كارت الصنف قبل الرفع (عشان الرسالة توضح: كان كذا + اتضاف كذا = بقى كذا)
+        let before = null;
+        try { const st = await (await fetch('/api/stats', { cache: 'no-store' })).json(); if (st && st.products_count != null) before = Number(st.products_count); } catch (_) { }
         const CH = 150;
         for (let i = 0; i < items.length; i += CH) {
             const part = items.slice(i, i + CH).map(it => ({ code: it.code, name_ar: it.name_ar, name_en: it.name_en, name: it.name, scientific_name: it.scientific_name,
@@ -323,10 +326,12 @@
             if (onProgress) onProgress(Math.min(items.length, i + CH), items.length);
         }
         await api('/api/catalog/import/finish', { file_name: fileName, updated_count: upd, new_count: added, replace_barcodes: replace });
+        const after = before != null ? before + added : null;
+        const tail = before != null ? ` كارت الصنف كان ${before.toLocaleString()} صنف وبقى ${after.toLocaleString()} صنف.` : '';
         return {
-            success: true, skipped_existing_count: skippedExisting, only_new: onlyNew,
-            message: onlyNew ? `تمت إضافة ${added} صنف جديد. الأصناف الموجودة بالفعل (${skippedExisting}) لم تتغير.`
-                : `تمت معالجة ${items.length} صنف بنجاح (تحديث ${upd} صنف موجود، وإضافة ${added} صنف جديد).`,
+            success: true, skipped_existing_count: skippedExisting, only_new: onlyNew, products_before: before, products_after: after,
+            message: (onlyNew ? `تمت إضافة ${added} صنف جديد، والأصناف الموجودة (${skippedExisting}) متغيرتش.`
+                : `تمت إضافة ${added} صنف جديد وتحديث ${upd} صنف موجود.`) + tail + ' مفيش أي صنف اتمسح.',
             imported_count: items.length, updated_count: upd, new_count: added, total_file_rows: total, barcodes_registered_count: bc,
             replace_barcodes: replace, skipped_count: skipped.length, skipped_rows: skipped.slice(0, 100)
         };

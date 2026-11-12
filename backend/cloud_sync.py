@@ -251,8 +251,10 @@ def push_catalog(full_compare: bool = False) -> Dict[str, Any]:
         local = _local_catalog_sigs()
         known = None if full_compare else _load_state()
         remote = known if known is not None else _cloud_catalog_sigs()
-        changed = [c for c, s in local.items() if remote.get(c) != s]
-        deleted = [c for c in remote if c not in local]
+        # إضافة فقط: الكمبيوتر يرفع الأصناف الجديدة اللي مش موجودة في السحابة. ما بيمسحش ولا يكتب فوق أي صنف موجود
+        # (كان بيمسح من السحابة أي صنف مش عنده — زي أصناف اتضافت من الموقع قبل ما يسحبها — وبيرجّع تعديلات الموقع لنسخته القديمة)
+        changed = [c for c in local if c not in remote]
+        deleted: List[str] = []
         if not changed and not deleted:
             if known is None:
                 _save_state(local)
@@ -379,6 +381,11 @@ def initial_sync() -> None:
     if m.get("seed_source") == "provisional":
         # لا نستبدل جداول الجرد في السحابة بنسخة الكمبيوتر أبداً (السحابة هي المصدر الوحيد للجرد)
         _admin("/api/_admin/meta", {"set": {"seed_source": "pc"}})
+    # نسحب تعديلات الموقع الأول عشان نسخة الكمبيوتر تبقى محدّثة قبل أي مقارنة
+    try:
+        pull_catalog_changes()
+    except Exception as e:
+        get_server_logger().warning(f"[Cloud] initial catalog pull failed: {e}")
     push_catalog(full_compare=_load_state() is None)
 
 

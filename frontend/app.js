@@ -6260,7 +6260,15 @@ function renderImportPreview(data) {
 
     document.getElementById('prev-total-file-rows').textContent = (data.total_file_rows || 0).toLocaleString();
     if (document.getElementById('prev-updates-count')) {
-        document.getElementById('prev-updates-count').textContent = (data.updates_count || 0).toLocaleString();
+        // وضع "إضافة الجديد فقط": الأصناف الموجودة بتتعرض كعدد اللي هيفضل زي ما هو
+        const lbl = document.getElementById('prev-updates-label');
+        if (data.only_new) {
+            if (lbl) lbl.textContent = 'أصناف موجودة بالفعل (مش هتتغير)';
+            document.getElementById('prev-updates-count').textContent = (data.existing_count || 0).toLocaleString();
+        } else {
+            if (lbl) lbl.textContent = 'تحديث أصناف موجودة';
+            document.getElementById('prev-updates-count').textContent = (data.updates_count || 0).toLocaleString();
+        }
     }
     document.getElementById('prev-valid-count').textContent = (data.new_count != null ? data.new_count : data.valid_products_count || 0).toLocaleString();
     document.getElementById('prev-conflicts-count').textContent = (data.conflicts_count || 0).toLocaleString();
@@ -6399,8 +6407,9 @@ async function executeImportCommit() {
             document.getElementById('import-step-report')?.classList.remove('hidden');
 
             document.getElementById('report-title').textContent = data.message || `تم استيراد ومعالجة ${data.imported_count} صنف بنجاح!`;
-            document.getElementById('report-summary').textContent =
-                `تم فحص ${data.total_file_rows} صفاً، وتحديث ${data.updated_count || 0} صنف موجود، وإضافة ${data.new_count || 0} صنف جديد، وربط ${data.barcodes_registered_count} باركود و GTIN مع الحفاظ على الأصفار في البداية. الصفوف المتخطاة: ${data.skipped_count}.`;
+            document.getElementById('report-summary').textContent = (data.products_before != null
+                ? `كارت الصنف كان ${Number(data.products_before).toLocaleString()} صنف ← اتضاف ${(data.new_count || 0).toLocaleString()} صنف جديد ← بقى ${Number(data.products_after).toLocaleString()} صنف. `
+                : '') + `تم فحص ${data.total_file_rows} صفاً، تحديث ${data.updated_count || 0} صنف موجود، الأصناف الموجودة اللي متغيرتش: ${data.skipped_existing_count || 0}، الصفوف المتخطاة: ${data.skipped_count}. مفيش أي صنف اتمسح.`;
             refreshSystemStats();
             loadCatalogProducts();
             await loadActiveDraftInvoice();
