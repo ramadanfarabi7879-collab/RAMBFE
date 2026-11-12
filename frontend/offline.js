@@ -68,6 +68,17 @@
     let tempSeq = 0;
     const tempId = () => -(Date.now() * 10 + (tempSeq++ % 10));
     const pidNow = () => { try { return localStorage.getItem('rambfe_profile_id') || '1'; } catch (_) { return '1'; } };
+    // رقم ثابت لكل تبويب: السحابة بترجعه مع الأحداث اللحظية، فالجهاز يعرف إن الحدث من تعديله هو
+    const CLIENT_ID = (() => {
+        try { let v = sessionStorage.getItem('rambfe_client_id'); if (!v) { v = 'c' + Math.random().toString(36).slice(2, 10); sessionStorage.setItem('rambfe_client_id', v); } return v; }
+        catch (_) { return 'c' + Math.random().toString(36).slice(2, 10); }
+    })();
+    // نسخة الاستور على الجهاز "محدّثة" بعد ما الجهاز نفسه عدّلها: إعادة التحميل بتتقري من الجهاز بدل السحابة،
+    // لحد ما جهاز تاني يعدّل نفس الاستور (حدث لحظي) أو تعدي دقيقة
+    const fresh = new Map();
+    const FRESH_MS = 60 * 1000;
+    const freshKey = (pid, sn) => `${pid}|${sn}`;
+    const isFresh = (pid, sn) => (fresh.get(freshKey(pid, sn)) || 0) > Date.now();
     function jsonRes(data, status = 200) {
         return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Rambfe-Offline': '1' } });
     }
@@ -174,6 +185,8 @@
         snap.barcodes = (snap.barcodes || []).filter(x => !changed.has(String(x[0]))).concat(ch.barcodes || []);
         snap.count = snap.products.length;
     }
+    let catTimer = null;
+    function refreshCatalogSoon() { clearTimeout(catTimer); catTimer = setTimeout(() => downloadCatalog(true), 1500); }
     async function downloadCatalog(force = false) {
         try {
             let meta = (await kvGet('catalog_meta')) || {};
@@ -412,6 +425,68 @@
             store_details: { store: d.store, items, stats: d.stats } });
     }
 
+    // ---------------- عمليات الجرد "الخفيفة" وهي متصلة ----------------
+    // السحابة بترجع البند اللي اتغير بس، والجهاز بيحدّث نسخة الاستور عنده ويحسب الإجماليات
+    // (بدل ما كل مسح يرجّع تفاصيل الاستور كاملة ويعيد قراءة كل بنوده ومخزونه من قاعدة البيانات)
+    function upsertEntry(d, entry) {
+        if (!entry || !entry.id) return;
+        const i = d.items.findIndex(x => x.id === entry.id);
+        const e = { ...(i >= 0 ? d.items[i] : {}), ...entry };
+        if (e.batch_number) e.batch_number = up(e.batch_number);
+        // اسم الصنف من الكتالوج المحفوظ زي ما السحابة بتعرضه
+        if (catalog) { const p = catalog.code(e.product_code); if (p && p.name_en) e.product_name = p.name_en; }
+        delete e.offline_pending;
+        if (i >= 0) d.items[i] = e; else d.items.unshift(e);
+        // بند كان اتعمل وقت عدم الاتصال لنفس الصنف والتشغيلة: يتشال (السحابة رجعت البند الحقيقي)
+        d.items = d.items.filter(x => !(x.id < 0 && String(x.product_code) === String(e.product_code) && up(x.batch_number) === up(e.batch_number)));
+    }
+    async function lightOp(pid, path, input, init, body) {
+        if (path === '/api/mobile/scan' && String(body.target || 'stocktake') !== 'stocktake') return null;
+        const d = await getDetails(pid, body.store_no);
+        if (!d) return null; // أول مرة للاستور ده: الرد الكامل بيتحفظ عادي
+        const res = await origFetch(input, { ...init, body: JSON.stringify({ ...body, light: true }) });
+        noteEconomy(res);
+        const data = await res.clone().json().catch(() => null);
+        if (!res.ok || !data || !data.light || !data.success) return res;
+        if (data.entry) upsertEntry(d, data.entry);
+        if (d.store && d.store.status === 'new') d.store.status = 'in_progress';
+        recompute(d);
+        await saveDetails(pid, d.store.store_no, d);
+        fresh.set(freshKey(pid, d.store.store_no), Date.now() + FRESH_MS);
+        if (body.store_no && body.store_no !== d.store.store_no) fresh.set(freshKey(pid, body.store_no), Date.now() + FRESH_MS);
+        delete data.light; delete data.entry;
+        data.store_details = d;
+        return new Response(JSON.stringify(data), { status: res.status, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+    }
+
+    async function freshStoresList(pid) {
+        const list = await kvGet(`stores:${pid}`);
+        if (!list || !Array.isArray(list.created_stores)) return null;
+        const freshStores = list.created_stores.filter(st => isFresh(pid, st.store_no));
+        if (!freshStores.length) return null;
+        for (const st of freshStores) {
+            const d = await getDetails(pid, st.store_no);
+            if (!d) return null;
+            const items = d.items || [];
+            st.counted_items = new Set(items.map(i => i.product_code)).size;
+            st.counted_qty = r2(items.reduce((a, i) => a + num(i.counted_qty), 0));
+            st.counted_cost = r2(items.reduce((a, i) => a + num(i.counted_qty) * num(i.cost_price), 0));
+            st.counted_sale = r2(items.reduce((a, i) => a + num(i.counted_qty) * num(i.selling_price), 0));
+            st.new_batches_count = items.filter(i => num(i.is_new_batch) === 1).length;
+            if (d.store && d.store.status) st.status = d.store.status;
+        }
+        const rows = list.created_stores;
+        const sum = (k) => rows.reduce((a, r) => a + num(r[k]), 0);
+        const counted = rows.filter(r => num(r.counted_qty) > 0 || ['in_progress', 'completed'].includes(r.status));
+        const tcc = sum('counted_cost'), tcs = sum('counted_sale'), tsc = sum('system_cost'), tss = sum('system_sale');
+        const out = { ...list, created_stores: rows, counted_stores: counted, from_device: true,
+            summary: { ...(list.summary || {}), total_stores: rows.length, total_active_counted: counted.length, total_counted_items: rows.reduce((a, r) => a + Math.trunc(num(r.counted_items)), 0),
+                total_counted_qty: r2(sum('counted_qty')), total_system_cost: r2(tsc), total_system_sale: r2(tss), total_counted_cost: r2(tcc), total_counted_sale: r2(tcs),
+                diff_cost: r2(tcc - tsc), diff_sale: r2(tcs - tss) } };
+        await kvSet(`stores:${pid}`, out);
+        return jsonRes(out);
+    }
+
     // ملف (مخزون أو كتالوج) اترفع والسحابة مش متاحة: يتحفظ على الجهاز كما هو ويترفع لما الاتصال يرجع
     async function queueFile(file, storeNo) {
         await outboxAdd({ kind: 'file-upload', pid: String(pidNow()), file, file_name: file.name || 'file.xlsx', store_no: storeNo || '', ts: Date.now() });
@@ -513,6 +588,7 @@
                 await kvSet(`get:${pid}:${path}${u.search}`, await res.json());
             } else if (method === 'POST') {
                 const d = await res.json();
+                if (d && d.success !== false && ['/api/catalog/save', '/api/catalog/delete', '/api/catalog/import/finish'].includes(path)) refreshCatalogSoon();
                 if (d && d.store_details && Array.isArray(d.store_details.items) && !(body && body.query)) await saveDetails(pid, (body && body.store_no) || '', d.store_details);
                 if (path === '/api/stock/upload/finish' && d && d.success) await kvDel(`pack:${pid}:${(d.store_details && d.store_details.store && d.store_details.store.store_no) || body.store_no}`);
             }
@@ -571,11 +647,27 @@
         if (u.origin !== location.origin || !u.pathname.startsWith('/api/') || u.pathname.startsWith('/api/realtime')) return origFetch(input, init);
         const method = String((init && init.method) || (input && typeof input !== 'string' && input.method) || 'GET').toUpperCase();
         const pid = readPid(input, init), body = readBody(init), path = u.pathname;
+        if (typeof input === 'string') {
+            init = Object.assign({}, init || {});
+            const h = new Headers(init.headers || {});
+            if (!h.has('X-Client-Id')) h.set('X-Client-Id', CLIENT_ID);
+            init.headers = h;
+        }
 
-        // وضع التوفير أو بدون إنترنت: البحث في الأصناف من النسخة المحفوظة (صفر قراءات من قاعدة البيانات)
-        if (method === 'GET' && LOCAL_FIRST.has(path) && (economy() || navigator.onLine === false) && !(path === '/api/stock/preinventory-search' && u.searchParams.get('stock_only') === '1')) {
+        // البحث في الأصناف دايماً من الكتالوج المحفوظ على الجهاز: صفر قراءات من قاعدة البيانات
+        if (method === 'GET' && LOCAL_FIRST.has(path) && !(path === '/api/stock/preinventory-search' && u.searchParams.get('stock_only') === '1') && await getCatalog()) {
             const local = await handleOffline(pid, u, method, body);
             if (local) return local;
+        }
+        // قائمة الاستورات بعد تعديل من نفس الجهاز: من النسخة المحفوظة مع تحديث أرقام الجرد للاستورات اللي اتعدلت
+        if (method === 'GET' && path === '/api/stock/stores' && !u.searchParams.get('q') && !u.searchParams.get('query')) {
+            const local = await freshStoresList(pid);
+            if (local) return local;
+        }
+        // تفاصيل الاستور بعد تعديل من نفس الجهاز: من النسخة اللي على الجهاز (اتحدثت بالبند اللي رجعته السحابة)
+        if (method === 'GET' && path === '/api/stock/store/details' && !u.searchParams.get('query') && !u.searchParams.get('q')) {
+            const sn = u.searchParams.get('store_no') || await lastStore(pid);
+            if (sn && isFresh(pid, sn)) { const d = await getDetails(pid, sn); if (d) return jsonRes({ ...d, from_device: true }); }
         }
         // عمليات الجرد تتبعت بالترتيب: لو فيه عمليات قديمة في الطابور نزامنها الأول
         if (method === 'POST' && QUEUEABLE.has(path) && state.pending) {
@@ -584,6 +676,10 @@
         }
         let res;
         try {
+            if (method === 'POST' && QUEUEABLE.has(path) && body && typeof input === 'string') {
+                const lr = await lightOp(pid, path, input, init, body);
+                if (lr) { if (state.offline) setOffline(false); return lr; }
+            }
             res = await origFetch(input, init);
         } catch (err) {
             setOffline(true);
@@ -613,8 +709,21 @@
     window.addEventListener('offline', () => setOffline(true));
     document.addEventListener('visibilitychange', () => { if (!document.hidden && state.pending) flush(); });
     setInterval(() => { if (state.pending && !state.syncing) flush(); }, 60000);
+    function hookRealtime() {
+        if (!window.RambfeRealtime || hookRealtime.done) return;
+        hookRealtime.done = true;
+        window.RambfeRealtime.onEvent((evt) => {
+            const p = (evt && evt.payload) || {};
+            if (p.client_id && p.client_id === CLIENT_ID) return; // تعديل الجهاز نفسه: نسخته محدّثة بالفعل
+            const t = String(evt.type || '');
+            if (t.startsWith('catalog_')) refreshCatalogSoon();
+            if (p.store_no) fresh.delete(freshKey(pidNow(), p.store_no)); else fresh.clear();
+        });
+    }
     function boot() {
         qr().catch(() => { });
+        hookRealtime();
+        setTimeout(hookRealtime, 1500);
         refreshPending().then(() => { if (state.pending) flush(); });
         // تحميل/تحديث نسخة الأصناف في الخلفية بعد ما الصفحة تفتح
         setTimeout(() => downloadCatalog(), 4000);

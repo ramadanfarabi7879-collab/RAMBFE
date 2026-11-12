@@ -31,6 +31,14 @@ export async function ensureSafetyTables(db) {
     ].map(s => db.prepare(s)));
     safetyTablesReady = true;
 }
+// فهارس مركّبة (استور + صنف): بدونها البحث عن صنف في استور كان بيقرا مخزون الاستور كله مع كل مسح
+let lookupIndexesReady = false;
+async function ensureLookupIndexes(db) {
+    if (lookupIndexesReady) return;
+    await db.batch(['CREATE INDEX IF NOT EXISTS idx_inv_store_code ON inventory_records(store_no, product_code)',
+        'CREATE INDEX IF NOT EXISTS idx_inv_store_barcode ON inventory_records(store_no, barcode)'].map(s => db.prepare(s)));
+    lookupIndexesReady = true;
+}
 // جملة تنسخ بنود الجرد المطابقة للشرط إلى السلة (تُضاف لنفس الدفعة قبل جملة الحذف)
 function trashStmt(db, batchId, reason, whereSql, params) {
     const cols = ENTRY_COLS.map(c => c === 'id' ? 'entry_id' : c).join(', ');
@@ -108,17 +116,21 @@ export async function resolveValidStoreNo(db, storeNo = '') {
 }
 
 export async function getAllStores(db, searchQ = '') {
+    // الإجماليات بتمريرة واحدة على بنود الجرد وواحدة على المخزون (بدل استعلامات فرعية لكل استور)
     let sql = `SELECT s.*,
-        COALESCE((SELECT COUNT(DISTINCT product_code) FROM stocktake_entries WHERE store_no = s.store_no), 0) as counted_items,
-        COALESCE((SELECT SUM(counted_qty) FROM stocktake_entries WHERE store_no = s.store_no), 0) as counted_qty,
-        COALESCE((SELECT SUM(counted_qty * cost_price) FROM stocktake_entries WHERE store_no = s.store_no), 0) as counted_cost,
-        COALESCE((SELECT SUM(counted_qty * selling_price) FROM stocktake_entries WHERE store_no = s.store_no), 0) as counted_sale,
-        COALESCE((SELECT SUM(system_qty * cost_price) FROM inventory_records WHERE store_no = s.store_no), 0) as system_cost,
-        COALESCE((SELECT SUM(system_qty * selling_price) FROM inventory_records WHERE store_no = s.store_no), 0) as system_sale,
-        COALESCE((SELECT COUNT(*) FROM stocktake_entries WHERE store_no = s.store_no AND is_new_batch = 1), 0) as new_batches_count
-        FROM stock_stores s WHERE s.profile_id = ?`;
+        COALESCE(e.counted_items, 0) AS counted_items, COALESCE(e.counted_qty, 0) AS counted_qty,
+        COALESCE(e.counted_cost, 0) AS counted_cost, COALESCE(e.counted_sale, 0) AS counted_sale,
+        COALESCE(i.system_cost, 0) AS system_cost, COALESCE(i.system_sale, 0) AS system_sale,
+        COALESCE(e.new_batches_count, 0) AS new_batches_count
+        FROM stock_stores s
+        LEFT JOIN (SELECT store_no, COUNT(DISTINCT product_code) AS counted_items, SUM(counted_qty) AS counted_qty, SUM(counted_qty * cost_price) AS counted_cost,
+            SUM(counted_qty * selling_price) AS counted_sale, SUM(CASE WHEN is_new_batch = 1 THEN 1 ELSE 0 END) AS new_batches_count
+            FROM stocktake_entries WHERE store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?1) GROUP BY store_no) e ON e.store_no = s.store_no
+        LEFT JOIN (SELECT store_no, SUM(system_qty * cost_price) AS system_cost, SUM(system_qty * selling_price) AS system_sale
+            FROM inventory_records WHERE store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?1) GROUP BY store_no) i ON i.store_no = s.store_no
+        WHERE s.profile_id = ?1`;
     let params = [pidOf(db)];
-    if (searchQ) { sql += ' AND (s.store_no LIKE ? OR s.store_name LIKE ? OR s.branch_name LIKE ?)'; const l = `%${searchQ.trim()}%`; params.push(l, l, l); }
+    if (searchQ) { sql += ' AND (s.store_no LIKE ?2 OR s.store_name LIKE ?2 OR s.branch_name LIKE ?2)'; params.push(`%${searchQ.trim()}%`); }
     sql += ' ORDER BY s.id DESC';
     const rows = await all(db, sql, params);
     const created = [], counted = [];
@@ -389,10 +401,12 @@ const INSERT_ENTRY = `INSERT INTO stocktake_entries (product_code, product_name,
     system_qty, counted_qty, cost_price, selling_price, is_new_batch, item_type, store_no, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
 
-export async function scanItemToStore(db, rawCode, storeNo = 'ST-001', forceDirect = false, productCode = '') {
+// light: يرجّع البند اللي اتغير بس بدل تفاصيل الاستور كاملة (الجهاز بيحدّث نسخته بنفسه) — توفير كبير في القراءات
+export async function scanItemToStore(db, rawCode, storeNo = 'ST-001', forceDirect = false, productCode = '', light = false) {
     const raw = String(rawCode || '').trim();
     if (!raw) return { success: false, message: 'لم يتم إدخال أو مسح أي كود' };
     storeNo = await resolveValidStoreNo(db, storeNo);
+    await ensureLookupIndexes(db);
     const explicit = String(productCode || '').trim();
     let prod = null, parsed = {}, gtin = '', serial = '', batch = '', expiry = '';
     if (explicit) {
@@ -430,10 +444,15 @@ export async function scanItemToStore(db, rawCode, storeNo = 'ST-001', forceDire
     // المطابقة بالباركود فقط لو له قيمة: باركود فاضي كان يطابق كل سطور المخزون اللي من غير باركود
     // فتظهر تشغيلات أصناف تانية في شاشة اختيار التشغيلة
     const keys = [...new Set([pCode, cPcode].filter(Boolean))], bcs = [...new Set([pBarcode, gCode].map(v => String(v || '').trim()).filter(Boolean))];
-    const invWhere = `(product_code IN (${keys.map(() => '?').join(',')})${bcs.length ? ` OR barcode IN (${bcs.map(() => '?').join(',')})` : ''})`;
-    let inv = await all(db, `SELECT * FROM inventory_records WHERE ${invWhere} AND store_no = ? ORDER BY expiry_date ASC, id ASC`, [...keys, ...bcs, storeNo]);
-    if (!inv.length) inv = await all(db, `SELECT * FROM inventory_records WHERE ${invWhere} AND store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?) ORDER BY expiry_date ASC, id ASC`,
-        [...keys, ...bcs, pidOf(db)]);
+    // بحث بالفهارس: بالكود الأول ثم بالباركود (الـ OR بين الاتنين في جملة واحدة كان بيقرا مخزون الاستور كله مع كل مسح)
+    const ph = (a) => a.map(() => '?').join(',');
+    const invBy = async (storeCond, storeParams) => {
+        let rows = await all(db, `SELECT * FROM inventory_records WHERE product_code IN (${ph(keys)}) AND ${storeCond} ORDER BY expiry_date ASC, id ASC`, [...keys, ...storeParams]);
+        if (!rows.length && bcs.length) rows = await all(db, `SELECT * FROM inventory_records WHERE barcode IN (${ph(bcs)}) AND ${storeCond} ORDER BY expiry_date ASC, id ASC`, [...bcs, ...storeParams]);
+        return rows;
+    };
+    let inv = await invBy('store_no = ?', [storeNo]);
+    if (!inv.length) inv = await invBy('store_no IN (SELECT store_no FROM stock_stores WHERE profile_id = ?)', [pidOf(db)]);
     for (const ir of inv) {
         if (costPrice === 0 && ir.cost_price && num(ir.cost_price) > 0) costPrice = num(ir.cost_price);
         if (sellingPrice === 0 && ir.selling_price && num(ir.selling_price) > 0) sellingPrice = num(ir.selling_price);
@@ -532,16 +551,17 @@ export async function scanItemToStore(db, rawCode, storeNo = 'ST-001', forceDire
     }
     await run(db, "UPDATE stock_stores SET status = 'in_progress', counted_at = CURRENT_TIMESTAMP WHERE store_no = ?", [storeNo]);
     if (serial) await run(db, 'INSERT OR IGNORE INTO stocktake_scanned_serials (serial_number, product_code, batch_number, store_no, scanned_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', [serial, pCode, batch, storeNo]);
-    const storeData = await getStoreStocktakeDetails(db, storeNo);
+    const storeData = light ? null : await getStoreStocktakeDetails(db, storeNo);
+    const entry = light ? await first(db, 'SELECT * FROM stocktake_entries WHERE id = ?', [targetId]) : undefined;
     const msg = `تم جرد: ${pName} | باتش: ${tBatch || '-'} | صلاحية: ${tExpiry || '-'} | رصيد المخزون: ${pyf(tSys)} | الفعلي: ${Math.trunc(newQty)} | بيع: ${pyf(sellingPrice)} | تكلفة: ${pyf(costPrice)}` + (isNew ? ' (⚠️ باتش جديد)' : '');
     return {
         success: true, requires_batch_entry: false, direct_scan: true, entry_id: targetId, product_code: pCode, product_name: pName,
         batch_number: tBatch, expiry_date: tExpiry, serial, system_qty: tSys, counted_qty: newQty, cost_price: costPrice, selling_price: sellingPrice,
-        is_new_batch: Boolean(isNew), message: msg, store_details: storeData
+        is_new_batch: Boolean(isNew), message: msg, store_details: storeData, ...(light ? { light: true, entry, store_no: storeNo } : {})
     };
 }
 
-export async function saveStockBatchCount(db, { store_no, product_code, batch_number, expiry_date, counted_qty, system_qty = 0, cost_price = 0, selling_price = 0, entry_id = null }) {
+export async function saveStockBatchCount(db, { store_no, product_code, batch_number, expiry_date, counted_qty, system_qty = 0, cost_price = 0, selling_price = 0, entry_id = null }, light = false) {
     const storeNo = await resolveValidStoreNo(db, store_no);
     const prod = await getProductByCode(db, cleanNumericCode(product_code));
     const pName = prod ? (prod.name_en || prod.name || '') : '';
@@ -573,12 +593,15 @@ export async function saveStockBatchCount(db, { store_no, product_code, batch_nu
         eid = (await run(db, INSERT_ENTRY, [product_code, pName, bc, bc, b, exp, sysVal, counted, costVal, saleVal, isNew, itemType, storeNo])).last_row_id;
     }
     await run(db, "UPDATE stock_stores SET status = 'in_progress', counted_at = CURRENT_TIMESTAMP WHERE store_no = ?", [storeNo]);
-    return { success: true, requires_batch_entry: false, direct_scan: true, entry_id: eid, message: `تم حفظ: ${pName} | تشغيلة: ${b || '-'} | الفعلي: ${pyf(counted)}`, store_details: await getStoreStocktakeDetails(db, storeNo) };
+    const msg = `تم حفظ: ${pName} | تشغيلة: ${b || '-'} | الفعلي: ${pyf(counted)}`;
+    if (light) return { success: true, requires_batch_entry: false, direct_scan: true, entry_id: eid, message: msg, light: true, store_no: storeNo, entry: await first(db, 'SELECT * FROM stocktake_entries WHERE id = ?', [eid]) };
+    return { success: true, requires_batch_entry: false, direct_scan: true, entry_id: eid, message: msg, store_details: await getStoreStocktakeDetails(db, storeNo) };
 }
 
-export async function updateEntryQuantity(db, entryId, newQty, storeNo) {
+export async function updateEntryQuantity(db, entryId, newQty, storeNo, light = false) {
     storeNo = await resolveValidStoreNo(db, storeNo);
     await run(db, 'UPDATE stocktake_entries SET counted_qty = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND store_no = ?', [num(newQty), entryId, storeNo]);
+    if (light) return { success: true, light: true, store_no: storeNo, entry: await first(db, 'SELECT * FROM stocktake_entries WHERE id = ? AND store_no = ?', [entryId, storeNo]) };
     return { success: true, store_details: await getStoreStocktakeDetails(db, storeNo) };
 }
 

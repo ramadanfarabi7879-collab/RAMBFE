@@ -21,7 +21,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
         'Cache-Control': 'no-store',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token, X-Profile-Id'
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token, X-Profile-Id, X-Client-Id'
     }
 });
 
@@ -116,7 +116,9 @@ async function handleCloudApiInner(request, env, ctx, url, rawBody) {
         }
     }
     const db = new ScopedDB(env.DB, pid);
-    const bcast = (type, payload) => broadcast(env, ctx, type, payload, pid);
+    // رقم الجهاز اللي عمل التعديل: الجهاز نفسه مبيعيدش تحميل تعديلاته (بيحدّث نسخته محلياً)
+    const clientId = String(request.headers.get('X-Client-Id') || '').slice(0, 40);
+    const bcast = (type, payload) => broadcast(env, ctx, type, clientId ? { ...payload, client_id: clientId } : payload, pid);
     const path = url.pathname;
     const method = request.method;
     const p = url.searchParams;
@@ -211,7 +213,7 @@ async function handleCloudApiInner(request, env, ctx, url, rawBody) {
                 const target = String(data.target || 'stocktake').trim();
                 if (!code) return json({ success: false, message: 'لم يتم إرسال أي كود' }, 400);
                 if (target !== 'stocktake') return null; // مسح الفواتير ما زال على الكمبيوتر
-                const res = await S.scanItemToStore(db, code, storeNo, Boolean(data.force_direct));
+                const res = await S.scanItemToStore(db, code, storeNo, Boolean(data.force_direct), '', Boolean(data.light));
                 const pr = (res.product && typeof res.product === 'object') ? res.product : {};
                 const event = {
                     id: uid(), code, target, store_no: storeNo, invoice_id: data.invoice_id ?? null, success: Boolean(res.success),
@@ -224,7 +226,7 @@ async function handleCloudApiInner(request, env, ctx, url, rawBody) {
             }
             case '/api/stock/scan': {
                 const code = String(data.code || data.qr_text || '').trim();
-                const res = await S.scanItemToStore(db, code, storeNo, Boolean(data.force_direct), String(data.product_code || '').trim());
+                const res = await S.scanItemToStore(db, code, storeNo, Boolean(data.force_direct), String(data.product_code || '').trim(), Boolean(data.light));
                 if (res.success) await bcast('stock_scan', { store_no: storeNo, code, product_name: res.product_name || '', product_code: res.product_code || '' });
                 return json(res);
             }
@@ -235,13 +237,13 @@ async function handleCloudApiInner(request, env, ctx, url, rawBody) {
                     store_no: storeNo, product_code: pc, batch_number: String(data.batch_number || '').trim().toUpperCase(),
                     expiry_date: String(data.expiry_date || '').trim(), counted_qty: counted, system_qty: num(data.system_qty),
                     cost_price: num(data.cost_price), selling_price: num(data.selling_price), entry_id: data.entry_id ? intOr0(data.entry_id) : null
-                });
+                }, Boolean(data.light));
                 if (res.success) await bcast('stock_qty_updated', { store_no: storeNo, product_code: pc, counted_qty: counted });
                 return json(res);
             }
             case '/api/stock/update-qty': {
                 const id = intOr0(data.entry_id || data.id), qty = num(data.quantity || data.qty);
-                const res = await S.updateEntryQuantity(db, id, qty, storeNo);
+                const res = await S.updateEntryQuantity(db, id, qty, storeNo, Boolean(data.light));
                 if (res.success) await bcast('stock_qty_updated', { store_no: storeNo, entry_id: id, quantity: qty });
                 return json(res);
             }

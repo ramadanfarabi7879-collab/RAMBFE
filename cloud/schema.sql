@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS inventory_records (
 CREATE INDEX IF NOT EXISTS idx_inv_code_batch ON inventory_records(product_code, batch_number);
 CREATE INDEX IF NOT EXISTS idx_inv_store ON inventory_records(store_no);
 CREATE INDEX IF NOT EXISTS idx_inv_barcode ON inventory_records(barcode);
+CREATE INDEX IF NOT EXISTS idx_inv_store_code ON inventory_records(store_no, product_code);
+CREATE INDEX IF NOT EXISTS idx_inv_store_barcode ON inventory_records(store_no, barcode);
 
 CREATE TABLE IF NOT EXISTS stocktake_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
