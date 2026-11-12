@@ -32,7 +32,7 @@ SYNC_TABLES = STOCK_TABLES + INVOICE_TABLES
 CLOUD_GET = {"/api/catalog/products", "/api/stock/stores", "/api/stock/store/details", "/api/stock/store/search",
              "/api/sync/events", "/api/mobile/poll", "/api/stats", "/api/catalog/product", "/api/catalog/next-code",
              "/api/stock/uncounted", "/api/stock/preinventory-search", "/api/invoice/active", "/api/invoices/list", "/api/invoices/get",
-             "/api/profiles", "/api/stock/trash", "/api/catalog/snapshot", "/api/stock/offline-pack", "/api/cloud/usage"}
+             "/api/profiles", "/api/stock/trash", "/api/catalog/snapshot", "/api/catalog/changes", "/api/stock/offline-pack", "/api/cloud/usage"}
 CLOUD_POST = {"/api/mobile/scan", "/api/stock/scan", "/api/stock/save-batch-qty", "/api/stock/update-qty", "/api/stock/delete-item",
               "/api/stock/bulk-delete", "/api/stock/edit-item", "/api/stock/clear", "/api/stock/clear-inventory", "/api/stock/settle",
               "/api/stock/commit-bulk", "/api/stock/stores/commit-all", "/api/stock/trash/restore", "/api/stock/stores/create", "/api/stock/stores/update",

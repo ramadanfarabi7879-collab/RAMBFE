@@ -5,55 +5,42 @@
 // 2) حزمة مخزون الاستور (/api/stock/offline-pack): أرصدة الاستور وتشغيلاته ليختار المستخدم التشغيلة بدون اتصال.
 // 3) عدّاد القراءات اليومي: يجمع rows_read لكل الاستعلامات ويحفظه في meta، وعند تجاوز 80% من الحد اليومي
 //    يدخل البرنامج "وضع التوفير" (البحث من الكتالوج المحفوظ على الجهاز، وبحث الحرف والحرفين متوقف).
-import { all, first } from './products.js';
+import { all, first, allIn } from './products.js';
 
-const SNAP_KEY = 'catalog_snapshot_v1';
-const SNAP_LOCK = 'catalog_snapshot_lock';
-const SNAP_MAX_AGE_MS = 24 * 3600 * 1000;
+const SNAP_COLS = ['id', 'code', 'name_en', 'name_ar', 'name', 'gtin', 'barcode', 'selling_price', 'cost_price', 'unit_price',
+    'scientific_name', 'company', 'category', 'tax_rate', 'unit'];
 
-async function buildSnapshot(db) {
-    const products = await all(db, `SELECT id, code, name_en, name_ar, name, gtin, barcode, selling_price, cost_price, unit_price,
-        scientific_name, company, category, tax_rate, unit FROM products ORDER BY id DESC`);
-    const barcodes = await all(db, 'SELECT product_code, barcode, barcode_type FROM product_barcodes');
-    const cols = ['id', 'code', 'name_en', 'name_ar', 'name', 'gtin', 'barcode', 'selling_price', 'cost_price', 'unit_price',
-        'scientific_name', 'company', 'category', 'tax_rate', 'unit'];
-    return JSON.stringify({
-        version: 1, generated_at: Date.now(), count: products.length, cols,
-        products: products.map(p => cols.map(c => p[c] ?? null)),
-        barcodes: barcodes.map(b => [b.product_code, b.barcode, b.barcode_type === 'gtin' ? 1 : 0]),
-    });
+// نسخة الكتالوج للأجهزة = الكتالوج المدمج مع الموقع (base-catalog.json) بدون أي قراءة من قاعدة البيانات.
+// (كان بيتبني من D1 كامل: 92 ألف صف في كل مرة، واتبنى 4 مرات في نفس اللحظة بعد النشر)
+export async function catalogSnapshot(env) {
+    if (env.ASSETS) {
+        const base = await env.ASSETS.fetch(new Request('https://assets.local/base-catalog.json'));
+        if (base.ok) return new Response(base.body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Snapshot-Source': 'base' } });
+    }
+    return new Response(JSON.stringify({ success: false, message: 'base catalog not available' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
 }
 
-export async function catalogSnapshot(env, db, ctx, force = false) {
-    const kv = env.TUNNEL_KV;
-    const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
-    if (!kv) return new Response(await buildSnapshot(db), { headers });
-    const cached = await kv.getWithMetadata(SNAP_KEY, { type: 'text' });
-    const age = cached && cached.metadata ? Date.now() - Number(cached.metadata.ts || 0) : Infinity;
-    if (cached && cached.value && age < SNAP_MAX_AGE_MS && !force) return new Response(cached.value, { headers: { ...headers, 'X-Snapshot-Age': String(Math.round(age / 1000)) } });
-    // نسخة قديمة موجودة: نرجعها فوراً ونحدّثها في الخلفية (جهاز واحد فقط يحدّثها في نفس الوقت)
-    const refresh = async () => {
-        if (await kv.get(SNAP_LOCK)) return null;
-        await kv.put(SNAP_LOCK, '1', { expirationTtl: 120 });
-        const body = await buildSnapshot(db);
-        await kv.put(SNAP_KEY, body, { metadata: { ts: Date.now() } });
-        return body;
+// التغييرات على الكتالوج بعد وقت معيّن (الأجهزة تضيفها فوق الكتالوج المدمج): بتقرا الأصناف اللي اتغيرت بس
+let changesIndexReady = false;
+export async function catalogChanges(db, sinceTs) {
+    if (!changesIndexReady) {
+        await db.prepare('CREATE INDEX IF NOT EXISTS idx_catalog_changes_ts ON catalog_changes(ts)').run();
+        changesIndexReady = true;
+    }
+    const LIMIT = 2000;
+    const ch = await all(db, 'SELECT code, ts FROM catalog_changes WHERE ts > ? ORDER BY ts ASC LIMIT ?', [Number(sinceTs) || 0, LIMIT]);
+    const maxTs = ch.length ? ch[ch.length - 1].ts : Number(sinceTs) || 0;
+    if (ch.some(c => c.code === '*')) return { success: true, full_reset: true, max_ts: maxTs };
+    const codes = [...new Set(ch.map(c => String(c.code)))];
+    const prods = codes.length ? await allIn(db, `SELECT ${SNAP_COLS.join(', ')} FROM products WHERE code IN ({ph})`, [], codes) : [];
+    const bcs = codes.length ? await allIn(db, 'SELECT product_code, barcode, barcode_type FROM product_barcodes WHERE product_code IN ({ph})', [], codes) : [];
+    const found = new Set(prods.map(p => String(p.code)));
+    return {
+        success: true, max_ts: maxTs, more: ch.length === LIMIT, cols: SNAP_COLS, changed_codes: codes,
+        products: prods.map(p => SNAP_COLS.map(c => p[c] ?? null)),
+        barcodes: bcs.map(b => [b.product_code, b.barcode, b.barcode_type === 'gtin' ? 1 : 0]),
+        deleted: codes.filter(c => !found.has(c)),
     };
-    if (cached && cached.value) {
-        ctx && ctx.waitUntil ? ctx.waitUntil(refresh().catch(() => { })) : await refresh().catch(() => { });
-        return new Response(cached.value, { headers: { ...headers, 'X-Snapshot-Age': String(Math.round(age / 1000)) } });
-    }
-    try {
-        const body = (await refresh()) || await buildSnapshot(db);
-        return new Response(body, { headers });
-    } catch (e) {
-        // قاعدة البيانات واقفة ومفيش نسخة في KV: نرجع الكتالوج الأساسي المدمج مع الموقع
-        if (env.ASSETS) {
-            const base = await env.ASSETS.fetch(new Request('https://assets.local/base-catalog.json'));
-            if (base.ok) return new Response(base.body, { headers: { ...headers, 'X-Snapshot-Source': 'base' } });
-        }
-        throw e;
-    }
 }
 
 export async function offlinePack(db, storeNo, resolveValidStoreNo) {

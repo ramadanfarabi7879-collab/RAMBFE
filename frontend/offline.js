@@ -2,7 +2,7 @@
 //
 // يعمل كطبقة بين الصفحة والسحابة (يغلّف fetch): لما السحابة ترد "قاعدة البيانات غير متاحة" (الحد اليومي خلص)
 // أو الإنترنت يقطع، البرنامج يكمل على نسخة محفوظة على الجهاز:
-//   - دليل الأصناف كامل (نسخة يومية من /api/catalog/snapshot لا تستهلك حصة قاعدة البيانات)
+//   - دليل الأصناف كامل (الكتالوج المدمج مع الموقع + التغييرات بعده فقط من /api/catalog/changes)
 //   - تفاصيل كل استور اتفتح ورصيد مخزونه (لاختيار التشغيلة)
 //   - المسح والكميات بتتحفظ على الجهاز في "طابور" وتتبعت للسحابة بالترتيب أول ما الاتصال يرجع
 // ووضع التوفير: لما السحابة تقول إن حصة اليوم قاربت تخلص، البحث في الأصناف يتم من النسخة المحفوظة على الجهاز.
@@ -149,7 +149,8 @@
             const snap = await res.json();
             if (!snap || !Array.isArray(snap.products) || !snap.products.length) return null;
             await kvSet('catalog', snap);
-            await kvSet('catalog_meta', { fetched_at: 0, generated_at: snap.generated_at, count: snap.count, base: true });
+            // التغييرات بعد وقت بناء الكتالوج المدمج بتتجاب من /api/catalog/changes
+            await kvSet('catalog_meta', { base: true, base_generated_at: snap.generated_at, generated_at: snap.generated_at, count: snap.count, changes_ts: snap.generated_at / 1000 });
             return snap;
         } catch (_) { return null; }
     }
@@ -163,17 +164,44 @@
         })().finally(() => { catalogP = null; });
         return catalogP;
     }
+    // تحديث الكتالوج المحفوظ: الكتالوج المدمج مع الموقع + التغييرات اللي حصلت بعده بس (بضع صفوف بدل 92 ألف)
+    function applyChanges(snap, ch) {
+        const codeIdx = snap.cols.indexOf('code');
+        const changed = new Set((ch.changed_codes || []).map(String));
+        snap.products = snap.products.filter(r => !changed.has(String(r[codeIdx])));
+        const cci = Object.fromEntries((ch.cols || []).map((c, i) => [c, i]));
+        for (const r of ch.products || []) snap.products.unshift(snap.cols.map(c => cci[c] !== undefined ? r[cci[c]] : null));
+        snap.barcodes = (snap.barcodes || []).filter(x => !changed.has(String(x[0]))).concat(ch.barcodes || []);
+        snap.count = snap.products.length;
+    }
     async function downloadCatalog(force = false) {
         try {
-            const meta = await kvGet('catalog_meta');
-            if (!force && meta && Date.now() - meta.fetched_at < 20 * 3600 * 1000) return;
-            const res = await origFetch('/api/catalog/snapshot', { cache: 'no-store' });
-            if (!res.ok) { if (!(await kvGet('catalog'))) await getCatalog(); return; }
-            const snap = await res.json();
-            if (!snap || !Array.isArray(snap.products) || !snap.products.length) return;
-            await kvSet('catalog', snap);
-            await kvSet('catalog_meta', { fetched_at: Date.now(), generated_at: snap.generated_at, count: snap.count });
-            catalog = buildCatalog(snap);
+            let meta = (await kvGet('catalog_meta')) || {};
+            if (!force && meta.checked_at && Date.now() - meta.checked_at < 10 * 60 * 1000) return;
+            // تحديث للموقع نزّل كتالوج مدمج أحدث؟
+            const vr = await origFetch('/base-catalog.version.json', { cache: 'no-store' }).catch(() => null);
+            const ver = vr && vr.ok ? await vr.json().catch(() => null) : null;
+            if (ver && ver.generated_at && ver.generated_at !== meta.base_generated_at) {
+                const base = await loadBaseCatalog();
+                if (base) { catalog = buildCatalog(base); meta = (await kvGet('catalog_meta')) || {}; }
+            }
+            let snap = await kvGet('catalog');
+            if (!snap || !snap.products) { await getCatalog(); snap = await kvGet('catalog'); meta = (await kvGet('catalog_meta')) || {}; }
+            if (!snap || !snap.products) return;
+            let since = meta.changes_ts || ((meta.base_generated_at || meta.generated_at || 0) / 1000);
+            let applied = 0;
+            for (let i = 0; i < 5; i++) {
+                const res = await origFetch(`/api/catalog/changes?since_ts=${encodeURIComponent(since)}`, { cache: 'no-store' });
+                noteEconomy(res);
+                if (!res.ok) break;
+                const ch = await res.json();
+                if (!ch || !ch.success) break;
+                if (!ch.full_reset) { applyChanges(snap, ch); applied += (ch.changed_codes || []).length; }
+                since = ch.max_ts;
+                if (!ch.more) break;
+            }
+            if (applied) { await kvSet('catalog', snap); catalog = buildCatalog(snap); }
+            await kvSet('catalog_meta', { ...meta, changes_ts: since, checked_at: Date.now(), count: snap.count });
         } catch (_) { if (!(await kvGet('catalog'))) await getCatalog(); }
     }
     function publicProduct(p) { const o = {}; for (const k of Object.keys(p)) o[k] = p[k]; return o; }

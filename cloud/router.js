@@ -64,7 +64,7 @@ async function broadcast(env, ctx, type, payload, pid = 1) {
 export const CLOUD_GET = new Set(['/api/catalog/products', '/api/stock/stores', '/api/stock/store/details', '/api/stock/store/search', '/api/sync/events', '/api/mobile/poll', '/api/cloud/health', '/api/realtime',
     '/api/health', '/api/stats', '/api/network-info', '/api/catalog/product', '/api/catalog/next-code', '/api/stock/uncounted',
     '/api/stock/preinventory-search', '/api/invoice/active', '/api/invoices/list', '/api/invoices/get', '/api/profiles', '/api/stock/trash',
-    '/api/catalog/snapshot', '/api/stock/offline-pack', '/api/cloud/usage']);
+    '/api/catalog/snapshot', '/api/catalog/changes', '/api/stock/offline-pack', '/api/cloud/usage']);
 export const CLOUD_POST = new Set(['/api/mobile/scan', '/api/stock/scan', '/api/stock/save-batch-qty', '/api/stock/update-qty', '/api/stock/delete-item',
     '/api/stock/bulk-delete', '/api/stock/edit-item', '/api/stock/clear', '/api/stock/clear-inventory', '/api/stock/settle', '/api/stock/commit-bulk',
     '/api/stock/stores/commit-all', '/api/stock/trash/restore', '/api/stock/stores/create', '/api/stock/stores/update', '/api/stock/stores/delete', '/api/stock/reset-all', '/api/stock/populate-all',
@@ -99,7 +99,7 @@ async function handleCloudApiInner(request, env, ctx, url, rawBody) {
     if (!Number.isFinite(pid) || pid < 1) pid = 1;
     // مسارات لا تخص صيدلية معينة لا تحتاج قراءة من قاعدة البيانات: تعمل حتى لو حصة القراءة اليومية خلصت
     // (نسخة الكتالوج تُقدّم من KV)
-    const NO_PROFILE = ['/api/realtime', '/api/catalog/snapshot', '/api/cloud/usage', '/api/health'];
+    const NO_PROFILE = ['/api/realtime', '/api/catalog/snapshot', '/api/catalog/changes', '/api/cloud/usage', '/api/health'];
     if (!url.pathname.startsWith('/api/_admin/') && !NO_PROFILE.includes(url.pathname)) {
         try {
             // صيدلية غير موجودة (اتحذفت) تتحول لأول صيدلية موجودة فعلاً — ولا نرجع لصيدلية 1 لو كانت محذوفة
@@ -144,7 +144,8 @@ async function handleCloudApiInner(request, env, ctx, url, rawBody) {
                 return json({ events, scans: events.filter(e => e.type === 'mobile_scan').map(e => e.payload), timestamp: Date.now() / 1000 });
             }
             if (path === '/api/cloud/usage') return json({ success: true, ...OFF.usageInfo(env) });
-            if (path === '/api/catalog/snapshot') return await OFF.catalogSnapshot(env, db, ctx, p.get('force') === '1');
+            if (path === '/api/catalog/snapshot') return await OFF.catalogSnapshot(env);
+            if (path === '/api/catalog/changes') return json(await OFF.catalogChanges(db, num(p.get('since_ts'))));
             if (path === '/api/stock/offline-pack') return json(await OFF.offlinePack(db, (p.get('store_no') || '').trim(), S.resolveValidStoreNo));
             if (path === '/api/catalog/products' && OFF.economyBlocksQuery(env, p.get('query') || p.get('q') || '')) {
                 return json({ items: [], total: 0, limit: 50, offset: 0, economy: true, message: 'وضع التوفير: اكتب 3 حروف على الأقل للبحث (حصة القراءة اليومية قاربت على الانتهاء).' });

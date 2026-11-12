@@ -180,11 +180,15 @@ await test('استيراد كتالوج بوضع الجديد فقط: الموج
     assert.equal((await one("SELECT name FROM products WHERE code = '10001'")).name, 'PANADOL EXTRA');
     assert.equal((await one('SELECT COUNT(*) AS c FROM products')).c, before + 1);
 });
-await test('نسخة الكتالوج للأجهزة وحزمة مخزون الاستور تعمل', async () => {
-    const r = await R.handleCloudApi(new Request('https://rambfe.test/api/catalog/snapshot'), env, { waitUntil() { } }, new URL('https://rambfe.test/api/catalog/snapshot'), null);
-    const snap = await r.json();
-    assert.equal(snap.count, (await one('SELECT COUNT(*) AS c FROM products')).c);
-    assert.ok(snap.cols.includes('code') && snap.barcodes.length === (await one('SELECT COUNT(*) AS c FROM product_barcodes')).c);
+await test('نسخة الكتالوج للأجهزة لا تقرأ من قاعدة البيانات، والتغييرات بس بتتجاب', async () => {
+    const u = new URL('https://rambfe.test/api/catalog/snapshot');
+    const r = await R.handleCloudApi(new Request(u), env, { waitUntil() { } }, u, null);
+    assert.equal(r.status, 404); // في الاختبار مفيش ملفات الموقع (ASSETS)، والمهم إنه مبيبنيش النسخة من D1
+    const all = (await api('GET', '/api/catalog/changes?since_ts=0')).data;
+    assert.equal(all.success, true);
+    assert.ok(all.changed_codes.length >= 1 && all.cols.includes('code'));
+    const none = (await api('GET', `/api/catalog/changes?since_ts=${all.max_ts}`)).data;
+    assert.equal(none.changed_codes.length, 0);
     pid = 1;
     const prof = await api('GET', '/api/profiles');
     pid = prof.data.current_profile_id;
